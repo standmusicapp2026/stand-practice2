@@ -491,6 +491,7 @@
     <span class="num" id="recTime">0:00</span>
     <canvas id="recMeter" width="240" height="32"></canvas>
     <span class="muted" id="recNote"></span>
+    <button class="rec-metro" id="recMetro" type="button"><svg class="rm-pp"><use href="#i-play"/></svg><span class="rm-note">♩=</span><span class="num" id="recMetroBpm">96</span></button>
     <button class="btn small danger" id="recStop"><svg><use href="#i-stop"/></svg><span>Stop</span></button>
   </div>
   <div class="pill" id="metroPill" hidden>
@@ -769,8 +770,9 @@
       <button class="rec-choice" id="recAudio"><svg><use href="#i-mic"/></svg><b>Audio</b><span>Best sound quality</span></button>
       <button class="rec-choice" id="recVideo"><svg><use href="#i-video"/></svg><b>Video</b><span>Watch your posture and technique</span></button>
     </div>
-    <label class="check"><input type="checkbox" id="countIn" checked> One bar count-in from the metronome</label>
-    <label class="check"><input type="checkbox" id="clickWhileRec"> Keep the click going (use headphones)</label>
+    <label class="check"><input type="checkbox" id="countIn" checked> Count 1, 2, 3, 4 on the screen before it starts</label>
+    <p class="hint rec-metro-hint">The metronome waits in the recording bar, at your tempo: tap it if you want the click.</p>
+    <label class="check" hidden><input type="checkbox" id="clickWhileRec"> Keep the click going (use headphones)</label>
     <div class="field"><span>Camera</span>
       <div class="seg full" id="camSeg"><button data-cam="user" class="on">Front</button><button data-cam="environment">Back</button><button data-cam="iphone"><svg><use href="#i-phone"/></svg>iPhone</button></div>
     </div>
@@ -1684,5 +1686,6 @@
 </section>
 
 <script type="module" src="js/main.js"></script>
+<div class="rec-count" id="recCount" hidden aria-hidden="true"><b></b></div>
 </body>
 </html>

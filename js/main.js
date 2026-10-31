@@ -137,7 +137,7 @@ const SECTION_TOURS = {
   ],
   record: [
     { title: 'Record', text: 'Choose Audio for the best sound, or Video to watch your posture and technique.', at: '#recAudio' },
-    { title: 'Count-in', text: 'The count-in plays one bar of the metronome before recording starts.', at: '#countIn' },
+    { title: 'Count-in', text: '1, 2, 3, 4 on the screen before recording starts. The metronome waits in the recording bar: tap it if you want the click.', at: '#countIn' },
     { title: 'Camera', text: 'Pick the front or back camera, or the iPhone if it is linked to film you.', at: '#camSeg' },
     { title: 'Your takes', text: 'Every recording is kept in Recordings, where you can listen, trim and share it.', at: null },
   ],
@@ -5982,6 +5982,7 @@ function updateMetroButtons() {
   const b = $('#metroToggle'); b.innerHTML = on ? '<svg><use href="#i-stop"/></svg><span>Stop</span>' : '<svg><use href="#i-play"/></svg><span>Start</span>';
   $('#metroPill').hidden = !on;
   if (!on) $$('#beatDots .beat').forEach((d) => d.classList.remove('hit'));
+  try { syncRecMetro(); } catch {}
 }
 $('#metroToggle').addEventListener('click', () => (metro.running ? stopMetro() : startMetro()));
 $('#metroPillStop').addEventListener('click', stopMetro);
@@ -6948,19 +6949,39 @@ $('#recVideo').addEventListener('click', () => startRecording('video'));
 $('#recBtn').addEventListener('click', () => (recState ? stopRecording() : showPanel('record')));
 $('#recStop').addEventListener('click', stopRecording);
 
+// Before recording: 1, 2, 3, 4 big on the screen, silent, at the metronome's tempo (one bar), so
+// you know when it starts. The metronome is never started by itself: it waits in the recording bar,
+// set to your tempo and paused, and plays only if you tap it (one already playing goes on).
 function setupCountIn() {
-  let startAt = 0, metroByUs = false;
   const ctx = getCtx();
-  if (S.countIn && !metro.running) {
-    const keep = S.clickWhileRec;
-    const t0 = startMetro({ countInBars: 1, stopAfterCountIn: !keep, onCountInDone: () => { $('#recNote').textContent = keep ? 'Click on' : ''; } });
-    startAt = t0 + metro.beats * 60 / metro.countInBpm;
-    metroByUs = true;
-    $('#recNote').textContent = 'Count-in';
-  } else if (S.clickWhileRec && !metro.running) { startMetro(); metroByUs = true; $('#recNote').textContent = 'Click on'; }
-  else $('#recNote').textContent = '';
-  return { startAt: startAt || ctx.currentTime, delayed: !!startAt, metroByUs };
+  syncRecMetro();
+  $('#recNote').textContent = '';
+  if (!S.countIn) return { startAt: ctx.currentTime, delayed: false, metroByUs: false };
+  const beats = clamp(metro.beats || 4, 2, 6);
+  const bpm = clamp(metro.countInBpm || metro.bpm || 90, 60, 150);
+  const beat = 60 / bpm;
+  const startAt = ctx.currentTime + beats * beat;
+  const box = $('#recCount'), num = box.querySelector('b');
+  const timers = [];
+  box.hidden = false;
+  for (let k = 0; k < beats; k++) timers.push(setTimeout(() => { num.textContent = String(k + 1); num.classList.remove('go'); void num.offsetWidth; num.classList.add('go'); box.classList.toggle('last', k === beats - 1); }, k * beat * 1000));
+  timers.push(setTimeout(() => { box.hidden = true; }, beats * beat * 1000));
+  const cancel = () => { for (const t of timers) clearTimeout(t); box.hidden = true; };
+  return { startAt, delayed: true, metroByUs: false, cancelCount: cancel };
 }
+// the metronome in the recording bar: your tempo, paused until you tap it
+function syncRecMetro() {
+  const b = $('#recMetro'); if (!b) return;
+  b.classList.toggle('on', metro.running);
+  b.querySelector('use').setAttribute('href', metro.running ? '#i-pause' : '#i-play');
+  $('#recMetroBpm').textContent = String(Math.round(metro.bpm));
+  b.setAttribute('aria-label', (metro.running ? 'Stop the metronome' : 'Start the metronome') + ', ' + Math.round(metro.bpm) + ' beats a minute');
+}
+$('#recMetro').addEventListener('click', () => {
+  if (metro.running) stopMetro();
+  else { startMetro(); if (recState) recState.metroByUs = true; }
+  syncRecMetro();
+});
 
 // ---------- native video (iPad app): the camera is recorded by iOS itself ----------
 const canNativeVideo = () => !!(NATIVE && NATIVE.standVideo && (window.standCaps || {}).video);
@@ -7126,6 +7147,7 @@ async function stopRecording() {
   if (!recState) return;
   const st = recState; recState = null;
   cancelAnimationFrame(st.raf); clearTimeout(st.startTimer);
+  if (st.cancelCount) st.cancelCount();
   if (st.metroByUs && metro.running) stopMetro();
   $('#recPill').hidden = true; $('#recBtn').classList.remove('live'); $('#recBtnLabel').textContent = 'Record';
   const existing = st.scoreId ? await db.byIndex('takes', 'score', st.scoreId) : await db.all('takes');

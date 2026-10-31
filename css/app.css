@@ -275,6 +275,24 @@ svg { width: 22px; height: 22px; flex: none; }
 .rec-pill #recTime { font-size: 17px; font-weight: 600; min-width: 46px; }
 .rec-pill canvas { width: 120px; height: 16px; border-radius: 4px; }
 .rec-pill .muted { font-size: 13px; }
+.rec-pill .muted:empty { display: none; }
+/* the metronome in the recording bar: the tempo, paused until tapped */
+.rec-metro { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--sunk); color: var(--ink); font: 600 14px var(--font-num); cursor: pointer; }
+.rec-metro svg { width: 15px; height: 15px; }
+.rec-metro .rm-pp { width: 12px; height: 12px; color: var(--accent-text); }
+.rec-metro .rm-note { font: 500 18px/1 var(--font); color: var(--muted); margin-right: -3px; letter-spacing: -.02em; }
+.rec-metro.on .rm-note { color: rgba(255,255,255,.8); }
+.rec-metro.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rec-metro.on .rm-pp { color: #fff; }
+.rec-metro-hint { margin: -2px 0 4px 30px; font-size: 12.5px; }
+/* 1, 2, 3, 4 before recording: big, in the middle, over the camera too */
+.rec-count { position: fixed; inset: 0; z-index: 9000; display: grid; place-items: center; pointer-events: none; }
+.rec-count[hidden] { display: none; }
+.rec-count b { display: grid; place-items: center; width: 168px; height: 168px; border-radius: 50%; background: rgba(20, 24, 40, .72); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: #fff; font: 700 96px/1 var(--font-num); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+.rec-count b.go { animation: rec-count-pop .5s cubic-bezier(.2, .9, .3, 1.2); }
+.rec-count.last b { background: color-mix(in srgb, var(--rec) 88%, transparent); }
+@keyframes rec-count-pop { from { transform: scale(.6); opacity: .2; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .rec-count b.go { animation: none; } }
 
 /* ---------- panels ---------- */
 .panel {
