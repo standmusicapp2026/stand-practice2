@@ -1,0 +1,108 @@
+{
+ "entries": [
+  {
+   "time": "Oct 22, 23:30",
+   "title": "Starting point: Stand 2.9 (fix24)",
+   "text": "Your list of 40-odd points, read against the app. A test bench (opening, turning, pen, audio, video) runs after every change so nothing that works gets broken.",
+   "state": "done"
+  },
+  {
+   "time": "Oct 23, 02:00",
+   "title": "Faster scores, steady sound, videos",
+   "text": "Pages on screen are drawn first and the next ones right after; page sizes are remembered. Metronome and tuner are watched every second and woken if iOS stops them; headphones get the sound, the iPad/iPhone mic stays in. Videos: All recordings button, bigger floating video, phone videos resent and never lost.",
+   "state": "done"
+  },
+  {
+   "time": "Oct 23, 06:00",
+   "title": "Drones, notebooks and pages",
+   "text": "Drones: Organ, Soft, Bow, Horn \u2014 fuller and louder. Notebooks: side taps turn pages over photos, rotation follows the finger, the Pencil never drags a selection. Pages: hold to delete, hold and drag to reorder. Sets can use any pages.",
+   "state": "done"
+  },
+  {
+   "time": "Oct 23, 09:00",
+   "title": "Import, iPhone, Find a score, backups",
+   "text": "Many PDFs at once with progress; better title and composer. iPhone: no Passages, Recordings scroll only up and down, iPad practice and plan arrive by themselves. Preview before adding a score. Backups are zips that open as folders: Scores (PDFs in your library folders), Recordings, Stand data.",
+   "state": "done",
+   "shots": [
+    "preview_open",
+    "phonehome"
+   ]
+  },
+  {
+   "time": "Oct 23, 11:00",
+   "title": "New covers, drawn for Stand",
+   "text": "All notebook covers replaced by original artwork made by a program (no downloaded photos), in the same styles: records, flowers, paint, paper, music.",
+   "state": "done",
+   "shots": [
+    "covers_new"
+   ]
+  },
+  {
+   "time": "Oct 23, 13:00",
+   "title": "Compose and the music reader",
+   "text": "Marks stay when notes change, tuplets anywhere, 3/8 fixed, all clefs, tremolos, softer strings, no colliding staves, draggable slurs and hairpins, semitone arrows, cleaner transpose, 128 instruments. The reader now finds ties, slurs, triplets, staccato, accents, trills and more.",
+   "state": "done",
+   "shots": [
+    "comp",
+    "omr_in"
+   ]
+  },
+  {
+   "time": "Oct 23, 14:00",
+   "title": "Stand 2.10 (130)",
+   "text": "Full test run, version bump and the IPA.",
+   "state": "done"
+  },
+  {
+   "time": "Oct 23, 15:30",
+   "title": "Stand 2.10 (131): ready to install",
+   "state": "done",
+   "text": "The music reader now reads whole notes and half notes sitting on a line, no longer sees a head between the strokes of a final barline, and no longer takes a tuplet's 3 for a staccato dot. Everything checked again: opening and turning, pen, metronome and tuner, import of many files, backups, preview, pages, tours, iPhone recordings, Compose.",
+   "shots": [
+    "omr_in"
+   ]
+  }
+ ],
+ "plan": [
+  [
+   "Speed: opening and turning",
+   "done"
+  ],
+  [
+   "Sound: metronome, tuner, headphones",
+   "done"
+  ],
+  [
+   "Drones and scales",
+   "done"
+  ],
+  [
+   "Notebooks and pages",
+   "done"
+  ],
+  [
+   "Videos and iPhone",
+   "done"
+  ],
+  [
+   "Import, Find a score, backups",
+   "done"
+  ],
+  [
+   "Covers free to use",
+   "done"
+  ],
+  [
+   "Compose",
+   "done"
+  ],
+  [
+   "Music reader",
+   "done"
+  ],
+  [
+   "Build and test list",
+   "wip"
+  ]
+ ]
+}

@@ -1,0 +1,35 @@
+# Library: hold a score to select, New folder takes the selected scores; leaving a folder clears the selection
+import asyncio
+from playwright.async_api import async_playwright
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 1180, 'height': 820}, has_touch=True); pg = await ctx.new_page()
+        await pg.add_init_script('window.__noTour = true;')
+        errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+        await pg.goto('http://localhost:' + __import__('os').environ.get('PORT','8765') + '/index.html'); await pg.wait_for_timeout(1000)
+        await pg.evaluate("""async () => { const { db } = await import('/js/db.js'); for (let i = 0; i < 4; i++) await db.put('scores', { id: 'sc' + i, title: 'Piece ' + (i + 1), composer: 'Test', pages: 2, added: Date.now() - i * 1000 }); }""")
+        await pg.reload(); await pg.wait_for_timeout(1200)
+        await pg.evaluate("() => document.querySelector('#welGo')?.click()"); await pg.wait_for_timeout(300)
+        vis = await pg.evaluate("() => ({ sel: !!document.querySelector('#libEdit').offsetParent, nf: !!document.querySelector('#newFolder').offsetParent })")
+        print('top buttons visible', vis)
+        card = pg.locator('.card[data-sid="sc0"]')
+        box = await card.bounding_box()
+        await pg.mouse.move(box['x'] + 40, box['y'] + 40); await pg.mouse.down(); await pg.wait_for_timeout(800); await pg.mouse.up(); await pg.wait_for_timeout(200)
+        await pg.locator('.card[data-sid="sc2"]').click(); await pg.wait_for_timeout(200)
+        st = await pg.evaluate("() => ({ count: document.querySelector('#libCount').textContent, nf: !document.querySelector('#libNewFolder').disabled, actions: !document.querySelector('#libActions').hidden })")
+        print('after select', st)
+        await pg.screenshot(path='/home/claude/shots/lib_select.png')
+        await pg.locator('#libNewFolder').click(); await pg.wait_for_timeout(400)
+        await pg.fill('#folderName', 'Etudes'); await pg.locator('#folderSave').click(); await pg.wait_for_timeout(500)
+        r = await pg.evaluate("""async () => { const { db } = await import('/js/db.js'); const all = await db.all('scores'); return { inFolder: all.filter(s => s.folder).map(s => s.id), title: document.querySelector('#folderTitle').textContent, editing: !document.querySelector('#libActions').hidden }; }""")
+        print('after new folder', r)
+        # select inside the folder, go back, come in again: nothing selected
+        c2 = pg.locator('.card[data-sid="sc0"]'); bx = await c2.bounding_box()
+        await pg.mouse.move(bx['x'] + 40, bx['y'] + 40); await pg.mouse.down(); await pg.wait_for_timeout(800); await pg.mouse.up(); await pg.wait_for_timeout(200)
+        await pg.locator('#folderBack').click(); await pg.wait_for_timeout(300)
+        await pg.locator('.card.folder').first.click(); await pg.wait_for_timeout(300)
+        r2 = await pg.evaluate("() => ({ picked: document.querySelectorAll('.card.picked').length, actions: !document.querySelector('#libActions').hidden })")
+        print('back in folder', r2)
+        await pg.screenshot(path='/home/claude/shots/lib_folder.png')
+        print(errs); await b.close()
+asyncio.run(main())

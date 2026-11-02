@@ -1,0 +1,25 @@
+import asyncio, os
+from playwright.async_api import async_playwright
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 1366, 'height': 1024}, has_touch=True)
+        pg = await ctx.new_page(); await pg.add_init_script('window.__noTour = true;')
+        errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+        await pg.goto('http://localhost:' + os.environ.get('PORT', '8765') + '/index.html'); await pg.wait_for_timeout(1500)
+        await pg.evaluate("() => { document.querySelector('#welGo')?.click(); setTimeout(() => document.querySelector('.tour-skip')?.click(), 300); }"); await pg.wait_for_timeout(700)
+        J = lambda js: pg.evaluate("async () => { const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); " + js + " }")
+        await J("document.querySelector('#newNotebookBtn').click(); await sleep(1500); document.querySelector('#nbCreate').click(); await sleep(2500); document.querySelector('#inkDone')?.click(); await sleep(300);")
+        vis = await J("const b=document.querySelector('#score [data-panel=settings]'); return b && b.offsetParent !== null")
+        print('settings button visible in notebook', vis)
+        await J("document.querySelector('#score [data-panel=settings]').click(); await sleep(500);")
+        await pg.click('#metaTitle'); await pg.fill('#metaTitle', 'Meu caderno'); await pg.click('#metaComposer'); await pg.wait_for_timeout(1500)
+        await J("document.querySelector('#panel-settings [data-close]').click(); await sleep(1500); document.querySelector('#backBtn').click(); await sleep(1500);")
+        l1 = await J("return [...document.querySelectorAll('#grid .card:not(.folder) .ttl')].map(x=>x.textContent)")
+        await pg.wait_for_timeout(3000); await pg.reload(); await pg.wait_for_timeout(2500)
+        l2 = await J("return [...document.querySelectorAll('#grid .card:not(.folder) .ttl')].map(x=>x.textContent)")
+        await J("document.querySelector('#grid .card:not(.folder)').click(); await sleep(3000);")
+        hdr = await J("return document.querySelector('#scoreTitle').textContent")
+        db = await J("const { db } = await import('/js/db.js'); const s=(await db.all('scores'))[0]; const f=await db.get('files', s.fileId); return [s.title, f && f.title]")
+        print(l1, l2, hdr, db, errs[:3])
+        await b.close()
+asyncio.run(main())

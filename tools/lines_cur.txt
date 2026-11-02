@@ -1,0 +1,206 @@
+== /home/claude/tc/raw-003.jpg 43,615,2300,317 fit 1
+  1 | r2 r4 D4/8({p}<4> F4#/8)<3>
+  2 | F4#/2~( F4#/8) D4/8(<3> C4/8 D4/8)
+  3 | E4/4(<1>{gF4} D4/8)<1> D4/8<3> D4/8 C4/4( D4/8)
+  4 | G4/4~( G4/16 F4n/16 E4n/16 G4/16) F4n/4 r8 D4/8[up]{f}
+  5 | G4/8.(<2> F4#/16) A4/2~( A4/8 G4/8)
+== /home/claude/tc/raw-003.jpg 40,935,2306,319 fit 0.67
+  1 | G4/2~ G4/4 r4 [bass]D3/4[up]{mp}<0>
+  2 | {"time":[4,4]} [bass]F3n/4(<2> [bass]F3n/16 [bass]G3/16<2> [bass]A3/16) [bass]G3/16 [bass]F3n/2[ten]<1>
+  3 | [bass]B2/4<2> [bass]C3/4( [bass]D3/4) [bass]F3/8(<4> [bass]D3/8)<4>
+  4 | {"time":[5,4]} [bass]C3/8( [bass]B2/8 [bass]D3/8 [bass]F3/8)[up] [bass]G3/4<2> [bass]A3/16( [bass]G3/16 [bass]F3/16 [bass]E3n/16) [bass]F3/4~
+  5 | {"time":[4,4]} [bass]F3/4 r8 [bass]D3/8[down]{mf}<0> [bass]F3/8(<2> [bass]E3n/8 [bass]F3/8 [bass]D3/8)<0>
+== /home/claude/tc/raw-003.jpg 39,1254,2307,313 fit 0.67
+  1 | B3/4.(<2> G3/8()<1> A3/4.() G3/8)[stacc]
+  2 | G3/2. r8 [tenor]D4/8[up]<3>
+  3 | [tenor]D4/4~( [tenor]D4/16 [tenor]C4/16 [tenor]D4/16 [tenor]E4/16) [tenor]F4/8(<2> [tenor]G4/16 [tenor]F4/16) [tenor]E4/8t(<1> [tenor]D4/8t<3> [tenor]C4/8t)<1>
+  4 | {"time":[5,4]} [tenor]D4/4(<1> [tenor]B3/4)<4> [tenor]G3/2 [tenor]G3/8.[up]{mf}<1> [tenor]G3/16[up]
+  5 | [tenor]C4/4 [tenor]D4/16( [tenor]C4/16 [tenor]B3/16 [tenor]C4/16) [tenor]D4/2 [tenor]D4/8t [tenor]D4/8t( [tenor]F4#/8t)<1>
+== /home/claude/tc/raw-003.jpg 39,1568,2306,310 fit 1
+  1 | A4/4~( A4/16 G4/16 F4#/16t( E4/16t)<4> D4/16t) C4/4~[up]<1> C4/8 D4/16<3> E4/16
+  2 | D4/4. [bass]D3/8[up,ten]<1> [bass]D3/4[ten] [bass]D3/8t(<3> [bass]C3/8t [bass]D3/8t)
+  3 | [bass]G3/4(<3> [bass]F3n/4)<1> r4 [bass]B3/8.[up] [bass]B3/16[up]
+  4 | {"time":[3,4]} [bass]A3/16( [bass]G3/16<4> [bass]F3/16 [bass]E3n/16) [bass]F3/4( [bass]G3/4)
+== /home/claude/tc/raw-003.jpg 39,1878,2306,313 fit 1
+  1 | F3/16( E3b/16 D3/16<0> C3/16)<1> D3/4( E3b/4)
+  2 | {"time":[5,4]} D3/8<4> C3/8 B2/8t(<2> A2/8t[stacc] D3/8t) G2/4~[ferm]<1> G2/4 r16 [tenor]D4/8[down]{f}<1> [tenor]D4/16[up]
+  3 | {"time":[4,4]} [tenor]D4/8t [tenor]E4n/16t(<1> [tenor]F4#/16t<2> [tenor]G4/16t<1> [tenor]A4/16t)<2> [tenor]B4/8[ten]<3> [tenor]G4/8[ten] [tenor]A4/4 [tenor]G4/4
+  4 | {"time":[5,4]} [tenor]G4/2.~ [tenor]G4/4 r4
+== /home/claude/tc/raw-003.jpg 40,2232,2306,316 fit 1
+  1 | D5/2([down]<2> C5/4 D5/4)[down]<2>
+  2 | E5/2([up]<2> D5/4<2> E5/4)[up]<3>
+  3 | D5/2([down]<3> C5/4 D5/4)[down]
+  4 | C5/2([up] B4/4)[down] B4/4[down,ten]
+  5 | B4/4[up] B4/8.( D5/16) F5/4[up]<2> F5/8t[down] F5/8t F5/8t
+  6 | G5/4[up] E5/4 D5/4(<2> C5/4)
+== /home/claude/tc/raw-003.jpg 42,2533,2302,317 fit 1
+  1 | D5/4.[down] D5/8[down] D5/4 D5/4
+  2 | D5/4.[up] D5/8( C5/4) D5/4[up]
+  3 | E5/2( D5/4)[up] E5/4([down]
+  4 | D5/2)[ten] C5/4( D5/4)
+  5 | C5/2([down] B4/4) r8 [tenor]D4/8[down]<1>{gD5}
+  6 | [tenor]G4/4.[up]<4> [tenor]D4/4<3> [tenor]E4/8( [tenor]D4/16 [tenor]C4/16<0> [tenor]B3/16<1> [tenor]G3/16)
+== /home/claude/tc/raw-003.jpg 49,2855,2289,309 fit 1
+  1 | D4/4.<0 3> [bass]D2/8[down]<1> [bass]D2/2
+  2 | [bass]C2+G2/2[ferm] r8 D4/8[up]<1> E4n/8<1> F4/8<3>
+  3 | G4/4<1> A4/8t( G4/8t A4/8t) B4/4 A4/8(<0> G4/8)<4>
+  4 | F4/8( E4/8 D4/8)<4> C4/8( B3/8) A3/8[down] D4/4
+  5 | G3/2.[ferm] D4/8({pp} F4#/8)
+== /home/claude/tc/raw-000.jpg 45,359,2326,322 fit 0.5
+  1 | F4+D5+A5/4 r4 r4 D6/4
+  2 | D4+F4+A4/4.{p} D4+F4+A4/4 D4+F4+A4/8( D4+G4+B4/4)
+  3 | E4+G4+C5/4 E4+A4/4 D4+F4+B4/4 D4+G4/4
+  4 | C4+E4+A4/4~( D4+A4/8) F4/8( G4/8 A4/8 B4/16() B4/8 C5/16)
+== /home/claude/tc/raw-000.jpg 44,573,2321,312 fit 1
+  1 | D2+D3/4 r4 r2
+  2 | D2/4. D2/8 D2/4 G2/4
+  3 | C2/4( F2/4 B1/4 E2/4)
+  4 | A1/4( D2/8) r8 r2
+== /home/claude/tc/raw-000.jpg 62,908,2288,218 fit 0.5
+  1 | F3/16 A3/16 D3/16 A3/16 G3/16 A3/16 E3/16 A3/16 F3/16 A3/16 D3/16 A3/16 G3/16 A3/16 E3/16 A3/16
+  2 | F3/16 A3/16 D3/16 A3/16 E3/16 A3/16 F3/16 A3/16 G3/16 A3/16<0> A3/16 A3/16 B3/16[stacc] A3/16 D3/16 A3/16
+  3 | A3/16{p} A3/16 B3/16[stacc] A3/16 C4/16<4> A3/16 D3/16 A3/16 B3/16t A3/16t C4/16t<4> B2/4 A3/4 D4/16<3> A3/16 B3/16<3> A3/16
+  4 | C4/16<4> A3/16 B3/16 A3/16 D4/16 A3/16~ A3/16 B3/16<4> A3/16 A3/16<2> A3/16 A3/16 G3/32 A3/16
+== /home/claude/tc/raw-001.jpg 146,598,1955,300 fit 1
+  1 | r1
+  2 | r1
+  3 | r1
+  4 | r1
+  5 | r1
+  6 | r1
+  7 | r1
+  8 | r1
+  9 | r1
+ 10 | r8 D6/8~({mf} D6/8t C6/8t B5/8t
+ 11 | C6/8.() F6/16~) F6/8t C6/8t B5/8t
+ 12 | A5/4 D6/8( A5/8
+ 13 | B5/2)
+ 14 | r8 G5/8 C6/8 G5/8
+ 15 | A5/4 A5/8t{gB5} G5/8t F5/8t
+== /home/claude/tc/raw-001.jpg 147,1012,1953,295 fit 0.83
+  1 | F5/4t( B5/4t F5/4t)
+  2 | F5/16t( G5/16t F5/16t) E5/8( E5/4
+  3 | E5/4) D5/8t( E5/8t F5/8t
+  4 | D5/2){gC5}
+  5 | r8 D6/8~( D6/8t C6/8t B5/8t
+  6 | C6/8.) F6/16~ F6/8t C6/8t( B5/8t
+  7 | A5/4) D6/8( A5/8
+  8 | A5/2)
+== /home/claude/tc/raw-001.jpg 147,1421,1953,292 fit 0.83
+  1 | r8 G5/8( C6/8 G5/8
+  2 | A5/4) A5/8t{gB5} G5/8t F5/8t
+  3 | F5/4t B5/4t F5/4t
+  4 | F5/16t( G5/16t F5/16t E5/8( E5/4
+  5 | E5/4) D5/8t( E5/8t F5/8t
+  6 | D5/8.{gC5} B4/16~ B4/8t C5/8t D5/8t
+  7 | F5/4t(){p} F5/4t G5/4t)
+  8 | F5/4 B5/4
+== /home/claude/tc/raw-001.jpg 144,1845,1957,297 fit 1
+  1 | B5/8 A5/8( B5/8 C6/8)
+  2 | B5/4t A5/4t( B5/4t~)
+  3 | B5/8. F6/16~ F6/8t C6/8t B5/8t
+  4 | C6/4t( B5/4t( D6/4t~)
+  5 | D6/4){ff} D6/8t({mf} C6/8t B5/8t
+  6 | C6/8.() F6/16~) F6/8t C6/8t( B5/8t)
+== /home/claude/tc/raw-001.jpg 146,2295,1956,299 fit 1
+  1 | A5/4 D6/8( A5/8
+  2 | B5/2)
+  3 | r8 G5/8( C6/8 G5/8
+  4 | A5/4t A5/8t~ A5/8t) G5/8t F5/8t
+  5 | F5/8. B5/16~ B5/8 F5/8
+  6 | F5/8.( E5/16 E5/4~
+  7 | E5/4) D5/8t( E5/8t F5/8t)
+== /home/claude/tc/raw-001.jpg 150,2710,1221,292 fit 1
+  1 | D5/2
+  2 | D5/2
+== /home/claude/tc/raw-002.jpg 159,217,2059,308 fit 1
+  1 | r8 D6/8~( D6/8t C6/8t B5/8t
+  2 | C6/8.) F6/16~ F6/8t C6/8t( B5/8t
+  3 | A5/4) D6/8( A5/8
+  4 | B5/2)
+  5 | r8 G5/8( C6/8 G5/8
+  6 | A5/4() A5/8t{gB5} G5/8t F5/8t)
+  7 | F5/4t( B5/4t F5/4t)
+  8 | F5/16t( G5/16t F5/16t E5/8 E5/4)
+== /home/claude/tc/raw-002.jpg 155,516,2066,314 fit 1
+  1 | E5/4 D5/8t E5/8t F5/8t
+  2 | D5/8. B4/16 B4/8t C5/8t D5/8t
+  3 | F5/4t F5/4t G5/4t
+  4 | F5/4 B5/4
+  5 | B5/8 A5/8 B5/8 C6/8
+  6 | B5/4t A5/4t( B5/4t)
+  7 | B5/8. F6/16 F6/8t C6/8t( B5/8t)
+  8 | C6/4t( B5/4t( D6/4t)[ferm]
+== /home/claude/tc/raw-002.jpg 152,819,2070,316 fit 0.83
+  1 | D6/8 C6/8 B5/8
+  2 | C6/8. F6/16~ F6/8t C6/8t B5/8t
+  3 | A5/4 D6/8( A5/8
+  4 | B5/8. B5/16 B5/4)
+  5 | r8 G5/8 C6/8 G5/8
+  6 | A5/8~ A5/8 A5/8t G5/8t( F5/8t)
+  7 | F5/8. B5/16~ B5/8 F5/8
+  8 | F5/8. E5/16 E5/4
+== /home/claude/tc/raw-002.jpg 152,1096,2068,311 fit 0.83
+  1 | E5/4 D5/8t E5/8t F5/8t
+  2 | D5/2~
+  3 | D5/2
+  4 | D5/4 C5/8 B4/8
+  5 | C5/8 F5/8 F5/8 C5/8
+  6 | D5/8( F5/8) F5/8 D5/8
+  7 | G5/16 A5/16 B5/16 B5/16( A5/16 B5/16 G5/8~
+  8 | G5/4) E5#/8t D5/8t C5/8t
+== /home/claude/tc/raw-002.jpg 152,1363,2067,310 fit 1
+  1 | F5/8t( G5/8t A5/8t) A5/8t({gB5} G5/8t F5/8t)
+  2 | F5/8t( E5/8t D5/8t) E5/8t( D5/8t C5/8t
+  3 | E5/8) F5/4 E5/16( F5/16
+  4 | E5/4.) C5/16{gB4} E5/16
+  5 | D5/4 B4/8t C5/8t D5/8t
+  6 | F5/4t({p} F5/4t G5/4t)
+  7 | F5/4 B5/4~
+  8 | B5/8 A5/8 B5/8 C6/8
+== /home/claude/tc/raw-002.jpg 153,1651,2066,310 fit 0.8
+  1 | B5/4t( A5/4t B5/4t)
+  2 | r4 F6/8t E6/8t D6/8t
+  3 | C6/8t( D6/16t C6/16t) B5/4 F3+D6/2)
+  4 | r4 D5/8t{p} C5/8t B4/8t
+  5 | C5/8 F5/4.
+  6 | D5/8( F5/4.)
+  7 | G5/8t A5/8t B5/8t G5/8( F5/16 r4 F5/16 E5/4 E5/8) F5/16 G5/16~ G5/4
+== /home/claude/tc/raw-002.jpg 149,2014,2072,316 fit 1
+  1 | F5/8t G5/8t A5/8t~ A5/8t{gB5} G5/8t F5/8t
+  2 | F5/8t( D5/8t F5/8t) E5/4~
+  3 | E5/4 D5/8t E5/8t F5/8t
+  4 | D5/2~
+  5 | D5/2
+  6 | r1
+  7 | r1
+  8 | r1
+  9 | r8 D6/8~({mf} D6/8t C6/8t B5/8t
+ 10 | C6/8.) F6/16~ F6/8t C6/8t( B5/8t)
+== /home/claude/tc/raw-002.jpg 150,2319,2072,316 fit 1
+  1 | A5/4 D6/8( A5/8
+  2 | B5/2)
+  3 | B5/8 G5/8 C6/8 G5/8
+  4 | A5/4 A5/8t{gB5} G5/8t F5/8t
+  5 | F5/4t( B5/4t F5/4t)
+  6 | F5/16t( G5/16t F5/16t) E5/8~ E5/4
+  7 | E5/4) D5/8t( E5/8t F5/8t
+  8 | D5/8.{gC5} B4/16 r1 B4/8t C5/8t D5/8t)
+== /home/claude/tc/raw-002.jpg 154,2592,2066,316 fit 1
+  1 | F5/4t F5/4t G5/4t
+  2 | F5/4 B5/4~
+  3 | B5/8 A5/8 B5/8 C6/8
+  4 | B5/4t A5/4t B5/4t~
+  5 | B5/8. F6/16 F6/8t C6/8t B5/8t
+  6 | C6/4t B5/4t D6/4t
+  7 | D6/4 D6/8t C6/8t B5/8t
+  8 | C6/8. F6/16~ F6/8t C6/8t B5/8t
+== /home/claude/tc/raw-002.jpg 158,2865,2060,308 fit 1
+  1 | A5/4 D6/8 A5/8
+  2 | B5/8. B5/16~ B5/4
+  3 | r8 G5/8 C6/8 G5/8
+  4 | A5/4t A5/8t~ A5/8t G5/8t F5/8t
+  5 | F5/8. B5/16~ B5/8 F5/8
+  6 | F5/8. E5/16 E5/4
+  7 | G5/4 B5/4
+  8 | B5/4 E5/4

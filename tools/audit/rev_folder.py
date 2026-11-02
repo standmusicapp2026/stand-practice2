@@ -1,0 +1,26 @@
+import asyncio
+from playwright.async_api import async_playwright
+exec(open('/home/claude/tools/audit/rev_phone.py').read().split('async def main')[0])
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch()
+        ph = await (await b.new_context(viewport={'width':393,'height':852}, is_mobile=True, has_touch=True, user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')).new_page()
+        await ph.add_init_script('window.__noTour = true;')
+        await ph.add_init_script('(' + SETUP + ')(); __T.list[0].fid="F1"; __T.list[0].folder="Bach";')
+        await ph.goto(U); await ph.wait_for_timeout(1500)
+        await ph.evaluate("() => { document.querySelector('#welGo')?.click(); document.querySelector('.tour-skip')?.click(); }")
+        await ph.wait_for_timeout(2500)
+        await ph.evaluate("() => document.querySelector('#phScoresBar').click()"); await ph.wait_for_timeout(700)
+        # user drags Beta into the iPad folder 'Bach' (moveTo -> place[B] = 'ipad:F1')
+        await ph.evaluate("async () => { const { getSetting, setSetting } = await import('/js/db.js'); }")
+        card = await ph.query_selector('.phs-card[data-score=B]'); bx = await card.bounding_box()
+        fold = await ph.query_selector('.phs-folder'); fx = await fold.bounding_box()
+        await ph.mouse.move(bx['x']+30, bx['y']+30); await ph.mouse.down(); await ph.wait_for_timeout(500)
+        await ph.mouse.move(fx['x']+30, fx['y']+30, steps=8); await ph.mouse.up(); await ph.wait_for_timeout(600)
+        print('org', await ph.evaluate("async () => { const { getSetting } = await import('/js/db.js'); return JSON.stringify(await getSetting('ipadOrg')); }"))
+        # on the iPad, Alpha is taken out of Bach (folder now empty, so the iPad drops it)
+        await ph.evaluate("() => { __T.list[0].fid=''; __T.list[0].folder=''; }")
+        await ph.evaluate("() => window.__phs.refresh(true)"); await ph.wait_for_timeout(1500)
+        print('root cards', await ph.evaluate("() => [...document.querySelectorAll('#phsGrid .phs-card')].map(e => e.dataset.score || ('folder:' + e.dataset.folder))"))
+        await b.close()
+asyncio.run(main())
