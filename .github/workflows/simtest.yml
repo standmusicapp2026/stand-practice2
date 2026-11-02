@@ -1,0 +1,49 @@
+name: Simulator self-test
+
+# Runs when the 'simtest' branch is pushed (or by hand): it takes about 20–30 minutes of a Mac, so it
+# is not run on every build.
+on:
+  push:
+    branches: [simtest]
+  workflow_dispatch:
+
+jobs:
+  simtest:
+    runs-on: macos-15-intel
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bundle the web app (with the self-test)
+        run: |
+          mkdir -p ios/Stand/www
+          cp -R index.html manifest.webmanifest css js vendor icons ios/Stand/www/
+          if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
+          cp ios/simtest/selftest.js ios/Stand/www/js/selftest.js
+          mkdir -p ios/Stand/www/_selftest && cp ios/simtest/vector8.pdf ios/Stand/www/_selftest/
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build for the simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          cd ios
+          xcodebuild -project Stand.xcodeproj -target Stand -configuration Debug -sdk iphonesimulator -arch x86_64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" ONLY_ACTIVE_ARCH=NO \
+            build | tail -n 30
+          ls build/Debug-iphonesimulator/
+
+      - name: Run on the simulators
+        run: |
+          xcrun simctl list runtimes
+          bash ios/simtest/run.sh ios/build/Debug-iphonesimulator/Stand.app simtest-out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simtest
+          path: simtest-out

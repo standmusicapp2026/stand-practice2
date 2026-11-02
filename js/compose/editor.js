@@ -96,8 +96,14 @@ async function closeCompose() {
   D.refreshLibrary();
 }
 function saveSoon(thumb) { clearTimeout(C.saveT); C.saveT = setTimeout(() => save(thumb), 900); }
+// leaving Stand (or iOS closing it) writes the composition at once: the last edit is never left waiting
+{
+  const now = () => { if (!C.score || !C.id) return; try { flushLayoutNames(); } catch {} if (C.saveT) save(false).catch(() => {}); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') now(); });
+  window.addEventListener('pagehide', now);
+}
 async function save(thumb) {
-  clearTimeout(C.saveT);
+  clearTimeout(C.saveT); C.saveT = 0;
   if (!C.score || !C.id) return;
   await db.put('files', { id: C.fileId, kind: 'comp', data: C.score });
   const meta = await db.get('scores', C.id);

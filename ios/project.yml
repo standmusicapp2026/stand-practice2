@@ -2,7 +2,7 @@ name: Stand
 options:
   bundleIdPrefix: com.paulo
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.4"
   createIntermediateGroups: true
 targets:
   Stand:

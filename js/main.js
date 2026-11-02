@@ -20,7 +20,7 @@ import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
 import { ask } from './dialog.js';
-import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive } from './ink.js';
+import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPicture, exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
@@ -37,7 +37,7 @@ import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
 import { startTour } from './tour.js';
-import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange, makeMirror, restoreMirror } from './backup.js';
+import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange, makeMirror, restoreMirror, mirrorSig } from './backup.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -251,6 +251,7 @@ function hidePanel() {
   if (openPanel === 'record' && !(recState && recState.iphone)) hideRemotePreview();
   if (openPanel === 'record') { clearTimeout(VW.t); VW.t = setTimeout(() => { if (!recState && !vrec.recording) vrec.close(); }, 1500); }
   if (openPanel === 'pages' && PG.staged) { const was = openPanel; openPanel = null; $('#panel-' + was).hidden = true; savePageChanges(); }
+  if (openPanel === 'pages' || openPanel === null) freePageThumbs();
   if (openPanel === 'tuner') { pauseHarmonicListening(); if (tuner.active && !TU.mini) { tuner.stop(); tuner.onReading(null); updateTunerButtons(); } }
   if (openPanel === 'app' && wink.testing) { wink.testing = false; $('#winkTest').textContent = 'Test'; $('#winkMeter').hidden = true; sendFace(); }
   if (openPanel === 'app' && tapTest.on) { tapTest.on = false; $('#tapTest').textContent = 'Test'; $('#tapLast').textContent = ''; sendTap(); }
@@ -492,12 +493,27 @@ function thumbURL(s) {
   const u = thumbURLs.get(s.id);
   if (!thumbChecked.has(s.id) && canRemakeThumb(s)) {
     thumbChecked.add(s.id);
-    const im = new Image();
-    im.onload = () => { if (looksBlack(im)) fixThumb(s); };
-    im.onerror = () => fixThumb(s);
-    im.src = u;
+    // (looked at one after another, a few at a time: a library of a thousand scores checked all at
+    // once kept the iPad busy for seconds just after it opened)
+    THCK.q.push(() => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => { try { if (looksBlack(im)) fixThumb(s); } catch {} res(); };
+      im.onerror = () => { fixThumb(s); res(); };
+      im.src = u;
+    }));
+    if (!THCK.on) runThumbChecks();
   }
   return u;
+}
+const THCK = { q: [], on: false };
+async function runThumbChecks() {
+  THCK.on = true;
+  while (THCK.q.length) {
+    const job = THCK.q.shift();
+    await Promise.race([job(), new Promise((r) => setTimeout(r, 3000))]);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  THCK.on = false;
 }
 const loadsWell = (blob) => new Promise((res) => {
   if (!blob) { res(false); return; }
@@ -4988,6 +5004,14 @@ function pageThumb(o) {
   }
   return t.cv;
 }
+// The Pages panel closed: its pictures go (500 of them held 90 MB of canvas memory until the score
+// was closed — more than an older iPad gives a page)
+function freePageThumbs() {
+  THQ.q = [];
+  for (const t of PG.thumbs.values()) { if (t.io) { t.io.disconnect(); t.io = null; } t.job = null; if (t.cv) { t.cv.width = 0; t.cv.height = 0; } }
+  PG.thumbs.clear(); PG.scoreId = null;
+  const g = $('#pageGrid'), tg = $('#pgTrashGrid'); if (g) g.textContent = ''; if (tg) tg.textContent = '';
+}
 async function runThumbs() {
   if (THQ.busy) return; THQ.busy = true;
   while (THQ.q.length) { const job = THQ.q.shift(); try { await job(); } catch {} }
@@ -5171,7 +5195,7 @@ $('#pgDelete').addEventListener('click', () => {
       setTimeout(() => { g.remove(); if (cell) { cell.style.visibility = ''; cell.classList.add('landed'); setTimeout(() => cell.classList.remove('landed'), 900); } }, 480);
     }
   }, from.size ? 260 : 0);
-  setTimeout(() => savePageChanges(true).then(() => { renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); }), from.size ? 800 : 0);
+  setTimeout(() => savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); }), from.size ? 800 : 0);
 });
 // keep the changes: the score or notebook is laid out once, with the panel closed
 async function savePageChanges(quiet) {
@@ -5230,6 +5254,16 @@ $('#pgGlue').addEventListener('click', async () => {
   if (V.doc.piece(at) || (!V.doc.composite(at) && V.doc.piece(at + 1))) { toast('Lines can be moved between whole pages (not pieces of a cut page).', 3500); return; }
   const r = await openGluer({ doc: V.base, orig: o, next, glue: cur, pageLabel: `Page ${at + 1} and ${at + 2}` });
   if (!r) return;
+  // markings belong to the page as it was drawn: the joined page has its own. Said before, so that
+  // nothing looks lost (they are all kept, and come back when the lines go back)
+  {
+    const has = async (k) => { try { const L = liveInk(k); if (L) return L.length > 0; const rec = await db.get('ink', k); return !!(rec && (rec.items || []).some((x) => x.t !== 'passage')); } catch { return false; } };
+    const before = V.doc.composite(at) ? V.score.id + ':' + o + '+' + next : null;
+    const hidden = r.remove ? (before && await has(before)) : (!V.doc.composite(at) && (await has(V.score.id + ':' + o) || await has(V.score.id + ':' + next)));
+    if (hidden && !(await ask(r.remove ? 'Put the lines back?' : 'Move the lines up?', { ok: r.remove ? 'Put Back' : 'Move Up', cancel: 'Cancel',
+      sub: r.remove ? 'What you wrote on the joined page is kept, but it shows only while the lines are joined. Join them again to see it.'
+        : 'The markings on these pages are kept, but they show only on the pages as they are now. On the joined page you write afresh; put the lines back to see the old markings again.' }))) return;
+  }
   V.score.glue = { ...(V.score.glue || {}) };
   if (r.remove) delete V.score.glue[o]; else V.score.glue[o] = r;
   await db.put('scores', V.score);
@@ -5463,9 +5497,9 @@ const practice = {
   toolsActive() {
     try { return metro.running || drone.running || scale.playing || tuner.running || !!recState || player.playing || !ref.paused || (P.pomo.running && P.pomo.phase === 'work'); } catch { return false; }
   },
-  flush() {
+  flush(leaving) {
     const t = Date.now(), dt = Math.min(60, (t - this.lastTick) / 1000); this.lastTick = t;
-    if (document.visibilityState !== 'visible' || dt <= 0) return;
+    if ((!leaving && document.visibilityState !== 'visible') || dt <= 0) return;
     const tools = this.toolsActive();
     if (!this.scoreId && !tools) return;
     const k = dayKey(), d = this.day(k);
@@ -5885,7 +5919,8 @@ $('#icHide').addEventListener('click', () => { S.ipadCard = false; saveSettings(
 $('#icCode').addEventListener('input', (e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); e.target.value = v; if (v.length === 6) { e.target.blur(); getIpadPractice(false, v); } });
 $('#icStats').addEventListener('click', () => showPanel('goal'));
 $('#icPieces').addEventListener('click', () => showPanel('goal'));
-document.addEventListener('visibilitychange', () => { practice.lastTick = Date.now(); if (document.visibilityState === 'visible' && V.doc) keepAwake(); });
+// (going to the background, the time up to that moment counts; coming back, it starts again from now)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { try { practice.flush(true); } catch {} } else practice.lastTick = Date.now(); if (document.visibilityState === 'visible' && V.doc) keepAwake(); });
 // going to the background: everything waiting is written now (iOS may end Stand there)
 function saveAllNow() {
   flushInk(); flushEdited();
@@ -6107,7 +6142,8 @@ $$('#tunerTabs button').forEach((b) => b.addEventListener('click', () => setTune
 const STEADY = ['#tCents', '#tHz', '#tendText', '#intoSummary', '#hSrc', '#hMatch'];
 const steadyReset = () => STEADY.forEach((q) => { const e = $(q); if (e) e.style.minHeight = ''; });
 if (window.ResizeObserver) {
-  const ro = new ResizeObserver((es) => { for (const x of es) { const e = x.target, h = e.offsetHeight; if (h && h > (parseFloat(e.style.minHeight) || 0)) e.style.minHeight = h + 'px'; } });
+  // (set in the next frame: set inside the observer's own call it made WebKit report a loop)
+  const ro = new ResizeObserver((es) => { const list = es.map((x) => x.target); requestAnimationFrame(() => { for (const e of list) { const h = e.offsetHeight; if (h && h > (parseFloat(e.style.minHeight) || 0)) e.style.minHeight = h + 'px'; } }); });
   STEADY.forEach((q) => { const e = $(q); if (e) ro.observe(e); });
   let lastW = innerWidth; addEventListener('resize', () => { if (innerWidth !== lastW) { lastW = innerWidth; steadyReset(); } });
   $$('#tunerTabs button').forEach((b) => b.addEventListener('click', steadyReset));
@@ -7188,8 +7224,8 @@ async function finishNativeVideo(st, name, given) {
     let audio = null;
     if (ev.audio) { const ar = await fetch(ev.audio); if (ar.ok) audio = await decodeVideoAudio(await ar.blob()); }
     if (!audio) audio = await decodeVideoAudio(blob);
-    for (const p of [ev.video, ev.audio]) if (p) NATIVE.standDone.postMessage({ path: p });
-    if (blob.size < 2000) { toast('That was too short to keep.'); return null; }
+    const letGo = () => { for (const p of [ev.video, ev.audio]) if (p) NATIVE.standDone.postMessage({ path: p }); };
+    if (blob.size < 2000) { letGo(); toast('That was too short to keep.'); return null; }
     const thumb = await videoThumb(blob);
     const take = { id: uid(), kind: 'video', mime: blob.type, scoreId: st.scoreId, page: st.page, name, created: Date.now(), mirror: !!ev.mirror, thumb, fav: false };
     await db.put('files', { id: 'video:' + take.id, data: blob });
@@ -7197,6 +7233,8 @@ async function finishNativeVideo(st, name, given) {
       take.sr = audio.sr; take.dur = audio.data.length / audio.sr; take.peaks = computePeaks(audio.data); take.peak = peakOf(audio.data); take.pcm = true;
       await db.put('files', { id: 'audio:' + take.id, data: audio.data });
     } else { take.pcm = false; take.dur = (performance.now() - st.t0) / 1000; }
+    // (the camera's own file goes only now that the video is safely in Stand)
+    letGo();
     $('#toast').hidden = true;
     return take;
   } catch (e) { console.error(e); toast('The video could not be saved.'); return null; }
@@ -8673,19 +8711,20 @@ async function mirrorBackup({ quiet = false } = {}) {
   const startedDirty = dirtyAt();
   try {
     if (!quiet) toast('Bringing the backup in Files › Stand up to date…', 120000);
-    const { lib, bins } = await makeMirror();
     const was = (await getSetting('mirrorState', null)) || {};
     const now = {};
     let wrote = 0;
-    for (const b of bins) {
-      now[b.path] = b.sig;
-      if (was[b.path] === b.sig) continue;
+    // each piece is looked at (and written if it changed) as it is found, then let go of
+    const { lib } = await makeMirror(async (b) => {
+      const sig = b.sigFn ? b.sigFn() : await mirrorSig(b.blob);
+      now[b.path] = sig;
+      if (was[b.path] === sig) return;
       const slash = b.path.lastIndexOf('/');
-      await saveInStandFolder(b.blob, 'Backup/' + b.path.slice(0, slash), b.path.slice(slash + 1));
+      await saveInStandFolder(b.blob || b.make(), 'Backup/' + b.path.slice(0, slash), b.path.slice(slash + 1));
       wrote++;
       // (kept as it goes: an interrupted backup carries on from here next time)
       await setSetting('mirrorState', { ...was, ...now });
-    }
+    });
     // the library itself last: a backup is only complete once it is written
     await saveInStandFolder(lib, 'Backup', 'Stand library.json');
     if (!was['Read me.txt']) await saveInStandFolder(new Blob([`Stand — your backup
@@ -8734,6 +8773,8 @@ async function autoMirror(why) {
   if (!(dirtyAt() > at)) return;
   if (why === 'idle' && (Date.now() - dirtyAt() < 2 * 60000 || Date.now() - at < 20 * 60000)) return;
   if (why === 'idle' && (!$('#score').hidden || openPanel || recState || !$('#compose').hidden)) return;
+  // (never while recording: a recording going on in the background needs the memory and the time)
+  if (recState) return;
   await mirrorBackup({ quiet: true });
 }
 setInterval(() => { if (document.visibilityState === 'visible') autoMirror('idle').catch(() => {}); }, 60000);
@@ -9779,3 +9820,60 @@ function wordRead(job, text) {
   document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) setTimeout(show, 50); });
   $('#crashClear')?.addEventListener('click', () => { put(KC, []); show(); });
 })();
+
+// ---------- a problem report: one text file, sent from the share sheet (mail, WhatsApp, AirDrop) ----------
+// Only what helps find the cause: the device and system, the app's version, what Stand noted lately
+// (errors, the times it closed by itself, iOS crash and hang reports), and how big the library is.
+// Never the scores, the recordings or anything written.
+function nativeBundle() {
+  return new Promise((res) => {
+    const h = NATIVE && NATIVE.standDiag; if (!h) { res(null); return; }
+    const t = setTimeout(() => { window.standDiagBundle = null; res(null); }, 4000);
+    window.standDiagBundle = (b) => { clearTimeout(t); window.standDiagBundle = null; res(b); };
+    try { h.postMessage({ op: 'bundle' }); } catch { clearTimeout(t); res(null); }
+  });
+}
+async function problemReport() {
+  const L = [];
+  const add = (...x) => L.push(x.join(''));
+  const nb = await nativeBundle();
+  add('Stand problem report · ', new Date().toString());
+  if (nb) add('App ', nb.version, ' · ', nb.model, ' · iPadOS/iOS ', nb.ios, ' · memory ', nb.memoryMB, ' MB · free space ', nb.freeMB, ' MB', nb.lowPower ? ' · Low Power Mode' : '');
+  add('Screen ', screen.width, '×', screen.height, ' @', devicePixelRatio, ' · window ', innerWidth, '×', innerHeight, ' · ', navigator.userAgent);
+  try { const e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; if (e) add('Storage used ', Math.round((e.usage || 0) / 1e6), ' MB of ', Math.round((e.quota || 0) / 1e6), ' MB'); } catch {}
+  try {
+    const all = await db.all('scores');
+    const kinds = {}; let pages = 0; for (const x of all) { kinds[x.kind || 'pdf'] = (kinds[x.kind || 'pdf'] || 0) + 1; pages += x.pages || 0; }
+    const inkKeys = await db.keys('ink').catch(() => []), takes = await db.keys('takes').catch(() => []);
+    add('Library: ', all.length, ' scores (', Object.entries(kinds).map(([k, v]) => v + ' ' + k).join(', '), '), ', pages, ' pages, ', inkKeys.length, ' pages with markings, ', takes.length, ' recordings, ', FOLD.list.length, ' folders');
+  } catch (e) { add('Library: could not be counted (', e && e.message, ')'); }
+  add('Settings: instrument ', S.instrument, ', winks ', !!S.wink, ', pen opens ', S.penOpens !== false, ', finger writes ', !!INK.finger);
+  add('');
+  add('— Errors in this session —');
+  for (const x of (window.__standErrors || [])) add(new Date(x.t).toLocaleTimeString(), '  ', x.line);
+  if (!(window.__standErrors || []).length) add('(none)');
+  add('');
+  add('— Times Stand closed by itself —');
+  const cr = (window.__crashes && window.__crashes()) || [];
+  for (const c of cr) add(new Date(c.t).toLocaleString(), '  ', c.what || '', c.build ? ' · ' + c.build : '');
+  if (!cr.length) add('(none)');
+  if (nb) {
+    add(''); add('— Events log (newest last) —'); add(nb.log || '(empty)');
+    for (const r of nb.reports || []) { add(''); add('— iOS report ', r.name, ' —'); add(r.text); }
+  }
+  return L.join('\n');
+}
+$('#sendReport').addEventListener('click', async () => {
+  const b = $('#sendReport'); b.disabled = true;
+  try {
+    const text = await problemReport();
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    await shareBlob(new Blob([text], { type: 'text/plain' }), `Stand report ${stamp}.txt`);
+  } catch (e) { toast('The report could not be made: ' + ((e && e.message) || e), 4000); }
+  finally { b.disabled = false; }
+});
+
+// (the page started: the notice for a failed start is not needed)
+window.__standUp = true;
+// the simulator test build only: the app runs its own self-test (the file is not in the app sent out)
+if (window.standCaps && window.standCaps.selfTest) import('./selftest.js').catch((e) => nlog('selftest: ' + e.message));

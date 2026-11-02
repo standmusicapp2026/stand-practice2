@@ -17,6 +17,41 @@
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/compose.css">
 <link rel="stylesheet" href="css/studio.css">
+<script>
+// What goes wrong in the page is written down (Files › Stand › Diagnostics on the iPad), and kept for a
+// problem report. The same error is written once a minute at most, 40 a session at most.
+(function () {
+  var E = window.__standErrors = [], seen = {}, n = 0;
+  function note(kind, msg, where, stack) {
+    try {
+      var key = kind + msg + where, t = Date.now();
+      if (seen[key] && t - seen[key] < 60000) return; seen[key] = t;
+      var line = kind + ': ' + String(msg || '').slice(0, 200) + (where ? ' @ ' + where : '') + (stack ? ' | ' + String(stack).replace(/\s+/g, ' ').slice(0, 400) : '');
+      E.push({ t: t, line: line }); if (E.length > 60) E.shift();
+      if (++n > 40) return;
+      var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standDiag;
+      if (h) h.postMessage({ op: 'log', text: line.slice(0, 300) });
+    } catch (e) {}
+  }
+  window.__standNote = note;
+  window.addEventListener('error', function (e) {
+    if (e && e.target && e.target !== window && (e.target.src || e.target.href)) { note('load', 'could not load', String(e.target.src || e.target.href).split('/').slice(-2).join('/')); return; }
+    note('error', e && e.message, e && e.filename ? String(e.filename).split('/').pop() + ':' + e.lineno + ':' + e.colno : '', e && e.error && e.error.stack);
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason; note('promise', r && r.message || String(r), '', r && r.stack);
+  });
+  // Stand did not start (an old system, a file that did not load): say so, instead of a blank screen
+  setTimeout(function () {
+    if (window.__standUp) return;
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;inset:auto 16px 16px 16px;z-index:9999;padding:14px 16px;border-radius:14px;background:#2a1215;color:#fff;font:15px -apple-system,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.4)';
+    d.textContent = 'Stand could not start properly. Please close it and open it again. If this keeps happening, it needs iPadOS 16.4 or later.' + (E.length ? ' (' + E[E.length - 1].line.slice(0, 160) + ')' : '');
+    document.body && document.body.append(d);
+    note('start', 'Stand did not start within 20 s', '');
+  }, 20000);
+})();
+</script>
 </head>
 <body>
 
@@ -1081,6 +1116,10 @@
     <section class="sub-card">
       <div class="sub-head"><div><h3>Backup to iCloud Drive</h3><p class="hint" id="bkSettingsState">Everything in Stand, kept safe outside the app.</p></div></div>
       <button class="btn" data-panel="backup"><svg><use href="#i-cloud"/></svg><span>Backup and restore</span></button>
+    </section>
+    <section class="sub-card">
+      <div class="sub-head"><div><h3>Something went wrong?</h3><p class="hint">Sends what Stand noted about this iPad and what went wrong lately (no scores, no recordings, nothing you wrote). Add a line about what you were doing.</p></div></div>
+      <button class="btn" id="sendReport"><svg><use href="#i-share"/></svg><span>Send a problem report</span></button>
     </section>
     <button class="btn ghost" id="tourAgain">Show the tour again</button>
     <p class="hint center">Stand 2.10 · everything stays on your device</p>

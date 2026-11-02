@@ -291,7 +291,10 @@ async function openDocumentOne(file, known) {
         const task = page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: vp, background: 'rgb(255,255,255)' });
         // a drawing no longer wanted (the page was turned past) stops at once
         if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
-        await task.promise;
+        // (a drawing stopped because it is no longer wanted is not an error: whoever asked knows it was stopped)
+        let stopped = false;
+        await task.promise.catch((e) => { if (e && e.name === 'RenderingCancelledException' && opts.ctl && opts.ctl.aborted) { stopped = true; return; } throw e; });
+        if (stopped) return;
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
         if (key && (opts.keep || performance.now() - t0 > PIX_SLOW) && !looksBlank(canvas) && !looksBlack(canvas)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
         // a heavy page just drawn big enough is its own light copy (no need to draw it twice)

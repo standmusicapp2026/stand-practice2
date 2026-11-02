@@ -89,7 +89,12 @@ final class StandNativeExtras: NSObject {
             outFiles[id] = (url, h, (body["meta"] as? [String: Any]) ?? [:])
         case "fileChunk":
             guard let id = body["id"] as? String, let f = outFiles[id], let b64 = body["data"] as? String, let d = Data(base64Encoded: b64) else { return }
-            f.handle.write(d)
+            do { try f.handle.write(contentsOf: d) } catch {
+                // (a full disk: the sending stops with a message, never a crash)
+                try? f.handle.close(); try? FileManager.default.removeItem(at: f.url); outFiles.removeValue(forKey: id)
+                reportFile(id, error: "There is not enough space on this device.")
+                return
+            }
             // the page sends the next piece only when this one is written (a long video never piles up in memory)
             js("window.standPeerChunkOk && window.standPeerChunkOk(\(jsValue(id)))")
         case "fileEnd":

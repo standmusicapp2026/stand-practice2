@@ -62,8 +62,10 @@ async function collect(withTakes) {
 // How big a backup would be, with and without recordings.
 export async function backupSizes() {
   let all = 0, rec = 0;
-  for (const f of await db.all('files')) {
-    if (/^(ipadcopy|follow):/.test(String(f.id))) continue;   // (copies and readings made again by themselves)
+  // (one file at a time: never the whole library in memory)
+  for (const id of await db.keys('files')) {
+    if (/^(ipadcopy|follow):/.test(String(id))) continue;   // (copies and readings made again by themselves)
+    const f = await db.get('files', id); if (!f) continue;
     const n = sizeOf(f.data);
     all += n; if (/^(audio|video):/.test(String(f.id))) rec += n;
   }
@@ -441,41 +443,74 @@ async function sigOf(blob) {
   const tail = blob.size > 262144 ? new Uint8Array(await blob.slice(Math.max(262144, blob.size - 65536)).arrayBuffer()) : new Uint8Array(0);
   return blob.size + ':' + ((crc32(tail, crc32(head)) ^ 0xFFFFFFFF) >>> 0).toString(36);
 }
-export async function makeMirror() {
-  const bins = [];   // { path, blob }
+// The pieces of the mirror are handed to onBin({ path, blob | make, sig | sigFn }) one record at a
+// time, as they are found, and let go of straight after: the library is never all in memory at once
+// (before, every PDF and every recording was loaded, and each recording made into a WAV just to see
+// whether it had changed: with a big library iOS ended Stand as you left it).
+export async function makeMirror(onBin) {
   const scores = await db.all('scores');
-  const files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow):/.test(String(f.id)));
   const takes = await db.all('takes');
   const srOf = new Map(takes.map((t) => ['audio:' + t.id, t.sr || 48000]));
-  let cur = null;
+  let cur = null, pend = [];
   const pack = (v, key) => {
     const base = 'files/' + fileTag(cur) + (key && key.startsWith('img:') ? '-' + String(+key.slice(4) + 1).padStart(3, '0') : '');
     if (v instanceof Blob) {
       const ext = /pdf/.test(v.type) ? '.pdf' : /png/.test(v.type) ? '.png' : /jpe?g/.test(v.type) ? '.jpg' : /quicktime/.test(v.type) ? '.mov' : /mp4/.test(v.type) ? '.mp4' : /webm/.test(v.type) ? '.webm' : '.bin';
-      const p = base + ext; bins.push({ path: p, blob: v }); return { $path: p, $t: 'blob', mime: v.type, n: v.size };
+      const p = base + ext; pend.push({ path: p, blob: v }); return { $path: p, $t: 'blob', mime: v.type, n: v.size };
     }
     if (v instanceof ArrayBuffer) {
       const isPdf = v.byteLength > 4 && new TextDecoder().decode(new Uint8Array(v, 0, 4)) === '%PDF';
-      const p = base + (isPdf ? '.pdf' : '.bin'); bins.push({ path: p, blob: new Blob([v], isPdf ? { type: 'application/pdf' } : {}) }); return { $path: p, $t: 'ab', n: v.byteLength };
+      const p = base + (isPdf ? '.pdf' : '.bin'); pend.push({ path: p, blob: new Blob([v], isPdf ? { type: 'application/pdf' } : {}) }); return { $path: p, $t: 'ab', n: v.byteLength };
     }
     if (ArrayBuffer.isView(v)) {
       const t = v instanceof Float32Array ? 'f32' : v instanceof Int16Array ? 'i16' : 'u8';
-      if (t === 'f32' && key === 'data' && String(cur).startsWith('audio:')) { const p = base + '.wav'; bins.push({ path: p, blob: wavOf(v, srOf.get(cur) || 48000) }); return { $path: p, $t: 'wav', n: v.length }; }
-      const p = base + '.' + t; bins.push({ path: p, blob: new Blob([v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)]) }); return { $path: p, $t: t, n: v.byteLength };
+      if (t === 'f32' && key === 'data' && String(cur).startsWith('audio:')) {
+        // (the WAV is made only if it has to be written; whether it changed is told from its ends)
+        const p = base + '.wav', sr = srOf.get(cur) || 48000;
+        pend.push({ path: p, make: () => wavOf(v, sr), sigFn: () => wavSig(v, sr) }); return { $path: p, $t: 'wav', n: v.length };
+      }
+      const p = base + '.' + t; pend.push({ path: p, blob: new Blob([v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)]) }); return { $path: p, $t: t, n: v.byteLength };
     }
     if (Array.isArray(v)) return v.map((x, i) => pack(x, key === 'data' ? 'img:' + i : key));
     if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) o[k] = pack(x, k); return o; }
     return v;
   };
-  const pfiles = files.map((f) => { cur = f.id; const r = pack(f); cur = null; return r; });
+  const flush = async () => { const list = pend; pend = []; for (const b of list) await onBin(b); };
+  const packOne = async (x, tag) => { cur = tag; const r = pack(x); cur = null; await flush(); return r; };
+  // the files one by one (a PDF, a recording, a composition…)
+  const pfiles = [];
+  for (const id of await db.keys('files')) {
+    if (/^(ipadcopy|follow):/.test(String(id))) continue;
+    const f = await db.get('files', id); if (!f) continue;
+    pfiles.push(await packOne(f, f.id));
+  }
   // (anything outside a file record that is binary: scores' covers, settings with pictures)
-  // (each score's cover, and anything binary in the markings or settings, under a name of its own)
-  const each = (list, tag) => list.map((x) => { cur = tag(x); const r = pack(x); cur = null; return r; });
+  const each = async (list, tag) => { const out = []; for (const x of list) out.push(await packOne(x, tag(x))); return out; };
   const kv = (await db.all('kv')).filter((x) => !MIRROR_LOCAL.has(x.k));
-  const lib = { magic: 'stand-mirror', v: 1, made: Date.now(), scores: each(scores, (x) => 'score-' + x.id), files: pfiles, ink: each(await db.all('ink'), (x) => 'ink-' + x.key), takes: each(takes, (x) => 'take-' + x.id), kv: each(kv, (x) => 'kv-' + x.k) };
-  for (const b of bins) b.sig = await sigOf(b.blob);
-  return { lib: new Blob([JSON.stringify(lib)], { type: 'application/json' }), bins };
+  const lib = { magic: 'stand-mirror', v: 1, made: Date.now(), scores: await each(scores, (x) => 'score-' + x.id), files: pfiles, ink: await each(await db.all('ink'), (x) => 'ink-' + x.key), takes: await each(takes, (x) => 'take-' + x.id), kv: await each(kv, (x) => 'kv-' + x.k) };
+  return { lib: new Blob([JSON.stringify(lib)], { type: 'application/json' }) };
 }
+// The signature sigOf would give the WAV of f32, made from just the bytes it looks at (the start and
+// the end), without making the whole WAV.
+function wavSig(f32, sr) {
+  const n = f32.length, size = 44 + n * 2;
+  const hdr = new Uint8Array(new DataView((() => { const b = new DataView(new ArrayBuffer(44)); const w = (o, s2) => { for (let i = 0; i < s2.length; i++) b.setUint8(o + i, s2.charCodeAt(i)); };
+    w(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+    b.setUint32(24, sr, true); b.setUint32(28, sr * 2, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true); return b.buffer; })()).buffer);
+  const range = (a, z) => {
+    const out = new Uint8Array(Math.max(0, z - a));
+    for (let k = a; k < z; k++) {
+      if (k < 44) { out[k - a] = hdr[k]; continue; }
+      const i = (k - 44) >> 1, v = (Math.max(-1, Math.min(1, f32[i])) * 32767) | 0;   // (as DataView.setInt16 stores it)
+      const u = v & 0xFFFF; out[k - a] = (k - 44) & 1 ? u >> 8 : u & 0xFF;
+    }
+    return out;
+  };
+  const head = range(0, Math.min(262144, size));
+  const tail = size > 262144 ? range(Math.max(262144, size - 65536), size) : new Uint8Array(0);
+  return size + ':' + ((crc32(tail, crc32(head)) ^ 0xFFFFFFFF) >>> 0).toString(36);
+}
+export { sigOf as mirrorSig, wavOf as mirrorWav, wavSig as mirrorWavSig };
 // Bring the library back from the folder. get(path) gives a Blob (or null) for a path in it.
 export async function restoreMirror(get) {
   const libBlob = await get('Stand library.json');

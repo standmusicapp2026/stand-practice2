@@ -31,7 +31,7 @@ enum StandLog {
         queue.async {
             let url = dir.appendingPathComponent("events.log")
             if let h = try? FileHandle(forWritingTo: url) {
-                h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
+                _ = try? h.seekToEnd(); try? h.write(contentsOf: Data(line.utf8)); try? h.close()
             } else {
                 try? line.data(using: .utf8)!.write(to: url)
             }
@@ -97,7 +97,13 @@ final class StandFiles {
             open[id] = (h, tmp, dest)
         case "chunk":
             guard let e = open[id], let b64 = body["data"] as? String, let data = Data(base64Encoded: b64) else { fail(id, "chunk"); return }
-            e.0.write(data)
+            // (a full disk: an error the page is told about, never a crash — the old write(_:) ended the app)
+            do { try e.0.write(contentsOf: data) } catch {
+                try? e.0.close(); try? FileManager.default.removeItem(at: e.1); open.removeValue(forKey: id)
+                send?("standSaved", ["id": id, "ok": false, "error": "There is not enough space on this device (" + error.localizedDescription + ")"])
+                StandLog.write("save failed: " + error.localizedDescription)
+                return
+            }
             // (files ≥ 2: the page sends the next piece when this one is written)
             send?("standSavedChunk", ["id": id])
         case "end":
@@ -105,8 +111,9 @@ final class StandFiles {
             let (h, tmp, dest) = e
             try? h.close()
             do {
-                if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-                try FileManager.default.moveItem(at: tmp, to: dest)
+                // (the old file is swapped for the new one in one step: never a moment with neither)
+                if FileManager.default.fileExists(atPath: dest.path) { _ = try FileManager.default.replaceItemAt(dest, withItemAt: tmp) }
+                else { try FileManager.default.moveItem(at: tmp, to: dest) }
                 let rel = String(dest.path.dropFirst(documentsDir.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 send?("standSaved", ["id": id, "ok": true, "path": rel])
             } catch {
@@ -173,6 +180,28 @@ final class StandFiles {
         switch body["op"] as? String {
         case "log":
             StandLog.write("page: " + (body["text"] as? String ?? ""))
+        case "bundle":
+            // for a problem report: the end of the events log and the newest iOS reports (crashes, hangs)
+            let log = (try? String(contentsOf: StandLog.dir.appendingPathComponent("events.log"), encoding: .utf8)) ?? ""
+            let files = ((try? FileManager.default.contentsOfDirectory(at: StandLog.dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+                .filter { $0.pathExtension == "json" }
+                .sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+            var reports: [[String: Any]] = []
+            for f in files.prefix(3) {
+                let text = (try? String(contentsOf: f, encoding: .utf8)) ?? ""
+                reports.append(["name": f.lastPathComponent, "text": String(text.prefix(40000))])
+            }
+            let info = Bundle.main.infoDictionary ?? [:]
+            var sys = utsname(); uname(&sys)
+            let model = withUnsafePointer(to: &sys.machine) { $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) } }
+            let free = ((try? documentsDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage).map { Int($0 / 1_000_000) } ?? -1
+            send?("standDiagBundle", [
+                "log": String(log.suffix(60000)), "reports": reports,
+                "version": "\(info["CFBundleShortVersionString"] ?? "?") (\(info["CFBundleVersion"] ?? "?"))",
+                "model": model, "ios": UIDevice.current.systemVersion,
+                "memoryMB": Int(ProcessInfo.processInfo.physicalMemory / 1_000_000), "freeMB": free,
+                "lowPower": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
         default:
             let files = ((try? FileManager.default.contentsOfDirectory(at: StandLog.dir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? [])
             let list: [[String: Any]] = files.map { f in

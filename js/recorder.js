@@ -136,12 +136,15 @@ export class Recorder {
       if (p.silence) { pieces.push(new Float32Array(p.silence)); continue; }
       let len = 0; for (const c of p.chunks) len += c.length;
       let d = new Float32Array(len); let o = 0; for (const c of p.chunks) { d.set(c, o); o += c.length; }
+      p.chunks = null;   // (let go at once: a long take is never held three times over)
       if (p.sr && p.sr !== sr) { const k = p.sr / sr, n = Math.floor(len / k), r = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * k, j = Math.floor(x), f = x - j; r[i] = (d[j] || 0) * (1 - f) + (d[j + 1] || 0) * f; } d = r; }
       pieces.push(d);
     }
     let len = 0; for (const d of pieces) len += d.length;
-    const data = new Float32Array(len);
-    let o = 0; for (const d of pieces) { data.set(d, o); o += d.length; }
+    // (one part, the usual case: it is the take, with no second copy)
+    let data;
+    if (pieces.length === 1) data = pieces[0];
+    else { data = new Float32Array(len); let o = 0; for (let i = 0; i < pieces.length; i++) { data.set(pieces[i], o); o += pieces[i].length; pieces[i] = null; } }
     this.chunks = []; this.parts = [];
     return { data, sr };
   }

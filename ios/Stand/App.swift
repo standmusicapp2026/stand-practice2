@@ -147,7 +147,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1 };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -294,7 +294,18 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         let files = (try? FileManager.default.contentsOfDirectory(at: incomingDir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         for f in files {
             let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
-            if Date().timeIntervalSince(date) > 3600 { try? FileManager.default.removeItem(at: f) }
+            guard Date().timeIntervalSince(date) > 3600 else { continue }
+            // a video filmed here (or sent by the iPhone) that never made it into Stand is not thrown
+            // away: it goes to Files › Stand › Recordings › Not saved, to keep or delete by hand
+            let n = f.lastPathComponent
+            if (n.hasPrefix("rec-") || n.hasPrefix("link-")) && ["mov", "mp4", "m4a", "webm"].contains(f.pathExtension.lowercased()) {
+                let keep = documentsDir.appendingPathComponent("Recordings", isDirectory: true).appendingPathComponent("Not saved", isDirectory: true)
+                try? FileManager.default.createDirectory(at: keep, withIntermediateDirectories: true)
+                let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd HH.mm"
+                let dest = keep.appendingPathComponent("Video " + df.string(from: date) + "-" + String(n.prefix(12)) + "." + f.pathExtension)
+                if (try? FileManager.default.moveItem(at: f, to: dest)) != nil { StandLog.write("kept an unsaved video in Recordings/Not saved: " + dest.lastPathComponent); continue }
+            }
+            try? FileManager.default.removeItem(at: f)
         }
     }
 
@@ -1027,7 +1038,7 @@ enum StandRunWatch {
         NSSetUncaughtExceptionHandler { e in
             let line = ISO8601DateFormatter().string(from: Date()) + "  exception: \(e.name.rawValue): \(e.reason ?? "") | " + e.callStackSymbols.prefix(12).joined(separator: " | ") + "\n"
             let url = StandLog.dir.appendingPathComponent("events.log")
-            if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+            if let h = try? FileHandle(forWritingTo: url) { _ = try? h.seekToEnd(); try? h.write(contentsOf: Data(line.utf8)); try? h.close() }
         }
         // a sign of life every 20 s while open, so the time of the end is known
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in

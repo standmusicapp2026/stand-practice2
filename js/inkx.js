@@ -245,7 +245,8 @@ function hasAlpha(c) {
   return false;
 }
 function loadBitmap(blob) {
-  return new Promise((res, rej) => { const im = new Image(); const u = URL.createObjectURL(blob); im.onload = () => res(im); im.onerror = rej; im.src = u; });
+  // (the address of the original photo is let go of once it is drawn: it held the whole photo)
+  return new Promise((res, rej) => { const im = new Image(); const u = URL.createObjectURL(blob); im.onload = () => { setTimeout(() => URL.revokeObjectURL(u), 0); res(im); }; im.onerror = (e) => { URL.revokeObjectURL(u); rej(e); }; im.src = u; });
 }
 function picture(id) {
   if (!id) return { ready: false, failed: true };
@@ -276,7 +277,7 @@ function lookCanvas(s, p) {
   const f = s.f || LOOK_DEFAULT, cr = s.cr || [0, 0, 1, 1];
   const key = `${s.id}|${cr.join(',')}|${f.b},${f.c},${f.s},${f.w},${f.bw}`;
   let c = looks.get(key);
-  if (c) return c;
+  if (c) { looks.delete(key); looks.set(key, c); return c; }   // (the most recently used stay)
   const iw = p.img.naturalWidth, ih = p.img.naturalHeight;
   const sx = cr[0] * iw, sy = cr[1] * ih, sw = Math.max(1, (cr[2] - cr[0]) * iw), sh = Math.max(1, (cr[3] - cr[1]) * ih);
   const k = Math.min(1, 1800 / Math.max(sw, sh));
@@ -295,7 +296,8 @@ function lookCanvas(s, p) {
     }
     g.putImageData(d, 0, 0);
   }
-  if (looks.size > 24) looks.delete(looks.keys().next().value);
+  // (fewer kept, and the one let go of is emptied: iOS keeps a canvas's memory until it is shrunk)
+  while (looks.size >= 12) { const k0 = looks.keys().next().value, c0 = looks.get(k0); looks.delete(k0); if (c0) { c0.width = 0; c0.height = 0; } }
   looks.set(key, c);
   return c;
 }

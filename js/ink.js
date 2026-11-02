@@ -412,9 +412,31 @@ let inkBusyAt = 0;
 export function inkActive() { inkBusyAt = performance.now(); }
 // how much longer to wait (0: go now) for work that began waiting at t0
 function idleWait(t0, quiet = 700, max = 6000) { const n = performance.now(); return n - inkBusyAt < quiet && n - t0 < max ? quiet - (n - inkBusyAt) + 20 : 0; }
-function writeLive(key) {
-  const e = LIVE.get(key); if (!e) return Promise.resolve();
+// Reading a page's markings can fail (iOS drops the database connection now and then, mostly just
+// back from the background). It is tried again; a page whose markings could still not be read is
+// never written over: what is written on it is added to what is stored, once it can be read.
+const UNREAD = new Map();    // key -> the layer whose stored markings could not be read
+async function readInk(key) {
+  let last;
+  for (const wait of [0, 250, 800, 2000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try { return { rec: await db.get('ink', key) }; } catch (e) { last = e; }
+  }
+  return { failed: true, error: last };
+}
+async function writeLive(key) {
+  const e = LIVE.get(key); if (!e) return;
   clearTimeout(e.t); e.t = 0;
+  if (UNREAD.has(key)) {
+    const r = await readInk(key);
+    if (r.failed) { e.t = setTimeout(() => { e.t = 0; writeLive(key); }, 5000); return; }   // (kept: tried again)
+    const L = UNREAD.get(key); UNREAD.delete(key);
+    const stored = r.rec ? (r.rec.items || r.rec.strokes || []).map(normalise) : [];
+    const mine = LIVE.get(key) ? LIVE.get(key).items : e.items;
+    e.items = [...stored, ...mine];
+    if (L && L.key === key) { L.items = e.items; L.redraw(); }
+    try { globalThis.__standNote && globalThis.__standNote('ink', 'markings read late and kept', key); } catch {}
+  }
   const items = e.items;
   // (kept here while the write fails: it is tried again with the next change, or when leaving)
   return db.put('ink', { key, items }).then(() => { const n = LIVE.get(key); if (n && n.items === items && !n.t) LIVE.delete(key); }, () => {});
@@ -433,7 +455,8 @@ export class InkLayer {
   }
   async load() {
     const live = LIVE.get(this.key);
-    const rec = live ? null : await db.get('ink', this.key).catch(() => null);
+    let rec = null;
+    if (!live) { const r = await readInk(this.key); if (r.failed) UNREAD.set(this.key, this); else rec = r.rec; }
     const live2 = LIVE.get(this.key);   // (written to while reading)
     const stored = live2 ? live2.items.slice() : rec ? (rec.items || rec.strokes || []).map(normalise) : [];
     // anything added while loading is kept on top of what was stored
@@ -562,8 +585,10 @@ function cutStroke(pts, x, y, r, W, H) {
 }
 
 export async function loadItems(key) {
-  const live = LIVE.get(key); if (live) return live.items.slice();
-  const rec = await db.get('ink', key).catch(() => null);
+  const live = LIVE.get(key); if (live && !UNREAD.has(key)) return live.items.slice();
+  // (could not be read: an error, never an empty page that would then be written over)
+  const r = await readInk(key); if (r.failed) throw r.error || new Error('markings could not be read');
+  const rec = r.rec;
   return rec ? (rec.items || rec.strokes || []).map(normalise) : [];
 }
 export function saveItems(key, items) { const e = LIVE.get(key); if (e) { clearTimeout(e.t); LIVE.delete(key); } return db.put('ink', { key, items }).catch(() => {}); }
