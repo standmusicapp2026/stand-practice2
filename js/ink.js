@@ -405,6 +405,13 @@ export function smartMask(art, stroke, spread = 3) {
 // Markings not yet written to the database, by page: the newest list is kept here at once, so a page
 // laid out again (a turn of the iPad, the keyboard) shows it, and nothing written is lost.
 const LIVE = new Map();      // key -> { items, t (timer) }
+// While the Pencil is writing, nothing heavy runs between its strokes (writing a whole page to the
+// database, drawing all the markings again under a zoomed page): that work waits for a pause in the
+// writing (or 6 s at most), so the next stroke starts at once and never stops for a moment.
+let inkBusyAt = 0;
+export function inkActive() { inkBusyAt = performance.now(); }
+// how much longer to wait (0: go now) for work that began waiting at t0
+function idleWait(t0, quiet = 700, max = 6000) { const n = performance.now(); return n - inkBusyAt < quiet && n - t0 < max ? quiet - (n - inkBusyAt) + 20 : 0; }
 function writeLive(key) {
   const e = LIVE.get(key); if (!e) return Promise.resolve();
   clearTimeout(e.t); e.t = 0;
@@ -442,7 +449,8 @@ export class InkLayer {
     if (old) clearTimeout(old.t);
     const e = { items: this.items, t: 0 };
     LIVE.set(key, e);
-    e.t = setTimeout(() => { e.t = 0; writeLive(key); }, 300);
+    const t0 = performance.now();
+    e.t = setTimeout(function go() { const w = idleWait(t0); if (w) { e.t = setTimeout(go, w); return; } e.t = 0; writeLive(key); }, 300);
   }
   // The canvas can hold the whole page, or (zoomed in) only the part on screen at full sharpness:
   // view is that part as page fractions { x, y, w, h }.
@@ -478,7 +486,7 @@ export class InkLayer {
   // Zoomed in, the sharp canvas holds only the part on screen. Under it, the whole page's markings
   // at a lower sharpness (the part the sharp canvas covers left empty), so while you pinch out or
   // move the page every marking is already there, in its place, before the sharp part is redrawn.
-  _baseLater() { clearTimeout(this._baseT); this._baseT = setTimeout(() => this._base(), 120); }
+  _baseLater() { clearTimeout(this._baseT); const t0 = performance.now(), go = () => { const w = idleWait(t0, 600); if (w) { this._baseT = setTimeout(go, w); return; } this._base(); }; this._baseT = setTimeout(go, 120); }
   _dropBase() { clearTimeout(this._baseT); if (this.base) { this.base.width = this.base.height = 0; this.base.remove(); this.base = null; } }
   _base() {
     clearTimeout(this._baseT);

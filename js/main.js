@@ -20,7 +20,7 @@ import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
 import { ask } from './dialog.js';
-import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks } from './ink.js';
+import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPicture, exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
@@ -1258,10 +1258,12 @@ const step0 = (fn) => { try { fn(); } catch (e) { console.warn(e); } };
 async function closeScore() {
   V.openToken = (V.openToken || 0) + 1;     // cancels a score that is still opening
   // Show the library first, so going home always works even if a clean-up step fails.
-  const sc = V.score;
+  const sc = V.score; V.fileKindClosed = V.file && V.file.kind;
   // (a name still being typed in the score's settings is kept: the field is not always told it was left)
   step0(() => { if (sc && META_FOR.id === sc.id) { const t = $('#metaTitle').value.trim(), c = $('#metaComposer').value.trim(); if ((t && t !== sc.title) || c !== (sc.composer || '')) saveScoreMeta(true); } });
   if (RUN.on) endRun();
+  // (the name under its picture at once, before the rest of the closing is done)
+  step0(() => { if (sc) { const c = $(`.card[data-sid="${sc.id}"]`); if (c) { const t = c.querySelector('.ttl'); if (t) t.textContent = sc.title; } } });
   $('#score').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
   try { localStorage.removeItem('standPlace'); } catch {}
   step0(() => finishTextBox());
@@ -1293,6 +1295,25 @@ async function closeScore() {
   step(() => { wakeLock && wakeLock.release(); });
   wakeLock = null;
   refreshLibrary();
+  if (sc && V.fileKindClosed === 'paper') nbCoverRefresh(sc.id);
+}
+// A notebook renamed: its cover (with the name on it) and its picture in the library are made again,
+// just after it closes (in the background).
+async function nbCoverRefresh(id) {
+  try {
+    const sc = await db.get('scores', id); if (!sc || sc.kind !== 'paper') return;
+    const file = await db.get('files', sc.fileId); if (!file || file.kind !== 'paper') return;
+    if (file.title === sc.title && sc.thumbTitle === sc.title) return;
+    if (file.title !== sc.title) { file.title = sc.title; await db.put('files', file); }
+    const base = await openDocument(file);
+    let thumb = null; try { thumb = await makeThumb(mapDoc(base, sc.pageMap, sc.cuts, sc.glue), { dark: true }); } finally { try { base.destroy && base.destroy(); } catch {} }
+    if (!thumb) return;
+    const fresh = await db.get('scores', id); if (!fresh) return;
+    fresh.thumb = thumb; fresh.thumbAt = Date.now(); fresh.thumbTitle = fresh.title;
+    await db.put('scores', fresh);
+    const mine = scores.find((x) => x.id === id); if (mine) { mine.thumb = thumb; mine.thumbAt = fresh.thumbAt; mine.thumbTitle = fresh.thumbTitle; }
+    if (!$('#library').hidden) renderGrid();
+  } catch (e) { console.warn('notebook cover', e); }
 }
 $('#backBtn').addEventListener('click', closeScore);
 $('#previewKeep').addEventListener('click', async () => {
@@ -2036,6 +2057,8 @@ function turnedBox() {
   return { sw: sr.width, sh: sr.height, cx: sr.left + sr.width / 2, cy: sr.top + sr.height / 2,
     vw: Z.el.offsetHeight, vh: Z.el.offsetWidth };   // offset sizes are unturned, so swap them
 }
+// notebooks (not turned sideways): the page can be moved at any size, also at 100%
+const NBPAN = () => NBK() && !TURN();
 function clampZoom() {
   if (TURN()) {
     const b = turnedBox(), cw = b.vw * Z.s, ch = b.vh * Z.s;
@@ -2045,6 +2068,15 @@ function clampZoom() {
   }
   const n = spreadNatural();
   const cw = n.w * Z.s, ch = n.h * Z.s;
+  if (NBPAN()) {
+    // a notebook page moves freely with two fingers, at any size: its corners and its foot can be
+    // brought to where the hand writes (above the writing tools), never lost off the screen
+    const xc = (n.sw - cw) / 2 - n.ox, yc = (n.sh - ch) / 2 - n.oy;
+    const sx = n.sw * 0.3, st = n.sh * 0.25, sb = n.sh * 0.45;
+    Z.x = clamp(Z.x, Math.min(n.sw - cw - n.ox, xc) - sx, Math.max(-n.ox, xc) + sx);
+    Z.y = clamp(Z.y, Math.min(n.sh - ch - n.oy, yc) - sb, Math.max(-n.oy, yc) + st);
+    return;
+  }
   if (cw <= n.sw) Z.x = (n.sw - cw) / 2 - n.ox; else Z.x = clamp(Z.x, n.sw - cw - n.ox, -n.ox);
   const sl = zoomSlack();
   if (ch <= n.sh && !sl.top) Z.y = (n.sh - ch) / 2 - n.oy; else Z.y = clamp(Z.y, Math.min(n.sh - ch - n.oy - sl.bot, (n.sh - ch) / 2 - n.oy), Math.max(-n.oy + sl.top, (n.sh - ch) / 2 - n.oy));
@@ -2055,9 +2087,17 @@ function applyZoom() {
   Z.el.style.transformOrigin = turn ? '50% 50%' : '';
   const turnCss = turn ? ' rotate(-90deg)' : '';
   // close to the normal size it snaps back, so returning to 100% is easy
+  if (NBPAN()) {
+    // (a notebook page never jumps back to the middle by itself: it stays where the fingers left it)
+    clampZoom();
+    const moved = Z.s !== 1 || Math.abs(Z.x) > 0.5 || Math.abs(Z.y) > 0.5;
+    Z.el.style.transform = moved ? `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})` : '';
+    zoomPill.hidden = !moved;
+  } else {
   if (Math.abs(Z.s - 1) < 0.04) { Z.s = 1; Z.x = 0; Z.y = 0; Z.el.style.transform = turnCss.trim(); }
   else { clampZoom(); Z.el.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})${turnCss}`; }
   zoomPill.hidden = Z.s === 1;
+  }
   if (Z.s > 1.05 || V.pages.some((p) => p.layer && p.layer.view)) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 260); }
   zoomPill.textContent = Math.round(Z.s * 100) + '%  ·  Reset';
   if (!$('#zoomPop').hidden) syncZoomPop();
@@ -2167,7 +2207,7 @@ function setZoomAt(s, cx, cy, base) {
   Z.x = cx - n.left - n.ox - wx * Z.s; Z.y = cy - n.top - n.oy - wy * Z.s;
   applyZoom();
 }
-zoomPill.addEventListener('click', () => { Z.s = 1; applyZoom(); scheduleSharpen(); });
+zoomPill.addEventListener('click', () => { Z.s = 1; Z.x = 0; Z.y = 0; applyZoom(); scheduleSharpen(); });
 // the Zoom button in the top bar: steps and presets, zooming about the middle of the screen
 function zoomTo(s) {
   const sr = stage.getBoundingClientRect();
@@ -2255,20 +2295,22 @@ function setInking(on) {
     inkHint(INK.finger ? 'Your finger writes. Two fingers zoom and move; swipe with two fingers to turn.' : 'The Pencil writes. Your finger turns pages, pinches to zoom and moves the page.');
   } else { $('#inkHint').hidden = true; clearLive(); }
 }
-// The writing tools step aside 3½ s after a stroke ends (they stay while a panel of theirs is
-// open, or a text box is being written): a small pen at their place brings them back.
+// On a score the writing tools step aside 10 s after a stroke ends (they stay while a panel of
+// theirs is open, or a text box is being written): a small pen at their place brings them back, and
+// a finger tap in the middle of the screen shows or hides them. In a notebook they always stay.
 let inkAwayT = 0;
 function inkBarBack() { clearTimeout(inkAwayT); $('#inkbar').classList.remove('away'); $('#inkTab').hidden = true; }
 function inkBarAwaySoon() {
   clearTimeout(inkAwayT);
-  if (!V.inking || S.inkBarStays) return;
+  if (!V.inking || S.inkBarStays || NBK()) return;
   inkAwayT = setTimeout(() => {
-    if (!V.inking || $('#inkbar').hidden) return;
+    if (!V.inking || $('#inkbar').hidden || NBK()) return;
     const busy = Object.keys(POP_OPENERS).some((id) => { const p = $(id); return p && !p.hidden; }) || !$('#tbBar').hidden || $('#inkbar').classList.contains('under');
     if (busy) { inkBarAwaySoon(); return; }
     $('#inkbar').classList.add('away'); $('#inkTab').hidden = false;
-  }, 3500);
+  }, 10000);
 }
+function inkBarAwayNow() { clearTimeout(inkAwayT); if (!V.inking || NBK()) return; closeInkPops(); $('#inkbar').classList.add('away'); $('#inkTab').hidden = false; }
 $('#inkTab').addEventListener('click', (e) => { e.stopPropagation(); inkBarBack(); });
 $('#inkbar').addEventListener('pointerdown', () => clearTimeout(inkAwayT));
 document.addEventListener('pointerup', (e) => { if (V.inking && e.target && e.target.closest && e.target.closest('#stage')) inkBarAwaySoon(); }, true);
@@ -2294,6 +2336,7 @@ function closeInkPops() { $('#layerPop').hidden = true; $('#addPagePop').hidden 
 function syncInkBar() {
   const nb = NBK();
   $('#inkbar').classList.toggle('nb', nb);
+  if (nb) inkBarBack();   // (in a notebook the writing tools always stay)
   if (nb && (INK.tool === 'text' || INK.tool === 'print')) INK.tool = INK.tool === 'text' ? 'tbox' : 'pen';
   if (!nb && INK.tool === 'tbox') INK.tool = 'text';
   if (INK.tool !== 'tbox' && tbEdit) finishTextBox();
@@ -4222,7 +4265,7 @@ function slurItem(a, b, path, rect) {
   return { t: 'pen', c: penColor(), a: st.a ?? 1, s: inkSize('pen', st.size) * 0.9, p: pts };
 }
 function startInk(e, entry) {
-  lastEntry = entry;
+  lastEntry = entry; inkActive();
   const tool = INK.tool;
   // markings still loading (a moment after the page opens): a pen or highlighter line is kept and
   // joins them; anything else waits
@@ -4294,6 +4337,7 @@ function scheduleLive() {
   });
 }
 function moveInk(e) {
+  inkActive();
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
   const list = evs.length ? evs : [e];
   if (GS.kind === 'erase') {
@@ -4495,7 +4539,9 @@ function startNav(e) {
   // a finger held still on a page (notebooks and markings): copy, paste and the like
   if (e.pointerType === 'touch' && (V.inking || NBK()) && !V.perform && entryAt(e.clientX, e.clientY)) {
     const g = GS;
-    g.holdT = setTimeout(() => { if (GS === g && !g.moved && touches().length === 1) { g.held = true; openHoldMenu(g.x, g.y); } }, 520);
+    // (not a hand resting while writing: never a big contact, nor just after the Pencil, nor with it down)
+    const big = Math.max(e.width || 0, e.height || 0) > 110;
+    g.holdT = setTimeout(() => { if (GS === g && !g.moved && touches().length === 1 && !big && !penDown && now() - lastPenUp > 1200) { g.held = true; openHoldMenu(g.x, g.y); } }, 520);
   }
 }
 // ---------- press and hold: copy, cut, paste, duplicate, delete ----------
@@ -4610,11 +4656,10 @@ window.addEventListener('pointermove', (e) => {
     const t = touches(); if (t.length < 2) return;
     const [a, b] = t;
     const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-    const s = GS.base.s * (d / GS.d0);
-    // zoom about the first centre, then follow the fingers (two-finger pan)
-    setZoomAt(s, GS.cx0, GS.cy0, GS.base);
-    if (Z.s !== 1) { Z.x += cx - GS.cx0; Z.y += cy - GS.cy0; applyZoom(); }
-    GS.lastDx = cx - GS.cx0; GS.lastDs = d / GS.d0;
+    GS.lastDx = cx - GS.cx0; GS.lastDy = cy - GS.cy0; GS.lastDs = d / GS.d0;
+    // (one update a frame, however many finger moves come in: smooth, never behind)
+    GS.want = { d, cx, cy };
+    if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; pinchApply(g); }); }
     return;
   }
   if (GS.kind === 'nav' && GS.id === e.pointerId) {
@@ -4623,6 +4668,14 @@ window.addEventListener('pointermove', (e) => {
     if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
   }
 });
+function pinchApply(g) {
+  const { d, cx, cy } = g.want;
+  const s = g.base.s * (d / g.d0);
+  // zoom about the first centre, then follow the fingers (two-finger pan)
+  // (a notebook page snaps to 100% when close to it, without moving)
+  setZoomAt(NBPAN() && Math.abs(s - 1) < 0.04 ? 1 : s, g.cx0, g.cy0, g.base);
+  if (Z.s !== 1 || NBPAN()) { Z.x += cx - g.cx0; Z.y += cy - g.cy0; applyZoom(); }
+}
 function pointerEnd(e) {
   if (e.target && e.target.closest && e.target.closest('.tour')) { PT.delete(e.pointerId); return; }   // taps on a tour are for the tour
   const p = PT.get(e.pointerId);
@@ -4635,9 +4688,12 @@ function pointerEnd(e) {
   if (GS.kind === 'pinch') {
     if (touches().length < 2) {
       const g = GS; GS = PT.size ? { kind: 'wait' } : null;
+      if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; if (g.want) pinchApply(g); }
       scheduleSharpen();
-      // a quick two-finger swipe without zooming turns the page
-      if (Z.s === 1 && Math.abs(g.lastDs - 1) < 0.08 && Math.abs(g.lastDx || 0) > 90 && now() - g.t0 < 700) turn(g.lastDx < 0 ? 1 : -1);
+      // a quick two-finger swipe without zooming turns the page (in a notebook, where two fingers
+      // also move the page, only a quick, clearly sideways one)
+      const nbp = NBPAN();
+      if ((nbp ? g.base.s === 1 : Z.s === 1) && Math.abs(g.lastDs - 1) < 0.08 && Math.abs(g.lastDx || 0) > (nbp ? 140 : 90) && now() - g.t0 < (nbp ? 450 : 700) && (!nbp || Math.abs(g.lastDy || 0) < Math.abs(g.lastDx) * 0.5)) turn(g.lastDx < 0 ? 1 : -1);
     }
     return;
   }
@@ -4674,7 +4730,7 @@ function pointerEnd(e) {
     if (V.perform) { if (e.clientX > w * 0.5) turn(1); else turn(-1); return; }
     if (lastTap && now() - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40 && e.clientX > w * 0.32 && e.clientX < w * 0.68) {
       lastTap = null;
-      if (Z.s !== 1) { Z.s = 1; applyZoom(); } else setZoomAt(2.2, e.clientX, e.clientY, { s: 1, x: 0, y: 0 });
+      if (Z.s !== 1) { Z.s = 1; if (NBPAN()) { Z.x = 0; Z.y = 0; } applyZoom(); } else setZoomAt(2.2, e.clientX, e.clientY, { s: 1, x: Z.x, y: Z.y });
       scheduleSharpen(); return;
     }
     lastTap = { t: now(), x: e.clientX, y: e.clientY };
@@ -4682,6 +4738,8 @@ function pointerEnd(e) {
     if ($('#score').classList.contains('chrome-off') && e.clientY < stage.getBoundingClientRect().top + 80) { showChrome(true); return; }
     if (e.clientX > w * 0.68) turn(1);
     else if (e.clientX < w * 0.32) turn(-1);
+    // writing on a score: a finger tap in the middle shows or hides the writing tools
+    else if (V.inking && !NBK() && e.pointerType !== 'pen') { if ($('#inkbar').classList.contains('away')) { inkBarBack(); inkBarAwaySoon(); } else inkBarAwayNow(); }
     else showChrome($('#score').classList.contains('chrome-off'));
   }
 }
@@ -7875,7 +7933,7 @@ $('#nbCreate').addEventListener('click', async () => {
   const file = { id: uid(), ...nbFile(+$('#nbPages').value) };
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc, { dark: true });   // (a notebook's cover may well be dark)
-  const score = { id: uid(), fileId: file.id, title: file.title, composer: file.cover && file.cover.sub ? file.cover.sub : 'Notebook', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, kind: 'paper', folder: FOLD.current || undefined };
+  const score = { id: uid(), fileId: file.id, title: file.title, composer: file.cover && file.cover.sub ? file.cover.sub : 'Notebook', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, thumbTitle: file.title, kind: 'paper', folder: FOLD.current || undefined };
   await db.put('files', file); await db.put('scores', score);
   $('#nbTitle').value = ''; $('#newNotebook').hidden = true;
   await refreshLibrary(); openScore(score.id);
