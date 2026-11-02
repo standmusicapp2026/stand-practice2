@@ -49,6 +49,7 @@ async def main():
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
         await pg.goto('http://localhost:' + os.environ.get('PORT', '8765') + '/index.html'); await pg.wait_for_timeout(1000)
         if os.environ.get('G'): await pg.evaluate('(g) => Object.assign(globalThis, JSON.parse(g))', os.environ['G'])
+        pg.on('console', lambda m: print(m.text[:3000]) if m.text.startswith('SHDBG') else None)
         tot = {'ok': 0, 'off1': 0, 'wrong': 0, 'extra': 0, 'missing': 0, 'span': 0}
         for n in pages:
             subprocess.run(['pdftoppm', '-r', str(DPI), '-f', str(n), '-l', str(n), '-png', '-singlefile', PDF, f'{tmp}/p{os.getpid()}'], check=True)
@@ -69,7 +70,10 @@ async def main():
                 const big = canv(img, Math.min(1, (3000 * 1.35) / Math.max(img.width, img.height)));
                 cr = quad ? S.warpPage(big, quad, 3000) : big;
               }
+              if (globalThis.__saveWarp) globalThis.__warp = cr.toDataURL('image/png');
+              if (globalThis.__shDbg) globalThis.__shDbg.length = 0;
               const r = await O.recogniseBest(cr, { lines: 'all' });
+              if (globalThis.__shDbg) console.log('SHDBG ' + JSON.stringify(globalThis.__shDbg.filter((d) => d.offs.some((o) => o))));
               if (!r) return [];
               const BOT = { treble: 30, bass: 18, alto: 24, tenor: 22, soprano: 28, mezzo: 26 };
               const out = []; let key = r.key || 0, clef = r.clef || 'treble';
@@ -98,6 +102,9 @@ async def main():
               });
               return out;
             }""", data)
+            if os.environ.get('SAVEWARP'):
+                import base64 as _b; u = await pg.evaluate('() => globalThis.__warp || null')
+                if u: open(os.environ['SAVEWARP'] + f'_{n}.png', 'wb').write(_b.b64decode(u.split(',')[1]))
             # (notes at the same place in two voices sound together: one chord, as the MIDI has it)
             mr = []
             for x in r:
