@@ -145,12 +145,36 @@ export class KeyFollower {
     }
     const pick = clean ? ro : shape ? bo : relM ? rm : -1;
     this.dbg = { best: best.pc + (best.minor ? 'm' : ''), prob: [kr.pc + (kr.minor ? 'm' : ''), +nwR.toFixed(2), +odR.toFixed(2), +(llR[ro] - llR[ci]).toFixed(2), clean, shape, this.onsets, +tot.toFixed(1)] };
-    if (pick < 0) { if (this.cand && now - this.cand.lastOk > 900) this.cand = null; return; }
+    // Never on what is not a key at all: a chromatic scale, a shifting exercise, half steps up and
+    // down (nearly every note of the twelve), nor on a key that does not hold what you play now and
+    // over the last few seconds; and not again so soon after a move (one key at a time, settled).
+    let calmOk = true;
+    if (pick >= 0) {
+      const nk0 = keyAt(pick);
+      let totR = 0; for (let i = 0; i < 12; i++) totR += r[i];
+      let spread = 0; for (let i = 0; i < 12; i++) if (r[i] >= 0.05 * totR) spread++;
+      const fitR = scaleFit(r, nk0.pc, nk0.minor), fitW = scaleFit(w, nk0.pc, nk0.minor);
+      const steady = spread <= (globalThis.__kfSpread ?? 9) && fitR >= lerp(0.93, 0.86, S) && fitW >= lerp(0.88, 0.8, S);
+      const settled = now - (this.movedAt ?? -1e12) >= lerp(12000, 6000, S);
+      // half steps one after another (a shifting exercise, a chromatic run): no key in it
+      const rc = this.recent || []; let semi = 0, steps = 0;
+      for (let i = 1; i < rc.length; i++) { const d = Math.abs(rc[i] - rc[i - 1]); if (d === 0) continue; steps++; if (d === 1) semi++; }
+      const chromatic = steps >= 8 && semi / steps > (globalThis.__kfSemi ?? 0.4);
+      // and the longer memory (the last half minute) agrees: a key only touched for a moment (a
+      // passing tonicization: A minor for a bar in G major) never moves the drone
+      // (judged on the shape of the music, its tonic and fifth above all: a few chromatic notes, as
+      // every piece has, never count against the key it is in)
+      const h = this.h; const llH = keyScore(h, nk0.pc, nk0.minor), llC = keyScore(h, cur.pc, cur.minor);
+      const longOk = llH - llC >= (globalThis.__kfLong ?? lerp(0.03, -0.02, S));
+      calmOk = steady && settled && !chromatic && longOk;
+      this.dbg.guard = [spread, +fitR.toFixed(2), +fitW.toFixed(2), settled, +(semi / Math.max(1, steps)).toFixed(2), +(llH - llC).toFixed(2)];
+    }
+    if (pick < 0 || !calmOk) { if (this.cand && now - this.cand.lastOk > 900) this.cand = null; return; }
     const nk = keyAt(pick), near = relative(cur, nk) || cur.pc === nk.pc;
     if (!this.cand || this.cand.pc !== nk.pc || this.cand.minor !== nk.minor) { this.cand = { pc: nk.pc, minor: nk.minor, since: now, lastOk: now }; return; }
     this.cand.lastOk = now;
     if (now - this.cand.since >= lerp(1800, 500, S) * (near ? 1.5 : 1)) {
-      this.key = nk; this.cand = null; this.onsets = 0;
+      this.key = nk; this.cand = null; this.onsets = 0; this.movedAt = now;
       this.onKey && this.onKey(this.key);
     }
   }
@@ -211,7 +235,7 @@ export class KeyFollower {
       // the same note twice in a row (80 ms) is a note, not a scrape
       if (pc === this.prevPc) {
         this.pcRun++;
-        if (this.pcRun === 1) { this.onsets++; this.noteW = 0; }
+        if (this.pcRun === 1) { this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); }
         // each note counts once: a little for being played, then for as long as it sounds, up to a cap
         const add = (this.pcRun === 1 ? 0.15 : 0) + (this.noteW < NOTE_CAP ? Math.min(dt, NOTE_CAP - this.noteW) : 0);
         this.noteW += dt;
