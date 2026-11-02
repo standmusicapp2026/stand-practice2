@@ -275,20 +275,72 @@ function findStaves(b, w, h, sp, T, gaps = false) {
   // link the pieces strip by strip (the staves found with the usual lines first; the pieces that
   // needed the thick lines make staves only where none of those is)
   groups.sort((a, b2) => a.xc - b2.xc);
+  // (a piece of staff read one line off — its top line hidden in a beam lying along it and a ledger
+  // line below taken instead, or the other way round — is put back on the staff's own lines; which
+  // reading is the staff's is decided by most of its pieces, so one such piece never moves a whole
+  // line of music by a step)
+  const shiftOk = globalThis.__trackShift ?? 1;
   const tracksOf = (list) => {
     const tracks = [];
     for (const gr of list) {
       const mid = (gr.ys[0] + gr.ys[4]) / 2;
-      let best = null, bd = Infinity;
+      let best = null, bd = Infinity, bo = 0;
       for (const t of tracks) {
         const last = t[t.length - 1];
         if (gr.xc - last.xc > SW * (globalThis.__trackGap ?? 4) || last.xc === gr.xc) continue;
         let pred = (last.ys[0] + last.ys[4]) / 2;
         if (t.length > 1) { const p2 = t[t.length - 2]; const slope = (pred - (p2.ys[0] + p2.ys[4]) / 2) / (last.xc - p2.xc); if (Math.abs(slope) < 0.15) pred += slope * (gr.xc - last.xc); }
-        const d = Math.abs(mid - pred);
-        if (d < sp * 0.9 && d < bd) { bd = d; best = t; }
+        let d = Math.abs(mid - pred), off = 0;
+        if (shiftOk && d >= sp * 0.5) {
+          // (one line off: its top and its bottom line each one space from the last piece's)
+          const gap = (last.ys[4] - last.ys[0]) / 4, k = Math.round((gr.ys[0] - last.ys[0]) / gap);
+          if (Math.abs(k) === 1 && Math.abs(gr.ys[0] - last.ys[0] - k * gap) < gap * 0.25 && Math.abs(gr.ys[4] - last.ys[4] - k * gap) < gap * 0.25 && Math.abs(mid - pred - k * gap) < gap * 0.3) { d = Math.abs(mid - pred - k * gap) + sp * 0.05; off = k; }
+        }
+        if (d < sp * 0.9 && d < bd) { bd = d; best = t; bo = off; }
       }
-      if (best) best.push(gr); else tracks.push([gr]);
+      // (in the track's own frame: the lines it has followed so far)
+      // (off: how many lines this piece's own reading lies below the track's; ys: put on the track's lines)
+      if (best) { const gap = (gr.ys[4] - gr.ys[0]) / 4; best.push(bo ? { ...gr, off: bo, raw: gr.ys, ys: gr.ys.map((y) => y - bo * gap) } : gr); }
+      else tracks.push([gr]);
+    }
+    if (shiftOk) for (let ti = 0; ti < tracks.length; ti++) {
+      const t = tracks[ti];
+      if (!t.some((q) => q.off)) continue;
+      // (many pieces read one way and many the other — a photo's thick lines, beams all along: not
+      // a piece or two to put back; the pieces stay apart, as they were found)
+      const n0 = t.filter((q) => !q.off).length;
+      if (Math.min(n0, t.length - n0) > Math.max(1, t.length * 0.25)) {
+        const runs = []; for (const q of t) { const r = runs[runs.length - 1]; const raw = q.raw ? { ...q, ys: q.raw } : q; if (r && (r[0].off || 0) === (q.off || 0)) r.push(raw); else runs.push([raw]); }
+        tracks.splice(ti, 1, ...runs); ti += runs.length - 1; continue;
+      }
+      // the staff's own lines are the frame whose five lines the picture really has, all along
+      // (ink on them), not the one most pieces happened to be read in
+      const offs = [...new Set(t.map((q) => q.off || 0))];
+      const inkOn = (o) => {
+        let n = 0;
+        for (const q of t) {
+          const raw = q.raw || q.ys, gap = (raw[4] - raw[0]) / 4, d = ((q.off || 0) - o) * gap;
+          const x0 = Math.max(0, Math.round(q.xs ?? q.xc - SW / 2)), x1 = Math.min(w - 1, Math.round((q.xs ?? q.xc - SW / 2) + SW));
+          for (let x = x0; x < x1; x += 2) for (let k = 0; k < 5; k++) { const y = Math.round(raw[k] - d); let any = 0; for (let e = -1; e <= 1; e++) { const yy = y + e; if (yy >= 0 && yy < h) any |= b[yy * w + x]; } n += any; }
+        }
+        return n;
+      };
+      const scored = offs.map((o) => [o, inkOn(o)]); const ref = scored.slice().sort((a, b2) => b2[1] - a[1])[0][0];
+      for (let i = 0; i < t.length; i++) {
+        const q = t[i], raw = q.raw || q.ys, gap = (raw[4] - raw[0]) / 4, o = (q.off || 0) - ref;
+        t[i] = o ? { ...q, ys: raw.map((y) => y - o * gap), moved: true } : { ...q, ys: raw };
+      }
+      // (a piece read one line off only joins the others: where the staff's lines are is taken from
+      // the pieces read on them, never from one put back, whose lines are a beam or a ledger line)
+      // (except where it is all there is for a long stretch: a curved line in a photo needs it)
+      const kept = t.filter((q, i) => {
+        if (!q.moved) return true;
+        let a = i - 1; while (a >= 0 && t[a].moved) a--;
+        let z = i + 1; while (z < t.length && t[z].moved) z++;
+        const left = a >= 0 ? t[a].xc : -Infinity, right = z < t.length ? t[z].xc : Infinity;
+        return right - left > SW * (globalThis.__movedGap ?? 2.5) && left > -Infinity && right < Infinity;
+      });
+      if (kept.length >= 2) t.splice(0, t.length, ...kept);
     }
     return tracks;
   };

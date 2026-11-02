@@ -484,7 +484,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
     for (let j = ds.length - 1; j >= 0; j--) { const d = ds[j]; const end = d.x + (d.w || 0); if (end > limit) d.x = limit - (d.w || 0); limit = d.x - (ds[j - 1] && ds[j - 1].id === d.id ? 0.6 : 0.4); }
     for (const d of ds) {
       if (d.c) { ctx.save(); ctx.fillStyle = d.c; }
-      if (d.txt) { CUR_MARK = d.id ? { id: d.id, kind: 'txt', name: d.txt } : null; text(ctx, d.txt, d.x, hs.y + 4 + hs.dynLine, 1.7, TEXT_FONT, d.it ? 'italic' : ''); CUR_MARK = null; if (d.c) ctx.restore(); continue; }
+      if (d.txt) { const ty = hs.y + 4 + hs.dynLine; text(ctx, d.txt, d.x, ty, 1.7, TEXT_FONT, d.it ? 'italic' : ''); if (d.id) hitBox({ id: d.id, kind: 'txt', name: d.txt }, d.x - 0.2, d.x + Math.max(1.5, d.w || String(d.txt).length * 0.8) + 0.2, ty - 1.5, ty + 0.5); if (d.c) ctx.restore(); continue; }
       CUR_MARK = d.id ? { id: d.id, kind: 'dyn', name: d.dyn } : null; glyph(ctx, DYN_LETTERS(d.dyn), d.x, hs.y + 4 + hs.dynLine); CUR_MARK = null;
       if (d.c) ctx.restore();
     }

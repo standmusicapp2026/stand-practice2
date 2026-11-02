@@ -1223,6 +1223,7 @@ async function openScore(id, opts = {}) {
   if (base.sizes && !base.paper) { const k = sizesKey(file); if (!score.sizes || score.sizes.k !== k) score.sizes = { k, v: (base.rawSizes || base.sizes).map((x) => [Math.round(x[0] * 100) / 100, Math.round(x[1] * 100) / 100]) }; }
   if (V.base) try { V.base.destroy(); } catch {}
   V.score = score; V.file = file; V.base = base; V.doc = mapDoc(base, score.pageMap, score.cuts, score.glue);
+  step0(() => droneListSwap(score.preview ? '' : score.id));
   applyScoreView(score);
   LY.active = ''; setActiveLayer(''); syncLayerUi(); closeAllNotes();
   $('#previewBar').hidden = !score.preview;
@@ -1258,6 +1259,8 @@ async function closeScore() {
   V.openToken = (V.openToken || 0) + 1;     // cancels a score that is still opening
   // Show the library first, so going home always works even if a clean-up step fails.
   const sc = V.score;
+  // (a name still being typed in the score's settings is kept: the field is not always told it was left)
+  step0(() => { if (sc && META_FOR.id === sc.id) { const t = $('#metaTitle').value.trim(), c = $('#metaComposer').value.trim(); if ((t && t !== sc.title) || c !== (sc.composer || '')) saveScoreMeta(true); } });
   if (RUN.on) endRun();
   $('#score').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
   try { localStorage.removeItem('standPlace'); } catch {}
@@ -1284,6 +1287,7 @@ async function closeScore() {
   step(() => freePages());
   step(() => { for (const p of V.cache.values()) p.then(freeCanvas, () => {}); });
   step(() => { if (V.base) V.base.destroy(); });
+  step0(() => droneListSwap(''));
   V.base = null; V.doc = null; V.score = null; V.cache.clear(); READY.clear(); INCACHE.clear(); stage.textContent = '';
   step(() => leaveScoreView());
   step(() => { wakeLock && wakeLock.release(); });
@@ -5088,11 +5092,28 @@ $('#pgDelete').addEventListener('click', () => {
   const all = [...Array(V.base.pages).keys()];
   const map = PG.staged || V.score.pageMap || all;
   if (!PG.sel.size || PG.sel.size >= map.length) return;
-  // the pages go at once (they wait below, to put back)
-  const n = PG.sel.size;
+  // the pages go at once: each flies down to Deleted pages (to put back from there), then it is saved
+  const n = PG.sel.size, gone = [...PG.sel];
+  const from = new Map();
+  for (const o of gone) { const cv = PG.thumbs.get(o) && PG.thumbs.get(o).cv; if (cv && cv.isConnected) { const r = cv.getBoundingClientRect(); const g = el('canvas', 'pg-ghost pg-fly'); g.width = cv.width; g.height = cv.height; g.getContext('2d').drawImage(cv, 0, 0); from.set(o, { r, g }); } }
   PG.staged = map.filter((o) => !PG.sel.has(o));
   PG.sel.clear(); PG.selecting = false;
-  savePageChanges(true).then(() => { renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); });
+  renderPagesPanel();
+  $('#pgSave').hidden = true;
+  const trash = $('#pgTrash');
+  try { trash.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { trash.scrollIntoView(false); }
+  // (the scroll settles first, then the pages land where they now wait)
+  setTimeout(() => {
+    for (const [o, { r, g }] of from) {
+      const cv = PG.thumbs.get(o) && PG.thumbs.get(o).cv; if (!cv || !cv.isConnected) continue;
+      const q = cv.getBoundingClientRect(); const cell = cv.closest('.pthumb');
+      Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+      document.body.append(g); if (cell) cell.style.visibility = 'hidden';
+      requestAnimationFrame(() => requestAnimationFrame(() => { g.style.transform = `translate(${q.left - r.left}px, ${q.top - r.top}px) scale(${q.width / Math.max(1, r.width)})`; g.style.opacity = '.85'; }));
+      setTimeout(() => { g.remove(); if (cell) { cell.style.visibility = ''; cell.classList.add('landed'); setTimeout(() => cell.classList.remove('landed'), 900); } }, 480);
+    }
+  }, from.size ? 260 : 0);
+  setTimeout(() => savePageChanges(true).then(() => { renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); }), from.size ? 800 : 0);
 });
 // keep the changes: the score or notebook is laid out once, with the panel closed
 async function savePageChanges(quiet) {
@@ -5280,7 +5301,7 @@ $('#trimMargins').addEventListener('change', (e) => setTrim(e.target.checked));
 // ---------- score settings ----------
 function fillScoreSettings() {
   if (!V.score) return;
-  $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || '';
+  $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || ''; META_FOR.id = V.score.id;
   $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#landscapeLock').checked = !!S.landscapeLock; $('#turnScore').checked = !!S.turnScore; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
   renderBookmarks(); renderJumps(); $('#paperTools').hidden = !(V.file && V.file.kind === 'paper');
   syncViewSeg();
@@ -5295,8 +5316,9 @@ function fillScoreSettings() {
   });
   $('#delScoreConfirm').hidden = true;
 }
+const META_FOR = { id: null };   // (whose names the fields hold)
 function saveScoreMeta(typing) {
-  if (!V.score) return;
+  if (!V.score || META_FOR.id !== V.score.id) return;
   const t = $('#metaTitle').value.trim(); if (t) V.score.title = t;
   V.score.composer = $('#metaComposer').value.trim();
   NAME_SET.set(V.score.id, { title: V.score.title, composer: V.score.composer });
@@ -5312,7 +5334,7 @@ function saveScoreMeta(typing) {
 }
 $('#metaTitle').addEventListener('change', saveScoreMeta);
 // (kept while you type too: on the iPad the field is not always told it was left)
-{ let t = 0; for (const id of ['#metaTitle', '#metaComposer']) $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { if (openPanel === 'settings') saveScoreMeta(true); }, 700); }); }
+{ let t = 0; for (const id of ['#metaTitle', '#metaComposer']) $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => saveScoreMeta(true), 700); }); }
 $('#metaComposer').addEventListener('change', saveScoreMeta);
 // one choice for how pages sit on the screen
 const VIEW_HINT = { auto: 'Two pages side by side when the iPad is sideways, one when upright.', one: 'Always one page, as big as possible.', turn: 'The page turned sideways to fill the screen while the iPad is upright.' };
@@ -5742,14 +5764,7 @@ function renderIpadCard() {
   let week = 0; for (const x of rangeDays(7)) week += log[dayKey(x)] || 0;
   const streak = streakOf(log);
   for (const [v, l] of [[fmtShort(log[dayKey()] || 0), 'today'], [fmtShort(week), 'last 7 days'], [String(streak), streak === 1 ? 'day in a row' : 'days in a row']]) { const x = el('div'); x.append(el('b', 'num', v), el('span', '', l)); st.append(x); }
-  // the pieces of the last 7 days, most played first
-  const per = {}; for (const x of rangeDays(7)) { const dd = AP.log2[dayKey(x)]; if (dd) for (const [id, v] of Object.entries(dd.pieces)) per[id] = (per[id] || 0) + v; }
-  let rows = Object.entries(per).map(([id, v]) => [titleOf(id), v]);
-  if (!rows.length) rows = (d.pieces || []).map((x) => [x.title, x.seconds]);
-  rows.sort((a, b) => b[1] - a[1]);
-  const top = rows.length ? rows[0][1] : 1;
-  if (rows.length) ul.append(el('li', 'ic-label', 'Most practised · last 7 days'));
-  for (const [t, v] of rows.slice(0, 4)) { const li = el('li'); const bar = el('i'); bar.style.setProperty('--w', Math.max(6, (v / top) * 100) + '%'); li.append(el('span', 't', t), el('span', 'm', fmtMinutes(v)), bar); ul.append(li); }
+  // (the pieces themselves are in the practice panel, under the goal ring)
 }
 async function getIpadPractice(quiet, code) {
   if (IPAD.busy) return; IPAD.busy = true; IPAD.tried = Date.now();
@@ -5865,7 +5880,7 @@ function setBpm(v, quiet) {
   try { syncMetroLinks(); } catch {}
   if (!quiet) persistMetro();
 }
-function showBpm(v) { $('#bpmVal').textContent = Math.round(v); $('#bpmMark').textContent = tempoMarking(v); $('#metroPillBpm').textContent = Math.round(v); }
+function showBpm(v) { $('#bpmVal').textContent = Math.round(v); $('#bpmMark').textContent = tempoMarking(v); $('#metroPillBpm').textContent = Math.round(v); const r = $('#recMetroBpm'); if (r) r.textContent = Math.round(v); }
 function renderBeatDots() {
   const box = $('#beatDots'); box.textContent = '';
   for (let i = 0; i < metro.beats; i++) {
@@ -5986,6 +6001,32 @@ function updateMetroButtons() {
 }
 $('#metroToggle').addEventListener('click', () => (metro.running ? stopMetro() : startMetro()));
 $('#metroPillStop').addEventListener('click', stopMetro);
+// The metronome pill at the bottom: slide a finger up for faster, down for slower (the number
+// follows); a tap still opens the metronome.
+(() => {
+  const pill = $('#metroPill'); if (!pill) return;
+  let d = null, moved = false;
+  pill.addEventListener('pointerdown', (e) => {
+    if (e.button > 0 || e.target.closest('#metroPillStop')) return;
+    d = { y: e.clientY, x: e.clientX, bpm: metro.bpm, id: e.pointerId }; moved = false;
+  });
+  pill.addEventListener('pointermove', (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const dy = d.y - e.clientY;
+    if (!moved) { if (Math.abs(dy) < 8 || Math.abs(dy) < Math.abs(e.clientX - d.x)) return; moved = true; pill.classList.add('dragging'); try { pill.setPointerCapture(e.pointerId); } catch {} d.y = e.clientY; return; }
+    const v = clamp(Math.round(d.bpm + dy / 5), 20, 280);
+    if (v !== Math.round(metro.bpm)) { setBpm(v, true); if (navigator.vibrate && v % 5 === 0) try { navigator.vibrate(4); } catch {} }
+  });
+  const end = (e) => {
+    if (!d || (e && e.pointerId !== d.id)) return;
+    d = null; pill.classList.remove('dragging');
+    if (moved) { persistMetro(); setTimeout(() => { moved = false; }, 0); }
+  };
+  pill.addEventListener('pointerup', end); pill.addEventListener('pointercancel', end);
+  // (a slide is not a tap: the metronome panel stays closed)
+  pill.addEventListener('click', (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+  pill.addEventListener('touchmove', (e) => { if (d) e.preventDefault(); }, { passive: false });
+})();
 
 // =====================================================================
 // Tuner
@@ -6002,6 +6043,17 @@ function setTunerTab(t) {
   if (t === 'tune') { requestAnimationFrame(drawTrace); renderIntonation(); if (openPanel === 'tuner' && !tuner.running) { TU.userStopped = false; startTuner(); } }
 }
 $$('#tunerTabs button').forEach((b) => b.addEventListener('click', () => setTunerTab(b.dataset.tab)));
+// The lines of words in the tuner and the harmonics change while you play (one line, two lines, a
+// line that comes and goes): they keep the tallest size they have had, so the page under your eyes
+// never jumps up and down. They start again small when the tab changes or the screen turns.
+const STEADY = ['#tCents', '#tHz', '#tendText', '#intoSummary', '#hSrc', '#hMatch'];
+const steadyReset = () => STEADY.forEach((q) => { const e = $(q); if (e) e.style.minHeight = ''; });
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver((es) => { for (const x of es) { const e = x.target, h = e.offsetHeight; if (h && h > (parseFloat(e.style.minHeight) || 0)) e.style.minHeight = h + 'px'; } });
+  STEADY.forEach((q) => { const e = $(q); if (e) ro.observe(e); });
+  let lastW = innerWidth; addEventListener('resize', () => { if (innerWidth !== lastW) { lastW = innerWidth; steadyReset(); } });
+  $$('#tunerTabs button').forEach((b) => b.addEventListener('click', steadyReset));
+}
 
 (function buildDial() {
   const g = $('#dialTicks'); let s = '';
@@ -6544,6 +6596,22 @@ const DL = { adding: false };   // adding notes to "My list"
   const ch = $('#droneChord'); ch.textContent = '';
   for (const [k, v] of Object.entries(DRONE_CHORDS)) { const o = el('option', '', v.label); o.value = k; ch.append(o); }
 })();
+// The drone's "My list" belongs to the score it was made for: Bach's steps with Bach, Beethoven's
+// with Beethoven (and one more list for when no score is open). The list in use is S.droneList.
+function droneListSwap(key) {
+  key = key || '';
+  const cur = S.droneListKey || '';
+  if (cur === key) return;
+  const all = S.droneLists || (S.droneLists = {});
+  if ((S.droneList || []).length) all[cur] = { list: S.droneList.slice(), at: S.droneListAt || 0 }; else delete all[cur];
+  const n = all[key];
+  S.droneList = n ? n.list.slice() : []; S.droneListAt = n ? Math.min(n.at || 0, Math.max(0, n.list.length - 1)) : 0;
+  S.droneListKey = key;
+  // (a score deleted since does not keep its list for ever: only the 200 most recent are kept)
+  const ks = Object.keys(all); if (ks.length > 200) for (const k of ks.slice(0, ks.length - 200)) delete all[k];
+  saveSettings();
+  try { if (droneMode() === 'list') { if (S.droneList.length) { const pc = S.droneList[S.droneListAt]; if (drone.running) drone.change(pc); else drone.pc = pc; } syncDrone(); } } catch {}
+}
 function syncDrone() {
   $$('#droneNotes button').forEach((b) => b.classList.toggle('on', +b.dataset.pc === drone.pc));
   $('#droneOct').value = drone.octave; $('#droneSound').value = drone.sound; $('#droneChord').value = drone.chord;
@@ -6973,7 +7041,6 @@ function setupCountIn() {
 function syncRecMetro() {
   const b = $('#recMetro'); if (!b) return;
   b.classList.toggle('on', metro.running);
-  b.querySelector('use').setAttribute('href', metro.running ? '#i-pause' : '#i-play');
   $('#recMetroBpm').textContent = String(Math.round(metro.bpm));
   b.setAttribute('aria-label', (metro.running ? 'Stop the metronome' : 'Start the metronome') + ', ' + Math.round(metro.bpm) + ' beats a minute');
 }
@@ -7958,7 +8025,7 @@ function renderGoal() {
 }
 const TR = { range: 'week', day: dayKey() };
 function rangeDays(n) { const out = []; const d = new Date(); d.setDate(d.getDate() - (n - 1)); for (let i = 0; i < n; i++) { out.push(new Date(d)); d.setDate(d.getDate() + 1); } return out; }
-function titleOf(id) { const s = scores.find((x) => x.id === id); return s ? s.title : (IPAD.data && IPAD.data.titles && IPAD.data.titles[id]) || 'Removed score'; }
+function titleOf(id) { const s = scores.find((x) => x.id === id); const t = s ? s.title : (IPAD.data && IPAD.data.titles && IPAD.data.titles[id]) || 'Removed score'; return /^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(t || '') ? 'Untitled score' : t; }
 let trBars = [];
 function renderTracker() {
   const AP = allPractice(), log = AP.log, goal = S.goal || 30;
@@ -8006,7 +8073,9 @@ function renderTracker() {
   const keys = TR.range === 'year' ? rangeDays(366).map(dayKey) : bars.map((b) => b.key);
   const per = {}; let tools = 0;
   for (const k of keys) { const d = AP.log2[k]; if (!d) continue; for (const [id, v] of Object.entries(d.pieces)) per[id] = (per[id] || 0) + v; tools += d.tools || 0; }
-  const rows = Object.entries(per).map(([id, v]) => [titleOf(id), v]);
+  // (the same piece on the iPad and the iPhone is one line)
+  const byT = {}; for (const [id, v] of Object.entries(per)) { const t = titleOf(id); byT[t] = (byT[t] || 0) + v; }
+  const rows = Object.entries(byT);
   if (tools > 30) rows.push(['Tuner, scales and other tools', tools]);
   rows.sort((a, b) => b[1] - a[1]);
   const ul = $('#trPieces'); ul.textContent = '';

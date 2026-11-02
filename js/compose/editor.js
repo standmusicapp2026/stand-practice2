@@ -51,7 +51,7 @@ export async function openComposition(id) {
   const meta = await db.get('scores', id);
   const file = meta && await db.get('files', meta.fileId);
   if (!file || !file.data) { D.toast('This score could not be opened.'); return; }
-  C.id = id; C.fileId = meta.fileId; C.score = M.migrateScore(file.data);
+  C.id = id; C.fileId = meta.fileId; C.score = M.migrateScore(file.data); C.lyFor = null;
   C.undo = []; C.redo = []; C.sel.clear(); C.selBars = null; C.capDoubt = null; syncUndo();
   meta.opened = Date.now(); db.put('scores', meta);
   await show();
@@ -76,7 +76,17 @@ export async function createComposition(opts) {
   await openComposition(id);
   saveSoon(true);
 }
+// the title, subtitle and composer typed in Layout, put into the score if they changed
+function flushLayoutNames() {
+  if (!C.score || C.lyFor !== C.id) return;   // (the fields hold this composition's names only once Layout showed them)
+  const t = $('#lyTitle').value.trim() || 'Untitled', st = $('#lySubtitle').value.trim(), cm = $('#lyComposer').value.trim();
+  if (!$('#lyTitle').value.trim() && !C.score.title) return;
+  if (t === (C.score.title || 'Untitled') && st === (C.score.subtitle || '') && cm === (C.score.composer || '')) return;
+  edit(() => { C.score.title = t; C.score.subtitle = st; C.score.composer = cm; $('#cpTitle').textContent = t; }, { keepSel: true });
+}
 async function closeCompose() {
+  try { flushLayoutNames(); } catch {}
+  C.lyFor = null;
   player.stop(); syncPlay();
   try { D.hidePanel(); } catch {}   // (Layout, Capture, Sound… close with Compose)
   await save(true);
@@ -1227,6 +1237,11 @@ function syncSelBar() {
     btn('Delete', () => deleteMark(mk), 'i-trash', 'danger');
     if (mk.kind === 'span' && ['slur', 'hairpin'].includes(mk.name)) btn('Reset shape', () => { edit(() => { const q = (C.score.spans || []).find((x) => x.id === mk.id); if (q) for (const k of ['off', 'ax', 'ay', 'bx', 'by', 'hd']) delete q[k]; }); drawHover(); });
     else if (mk.kind !== 'span') btn('Select the note', () => { C.markSel = null; C.sel.clear(); C.sel.add(mk.id); relayout(); syncSelBar(); drawHover(); renderTab(); });
+    // words (typed or read by Capture) can be moved: to the note before or after, above or under the staff
+    if (mk.kind === 'txt' && f) {
+      btn('◀', () => moveWords(mk, -1), null, 'keep'); btn('▶', () => moveWords(mk, 1), null, 'keep');
+      btn(f.ev.txtBelow ? 'Above' : 'Below', () => { edit(() => { const g = M.findEvent(C.score, mk.id); if (g) { if (g.ev.txtBelow) delete g.ev.txtBelow; else g.ev.txtBelow = true; } }, { keepSel: true }); C.markSel = { ...mk }; relayout(); syncSelBar(); drawHover(); }, f.ev.txtBelow ? 'i-up' : 'i-down');
+    }
     finish(); return;
   }
   if (C.selBars) {
@@ -1325,6 +1340,24 @@ const SCORE_MARKS = {
 const MARK_NAME = { stacc: 'Staccato', stacciss: 'Staccatissimo', ten: 'Tenuto', acc: 'Accent', marc: 'Marcato', ferm: 'Fermata', fermS: 'Short fermata', fermL: 'Long fermata',
   down: 'Down bow', up: 'Up bow', harm: 'Harmonic', stopped: 'Stopped', open: 'Open', snap: 'Snap pizzicato', trill: 'Trill', mord: 'Mordent', prall: 'Short trill', turn: 'Turn', turnInv: 'Inverted turn',
   caes: 'Caesura', breath: 'Breath', slur: 'Slur', hairpin: 'Hairpin', cresc: 'cresc.', dim: 'dim.', rit: 'rit.', accel: 'accel.', '8va': '8va', '15ma': '15ma', '8vb': '8vb', '15mb': '15mb', ped: 'Pedal', gliss: 'Glissando', tr: 'Trill line', volta: 'Ending' };
+// words moved to the next (or previous) note on the same staff, even into the next bar
+function moveWords(mk, dir) {
+  const f = M.findEvent(C.score, mk.id); if (!f || !f.ev.txt) return;
+  const bars = f.st.bars; let m = f.m, i = f.i, to = null;
+  for (;;) {
+    i += dir;
+    if (i < 0) { m--; if (m < 0) break; i = bars[m].length - 1; if (i < 0) continue; }
+    if (i >= bars[m].length) { m++; i = -1; if (m >= bars.length) break; continue; }
+    const e = bars[m][i]; if (e && !e.txt) { to = e; break; }
+  }
+  if (!to) { hint(dir < 0 ? 'These are the first words that can go there.' : 'No note further on without words.', 1600); return; }
+  edit(() => {
+    const g = M.findEvent(C.score, mk.id), h = M.findEvent(C.score, to.id); if (!g || !h) return;
+    h.ev.txt = g.ev.txt; if (g.ev.txtStyle) h.ev.txtStyle = g.ev.txtStyle; if (g.ev.txtBelow) h.ev.txtBelow = true; else delete h.ev.txtBelow;
+    g.ev.txt = null; delete g.ev.txtStyle; delete g.ev.txtBelow;
+  }, { keepSel: true });
+  C.markSel = { ...mk, id: to.id }; relayout(); syncSelBar(); drawHover();
+}
 function deleteMark(mk) {
   if (SCORE_MARKS[mk.kind]) {
     let msg = '';
@@ -1338,7 +1371,7 @@ function deleteMark(mk) {
     const f = M.findEvent(C.score, mk.id); if (!f) return;
     if (mk.kind === 'art') f.ev.art = (f.ev.art || []).filter((a) => a !== mk.name);
     else if (mk.kind === 'dyn') f.ev.dyn = null;
-    else if (mk.kind === 'txt') f.ev.txt = null;
+    else if (mk.kind === 'txt') { f.ev.txt = null; delete f.ev.txtBelow; delete f.ev.txtStyle; }
     else if (mk.kind === 'fing') delete f.ev.fing;
     else if (mk.kind === 'tie') for (const n of f.ev.notes || []) n.tie = false;
     else if (mk.kind === 'chord') delete f.ev.chord;
@@ -2186,6 +2219,8 @@ function wirePanels() {
   $('#lyTitle').addEventListener('change', (e) => edit(() => { C.score.title = e.target.value.trim() || 'Untitled'; $('#cpTitle').textContent = C.score.title; }, { keepSel: true }));
   $('#lySubtitle').addEventListener('change', (e) => edit(() => { C.score.subtitle = e.target.value.trim(); }, { keepSel: true }));
   $('#lyComposer').addEventListener('change', (e) => edit(() => { C.score.composer = e.target.value.trim(); }, { keepSel: true }));
+  // (kept while you type too, and when Compose closes: on the iPad the fields are not always told they were left)
+  { let t = 0; for (const id of ['#lyTitle', '#lySubtitle', '#lyComposer']) $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(flushLayoutNames, 700); }); }
   $('#lyPage').addEventListener('change', (e) => edit(() => { C.score.layout.page = e.target.value; }, { keepSel: true }));
   $('#lyOrient').addEventListener('change', (e) => edit(() => { C.score.layout.landscape = e.target.value === '1'; }, { keepSel: true }));
   $('#lyConcert').addEventListener('change', (e) => edit(() => { C.score.layout.concert = e.target.checked; }, { keepSel: true }));
@@ -2463,7 +2498,7 @@ function renderMixer() {
 }
 function renderLayout() {
   if (!C.score) return;
-  $('#lyTitle').value = C.score.title || ''; $('#lySubtitle').value = C.score.subtitle || ''; $('#lyComposer').value = C.score.composer || '';
+  C.lyFor = C.id; $('#lyTitle').value = C.score.title || ''; $('#lySubtitle').value = C.score.subtitle || ''; $('#lyComposer').value = C.score.composer || '';
   $('#lyPage').value = C.score.layout.page || 'A4'; $('#lyOrient').value = C.score.layout.landscape ? '1' : '0';
   $('#lyConcert').checked = C.score.layout.concert !== false; $('#lyHide').checked = !!C.score.layout.hideEmpty;
   const box = $('#lyStaff'); box.textContent = '';
