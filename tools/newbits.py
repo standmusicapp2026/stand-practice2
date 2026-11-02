@@ -11,6 +11,8 @@ async def main():
         b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 1366, 'height': 1024}, has_touch=True)
         pg = await ctx.new_page(); await pg.add_init_script('window.__noTour = true;')
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+        if os.environ.get('BLOBDBG'):
+            await pg.add_init_script("window.__blobs = {}; const c0 = URL.createObjectURL; URL.createObjectURL = function (b) { const u = c0.call(URL, b); window.__blobs[u.slice(-36)] = { made: (new Error().stack || '').split('\\n').slice(1, 4).join(' | '), type: b && b.type }; return u; }; const r0 = URL.revokeObjectURL; URL.revokeObjectURL = function (u) { const e = window.__blobs[String(u).slice(-36)]; if (e) e.revoked = (new Error().stack || '').split('\\n').slice(1, 4).join(' | '); return r0.call(URL, u); };")
         await pg.goto('http://localhost:' + os.environ.get('PORT', '8765') + '/index.html'); await pg.wait_for_timeout(1500)
         await pg.evaluate("() => { document.querySelector('#welGo')?.click(); setTimeout(() => document.querySelector('.tour-skip')?.click(), 300); }"); await pg.wait_for_timeout(700)
         await pg.set_input_files('#importInput', [FIX + 'vector8.pdf', FIX + 'scan10.pdf'])
@@ -135,6 +137,11 @@ async def main():
         print('words', r2)
         ok(r2['a'] is None and r2['b2'] == 'sonore' and r2['below'] and not r2['below2'] and r2['gone'] and r2['back'] == 'sonore', 'Compose: words moved to the next note, put above, deleted, and undone')
         print(errs[:3])
+        if os.environ.get('BLOBDBG'):
+            for e in errs:
+                import re
+                m = re.search(r'([0-9a-f-]{36})', e)
+                if m: print('BLOB', json.dumps(await pg.evaluate("(k) => window.__blobs[k]", m.group(1)))[:900])
         ok(not errs, 'no page errors')
         print('PASS' if all(res) else 'FAIL', 'small corrections 2 Nov')
         await b.close()
