@@ -236,12 +236,14 @@ async function openDocumentOne(file, known) {
       while (live.length > (globalThis.__pdfLive ?? (heavy ? 1 : 4))) {
         const old = live.shift();
         if (drawing.get(old) > 0) { live.push(old); break; }
-        pdf.getPage(old + 1).then((pg) => { if (!(drawing.get(old) > 0)) pg.cleanup(); }).catch(() => {});
+        // (the document may have been closed meanwhile: then there is nothing to tidy)
+        if (!gone) try { pdf.getPage(old + 1).then((pg) => { if (!(drawing.get(old) > 0)) pg.cleanup(); }).catch(() => {}); } catch {}
       }
     };
     return {
       pages: pdf.numPages, sizes, pdf,
       async render(i, canvas, w, h, opts = {}) {
+        if (gone) return;   // (the score was closed while this page was waiting to be drawn)
         const W = Math.round(w), H = Math.round(h);
         if (Math.max(W, H) > 500) cur = i;   // (a page on the stand, not a small picture)
         // the light copy of a heavy scan, when its page is ready
@@ -284,6 +286,7 @@ async function openDocumentOne(file, known) {
         if (heavy || scanLike) { const prev = HEAVY.chain; HEAVY.chain = new Promise((r) => { release = r; }); await Promise.race([prev.catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); }   // (never stuck behind a drawing that never ends)
         HEAVY.active++;
         try {
+        if (gone) return;
         page = await pdf.getPage(i + 1);
         const vp1 = page.getViewport({ scale: 1 });
         const vp = page.getViewport({ scale: w / vp1.width });
@@ -293,7 +296,7 @@ async function openDocumentOne(file, known) {
         if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
         // (a drawing stopped because it is no longer wanted is not an error: whoever asked knows it was stopped)
         let stopped = false;
-        await task.promise.catch((e) => { if (e && e.name === 'RenderingCancelledException' && opts.ctl && opts.ctl.aborted) { stopped = true; return; } throw e; });
+        await task.promise.catch((e) => { if (e && e.name === 'RenderingCancelledException' && ((opts.ctl && opts.ctl.aborted) || gone)) { stopped = true; return; } throw e; });
         if (stopped) return;
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
         if (key && (opts.keep || performance.now() - t0 > PIX_SLOW) && !looksBlank(canvas) && !looksBlack(canvas)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);

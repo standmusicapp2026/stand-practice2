@@ -326,7 +326,7 @@ const markDirty = () => { try { localStorage.setItem('standDirty', String(Date.n
 const dirtyAt = () => { try { return +localStorage.getItem('standDirty') || 0; } catch { return 0; } };
 {
   const put1 = db.put.bind(db), del1 = db.del.bind(db);
-  db.put = (store, value) => { if (DIRTY_STORES.has(store) && !(store === 'kv' && value && DIRTY_SKIP.has(value.k)) && !(store === 'files' && /^(ipadcopy|follow):/.test(String(value && value.id)))) markDirty(); return put1(store, value); };
+  db.put = (store, value) => { if (DIRTY_STORES.has(store) && !(store === 'kv' && value && DIRTY_SKIP.has(value.k)) && !(store === 'files' && /^(ipadcopy|follow|recspool):/.test(String(value && value.id)))) markDirty(); return put1(store, value); };
   db.del = (store, key) => { if (DIRTY_STORES.has(store)) markDirty(); return del1(store, key); };
 }
 function setFolder(sc, target) {
@@ -852,11 +852,13 @@ async function importPdfs(list) {
         const buf = await it.data();
         last = await addPdf(buf, it.name, it.meta || null); added++;
         await refreshLibrary();
-      } catch (err) { console.error(err); failed.push(it.name); }
+      } catch (err) { console.error(err); failed.push(it.name); if (err && /Quota|space|disk/i.test((err.name || '') + ' ' + (err.message || ''))) IMP.full = true; }
       await new Promise((r) => setTimeout(r, 120));
     }
   } finally { IMP.busy = false; }
-  if (failed.length) toast((added ? `${added} added. ` : '') + `Could not open ${failed.length === 1 ? failed[0] : failed.length + ' files'} (not a PDF, or damaged).`, 6000);
+  // (the iPad is full: said as it is, not as a damaged file)
+  if (failed.length && IMP.full) { IMP.full = false; toast((added ? `${added} added. ` : '') + `There is not enough space on this iPad for ${failed.length === 1 ? failed[0] : failed.length + ' files'}. Free some space in Settings › General › iPad Storage, then add ${failed.length === 1 ? 'it' : 'them'} again.`, 8000); }
+  else if (failed.length) toast((added ? `${added} added. ` : '') + `Could not open ${failed.length === 1 ? failed[0] : failed.length + ' files'} (not a PDF, or damaged).`, 6000);
   else if (added) toast(added === 1 ? 'Added: ' + label(last) : `${added} scores added`, 4000);
   else $('#toast').hidden = true;
   return { added, last };
@@ -1569,6 +1571,7 @@ async function layout(fade) {
         if (!sharp || !e || token !== layoutToken) return;
         // (a drawing that was let go meanwhile, or came out white: the one showing stays)
         if (!sharp.width || (looksBlank(sharp) && !looksBlank(art))) return;
+        if (art.parentNode !== e.inner) return;
         sharp.className = 'art'; e.inner.replaceChild(sharp, art); e.art = sharp;
         inkFollowsArt(e);
         if (!INCACHE.has(art)) freeCanvas(art);
@@ -2137,6 +2140,8 @@ async function sharpen() {
     const art = await renderPage(p.index, p.iw, p.ih, want);
     if (token !== layoutToken) return;
     if (art !== p.art && art && art.width && !(looksBlank(art) && p.art && p.art.width && !looksBlank(p.art))) {
+      // (the page may have been laid out again meanwhile: its old picture is no longer there to swap)
+      if (!p.art || p.art.parentNode !== p.inner) continue;
       art.className = 'art';
       p.inner.replaceChild(art, p.art); p.art = art;
       inkFollowsArt(p);
@@ -7274,7 +7279,10 @@ async function startRecording(kind) {
       try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: vrec.shape === 'landscape' ? 'landscape' : 'portrait' }); } catch {}
     }, wait);
   } else {
-    recorder.start(ci.delayed ? ci.startAt : 0);
+    // (what is recorded goes into the database as it comes: see recorder.start)
+    recState.spool = uid();
+    db.put('kv', { k: 'recspool:' + recState.spool, v: { scoreId: recState.scoreId, page: recState.page, created: Date.now() } }).catch(() => {});
+    recorder.start(ci.delayed ? ci.startAt : 0, recState.spool);
   }
   $('#recPill').hidden = false; $('#recBtn').classList.add('live'); $('#recBtnLabel').textContent = 'Stop';
   // level meter
@@ -7340,11 +7348,12 @@ async function stopRecording() {
     $('#toast').hidden = true;
   } else {
     const { data, sr } = await recorder.stop();
-    if (data.length < sr * 0.4) { toast('That was too short to keep.'); return; }
+    if (data.length < sr * 0.4) { recorder.dropSpool(st.spool); toast('That was too short to keep.'); return; }
     take = { id: uid(), kind: 'audio', scoreId: st.scoreId, page: st.page, name, created: Date.now(), sr, dur: data.length / sr, peaks: computePeaks(data), peak: peakOf(data), fav: false };
     await db.put('files', { id: 'audio:' + take.id, data });
   }
   await db.put('takes', take);
+  if (st.spool) recorder.dropSpool(st.spool);   // (the take is kept: its pieces can go)
   takesScope = st.scoreId ? 'score' : 'all';
   showPanel('takes');
   await selectTake(take.id);
@@ -9820,6 +9829,36 @@ function wordRead(job, text) {
   document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) setTimeout(show, 50); });
   $('#crashClear')?.addEventListener('click', () => { put(KC, []); show(); });
 })();
+
+// ---------- a recording that was interrupted (Stand ended while recording) ----------
+// Its pieces were in the database already (every 10 s): at the next start they are put together into
+// a take of their own, so nothing recorded is lost.
+async function recoverRecordings() {
+  try {
+    const keys = (await db.keys('files')).map(String).filter((k) => k.startsWith('recspool:')).sort();
+    const metas = (await db.keys('kv')).map(String).filter((k) => k.startsWith('recspool:'));
+    const spools = new Set([...keys.map((k) => k.split(':')[1]), ...metas.map((k) => k.split(':')[1])]);
+    for (const sp of spools) {
+      if (recState && recState.spool === sp) continue;
+      const mine = keys.filter((k) => k.split(':')[1] === sp);
+      const meta = (await getSetting('recspool:' + sp, null)) || {};
+      if (mine.length) {
+        const parts = []; let sr = 0, len = 0;
+        for (const k of mine) { const r = await db.get('files', k).catch(() => null); if (r && r.data) { sr = sr || r.sr || 48000; let d = r.data; if (r.sr && r.sr !== sr) { const q = r.sr / sr, n = Math.floor(d.length / q), o = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * q, j = Math.floor(x), f = x - j; o[i] = (d[j] || 0) * (1 - f) + (d[j + 1] || 0) * f; } d = o; } parts.push(d); len += d.length; } }
+        if (len > (sr || 48000) * 0.5) {
+          const data = new Float32Array(len); let o = 0; for (const d of parts) { data.set(d, o); o += d.length; }
+          const when = meta.created || Date.now();
+          const take = { id: uid(), kind: 'audio', scoreId: meta.scoreId || null, page: meta.page || 0, name: 'Recovered take', created: when, sr, dur: len / sr, peaks: computePeaks(data), peak: peakOf(data), fav: false, source: 'Recovered' };
+          await db.put('files', { id: 'audio:' + take.id, data }); await db.put('takes', take);
+          nlog('recording recovered: ' + Math.round(len / sr) + ' s');
+          toast(`A recording that was interrupted was kept (${fmtMinutes(Math.round(len / sr))}): "Recovered take" in Recordings.`, 6000);
+        }
+      }
+      await recorder.dropSpool(sp);
+    }
+  } catch (e) { console.warn('recover', e); }
+}
+setTimeout(recoverRecordings, 4000);
 
 // ---------- a problem report: one text file, sent from the share sheet (mail, WhatsApp, AirDrop) ----------
 // Only what helps find the cause: the device and system, the app's version, what Stand noted lately

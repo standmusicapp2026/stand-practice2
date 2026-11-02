@@ -634,6 +634,13 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 @media (max-width: 760px) {
   .tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
+/* narrower iPads upright (the iPad mini): the score's tools a little closer, so every one of them is
+   on the screen (Zoom and More were pushed past the edge); if still too many, the row scrolls */
+@media (max-width: 900px) {
+  .tb-btn { min-width: 50px; padding: 0 2px; font-size: 10px; letter-spacing: -.01em; }
+  .tb-tools { min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .tb-tools::-webkit-scrollbar { display: none; }
+}
 @media (max-width: 700px) {
   .tb-btn { min-width: 48px; }
   .tb-btn span:not(.rec-dot) { display: none; }
@@ -1856,3 +1863,6 @@ body:not(.phone) .phs-bar { display: none; }
 /* the iPhone: the practice figures two by two (the pieces keep the iPad's lines) */
 body.phone .stat-row.four { grid-template-columns: repeat(2, 1fr); }
 body.phone .stat b { font-size: 22px; }
+
+/* (the back button never squeezed by a long title) */
+.topbar > .icon-btn { flex: none; min-width: 40px; }

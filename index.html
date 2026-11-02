@@ -24,7 +24,7 @@
   var E = window.__standErrors = [], seen = {}, n = 0;
   function note(kind, msg, where, stack) {
     try {
-      var key = kind + msg + where, t = Date.now();
+      var key = kind + msg, t = Date.now();   // (the same error from another place in the same minute is the same error)
       if (seen[key] && t - seen[key] < 60000) return; seen[key] = t;
       var line = kind + ': ' + String(msg || '').slice(0, 200) + (where ? ' @ ' + where : '') + (stack ? ' | ' + String(stack).replace(/\s+/g, ' ').slice(0, 400) : '');
       E.push({ t: t, line: line }); if (E.length > 60) E.shift();

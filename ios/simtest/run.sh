@@ -17,7 +17,7 @@ def v(x): return tuple(int(p) for p in x["version"].split("."))
 r = [x for x in r if v(x) >= (16, 4)]
 r.sort(key=v)
 pick = [r[-1]] + ([r[0]] if len(r) > 1 else [])
-print("\n".join(x["identifier"] + "|" + x["version"] for x in pick))
+print("\n".join(x["identifier"] + "|" + x.get("runtimeRoot", "") + "|" + x["version"] for x in pick))
 ')
 echo "runtimes: $RUNTIMES" | tee -a "$SUMMARY"
 
@@ -40,7 +40,7 @@ for n in names:
 i=0
 while IFS= read -r RT; do
   [ -z "$RT" ] && continue
-  RID="${RT%%|*}"; RV="${RT##*|}"; i=$((i+1))
+  RID="${RT%%|*}"; RV="${RT##*|}"; RROOT=$(echo "$RT" | cut -d'|' -f2); i=$((i+1))
   for W in "${WANT[@]}"; do
     # on the older runtime only one iPad and one iPhone (time is counted)
     if [ $i -gt 1 ] && [[ "$W" != iPad\ \(10th* && "$W" != iPhone\ SE* ]]; then continue; fi
@@ -54,7 +54,9 @@ while IFS= read -r RT; do
     xcrun simctl install "$UDID" "$APP" || { echo "  install failed" | tee -a "$SUMMARY"; xcrun simctl delete "$UDID"; continue; }
     for s in microphone camera photos; do xcrun simctl privacy "$UDID" grant $s $BID > /dev/null 2>&1; done
     START=$(date +%s)
-    xcrun simctl launch "$UDID" $BID -standSelfTest > /dev/null
+    # (the iOS 18 simulators cannot find WebKit's Swift library by themselves: a known simulator
+    # fault, WebKit bug 293831 — real iPads are not affected; it is shown the way)
+    SIMCTL_CHILD_DYLD_FALLBACK_LIBRARY_PATH="$RROOT/System/Cryptexes/OS/usr/lib/swift" xcrun simctl launch "$UDID" $BID -standSelfTest > /dev/null
     sleep 3
     CONT=$(xcrun simctl get_app_container "$UDID" $BID data 2>/dev/null)
     LOG="$CONT/Documents/Diagnostics/events.log"
@@ -67,7 +69,7 @@ while IFS= read -r RT; do
           tail -n +$((SEEN+1)) "$LOG" | head -n $((N-SEEN)) > "$D/new.txt"; SEEN=$N
           while IFS= read -r L; do
             case "$L" in
-              *"page: SHOT "*) NAME="${L##*SHOT }"; xcrun simctl io "$UDID" screenshot "$D/$NAME.png" > /dev/null 2>&1 ;;
+              *"page: SHOT "*) NAME="${L##*SHOT }"; (xcrun simctl io "$UDID" screenshot "$D/$NAME.png" > /dev/null 2>&1 &) ;;
             esac
           done < "$D/new.txt"
           grep -q "SELFTEST DONE" "$LOG" && break

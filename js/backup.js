@@ -52,7 +52,7 @@ async function collect(withTakes) {
     if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) o[k] = pack(x); return o; }
     return v;
   };
-  let files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow):/.test(String(f.id)));
+  let files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow|recspool):/.test(String(f.id)));
   const takes = withTakes ? await db.all('takes') : [];
   if (!withTakes) files = files.filter((f) => !/^(audio|video):/.test(String(f.id)));
   const lib = pack({ v: 2, made: Date.now(), scores: await db.all('scores'), files, ink: await db.all('ink'), takes, kv: await db.all('kv') });
@@ -64,7 +64,7 @@ export async function backupSizes() {
   let all = 0, rec = 0;
   // (one file at a time: never the whole library in memory)
   for (const id of await db.keys('files')) {
-    if (/^(ipadcopy|follow):/.test(String(id))) continue;   // (copies and readings made again by themselves)
+    if (/^(ipadcopy|follow|recspool):/.test(String(id))) continue;   // (copies and readings made again by themselves)
     const f = await db.get('files', id); if (!f) continue;
     const n = sizeOf(f.data);
     all += n; if (/^(audio|video):/.test(String(f.id))) rec += n;
@@ -202,7 +202,7 @@ export async function makeFolderBackup(withTakes, stamp, folders = [], opt = {})
   const uniq = (p) => { let q = p, k = 2; const dot = p.lastIndexOf('.'); while (used.has(q.toLowerCase())) q = dot > p.lastIndexOf('/') ? `${p.slice(0, dot)} (${k++})${p.slice(dot)}` : `${p} (${k++})`; used.add(q.toLowerCase()); return q; };
   const recOnly = opt.only === 'recordings';
   const scores = recOnly ? [] : await db.all('scores');
-  let files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow):/.test(String(f.id)));
+  let files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow|recspool):/.test(String(f.id)));
   let takes = withTakes ? await db.all('takes') : [];
   if (opt.takeIds) { const want = new Set(opt.takeIds); takes = takes.filter((t) => want.has(t.id)); }
   if (recOnly) { const ids = new Set(takes.flatMap((t) => ['audio:' + t.id, 'video:' + t.id])); files = files.filter((f) => ids.has(String(f.id))); }
@@ -280,6 +280,20 @@ Please do not change the files inside Stand data.
   }
   return out;
 }
+
+// Bringing back a backup over a library that is in use: for each score, whichever is newer stays —
+// the one on this iPad (it was changed since the backup: nothing written since is undone, no
+// erased marking comes back) or the one in the backup. Anything only in the backup is added.
+const stampOf = (x) => Math.max((x && x.edited) || 0, (x && x.opened) || 0, (x && x.added) || 0, (x && x.thumbAt) || 0);
+async function restorePlan(lib) {
+  const fromBackup = new Set();
+  for (const s of lib.scores) { const loc = await db.get('scores', s.id).catch(() => null); if (!loc || stampOf(s) > stampOf(loc)) fromBackup.add(s.id); }
+  const scoreOfFile = new Map(lib.scores.filter((s) => s.fileId).map((s) => [s.fileId, s.id]));
+  // a file is taken from the backup when it is not here, or its score comes from the backup
+  const fileFromBackup = async (id) => { const sid = scoreOfFile.get(id); if (sid && fromBackup.has(sid)) return true; return !(await db.get('files', id).catch(() => null)); };
+  const inkFromBackup = (key) => { const sid = String(key).split(':')[0]; return !lib.scores.some((s) => s.id === sid) || fromBackup.has(sid); };
+  return { fromBackup, fileFromBackup, inkFromBackup };
+}
 async function restoreZips(zips) {
   let scores = 0, takes = 0; const missing = [];
   const sets = new Map();
@@ -309,16 +323,17 @@ async function restoreZips(zips) {
       if (v && typeof v === 'object') { const r = {}; for (const [k, x] of Object.entries(v)) r[k] = await unpack(x); return r; }
       return v;
     };
-    const okFiles = new Set();
+    const okFiles = new Set(), plan = await restorePlan(lib);
     for (const f of lib.files) {
+      if (!(await plan.fileFromBackup(f.id))) { okFiles.add(f.id); continue; }   // (kept as it is here)
       const r = await unpack(f);
       if (r.data === undefined && f.data !== undefined) continue;
       if (Array.isArray(r.data) && r.data.some((x) => x === undefined)) continue;
       await db.put('files', r); okFiles.add(r.id);
     }
-    for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { await db.put('scores', await unpack(s)); scores++; }
-    for (const i of lib.ink) await putInkMerged(await unpack(i));
-    for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { await db.put('takes', await unpack(t)); takes++; }
+    for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { if (plan.fromBackup.has(s.id)) await db.put('scores', await unpack(s)); scores++; }
+    for (const i of lib.ink) if (plan.inkFromBackup(i.key)) await putInkMerged(await unpack(i));
+    for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { if (!(await db.get('takes', t.id).catch(() => null))) await db.put('takes', await unpack(t)); takes++; }
     for (const k of lib.kv) await putKvMerged(await unpack(k));
     if (lack.length) missing.push({ count, lack });
   }
@@ -380,15 +395,16 @@ export async function restoreBackup(fileList) {
       return v;
     };
     const lib = first.lib;
-    const okFiles = new Set();
+    const okFiles = new Set(), plan = await restorePlan(lib);
     for (const f of lib.files) {
+      if (!(await plan.fileFromBackup(f.id))) { okFiles.add(f.id); continue; }   // (kept as it is here)
       const r = await unpack(f);
       if (r.data === undefined && f.data !== undefined) continue;
       await db.put('files', r); okFiles.add(r.id);
     }
-    for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { await db.put('scores', await unpack(s)); scores++; }
-    for (const i of lib.ink) await putInkMerged(await unpack(i));
-    for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { await db.put('takes', await unpack(t)); takes++; }
+    for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { if (plan.fromBackup.has(s.id)) await db.put('scores', await unpack(s)); scores++; }
+    for (const i of lib.ink) if (plan.inkFromBackup(i.key)) await putInkMerged(await unpack(i));
+    for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { if (!(await db.get('takes', t.id).catch(() => null))) await db.put('takes', await unpack(t)); takes++; }
     for (const k of lib.kv) await putKvMerged(await unpack(k));
     if (lack.length) missing.push({ count, lack });
   }
@@ -480,7 +496,7 @@ export async function makeMirror(onBin) {
   // the files one by one (a PDF, a recording, a composition…)
   const pfiles = [];
   for (const id of await db.keys('files')) {
-    if (/^(ipadcopy|follow):/.test(String(id))) continue;
+    if (/^(ipadcopy|follow|recspool):/.test(String(id))) continue;
     const f = await db.get('files', id); if (!f) continue;
     pfiles.push(await packOne(f, f.id));
   }
@@ -529,15 +545,16 @@ export async function restoreMirror(get) {
     if (v && typeof v === 'object') { const r = {}; for (const [k, x] of Object.entries(v)) r[k] = await unpack(x); return r; }
     return v;
   };
-  let scores = 0, takes = 0; const okFiles = new Set(); const lost = [];
+  let scores = 0, takes = 0; const okFiles = new Set(); const lost = []; const plan = await restorePlan(lib);
   for (const f of lib.files) {
+    if (!(await plan.fileFromBackup(f.id))) { okFiles.add(f.id); continue; }   // (kept as it is here)
     const r = await unpack(f);
     if ((r.data === undefined && f.data !== undefined) || (Array.isArray(r.data) && r.data.some((x) => x === undefined))) { lost.push(f.id); continue; }
     await db.put('files', r); okFiles.add(r.id);
   }
-  for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { await db.put('scores', await unpack(s)); scores++; }
-  for (const i of lib.ink) await putInkMerged(await unpack(i));
-  for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { await db.put('takes', await unpack(t)); takes++; }
+  for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { if (plan.fromBackup.has(s.id)) await db.put('scores', await unpack(s)); scores++; }
+  for (const i of lib.ink) if (plan.inkFromBackup(i.key)) await putInkMerged(await unpack(i));
+  for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { if (!(await db.get('takes', t.id).catch(() => null))) await db.put('takes', await unpack(t)); takes++; }
   for (const k of lib.kv) await putKvMerged(await unpack(k));
   return { scores, takes, lost: lost.length, made: lib.made };
 }

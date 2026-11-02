@@ -1,5 +1,6 @@
 // Recorder (raw PCM, no processing) and a player with pitch-preserving slow-down and reverb.
 import { getCtx, master, acquireMic, releaseMic, holdSound, wantAudio } from './audio.js';
+import { db } from './db.js';
 
 // ---------------- capture ----------------
 const CAPTURE_SRC = `
@@ -108,12 +109,35 @@ export class Recorder {
       };
     }
   }
-  start(at = 0) {
+  // spool: a name for this take. Every 10 s what was recorded goes into the database and leaves
+  // memory: a long rehearsal never fills the iPad's memory, and if Stand is ended while recording
+  // (iOS, a crash, the battery) what was recorded up to then is found and kept at the next start.
+  start(at = 0, spool = null) {
     this.chunks = []; this.parts = []; this._stopping = false;
     if (!this.recording) holdSound(true);
     this.recording = true;
     this._at = at;
+    this.spool = spool; this.spoolN = 0; clearInterval(this._spoolT);
+    if (spool) this._spoolT = setInterval(() => this._spill().catch(() => {}), 10000);
     if (this.node.port) this.node.port.postMessage({ cmd: 'start', at });
+  }
+  async _spill() {
+    if (!this.spool || this._spilling || !this.recording) return;
+    const arr = this.chunks, k = arr.length; if (!k) return;
+    this._spilling = true;
+    try {
+      let len = 0; for (let i = 0; i < k; i++) len += arr[i].length;
+      const seg = new Float32Array(len); let o = 0; for (let i = 0; i < k; i++) { seg.set(arr[i], o); o += arr[i].length; }
+      const id = 'recspool:' + this.spool + ':' + String(this.spoolN++).padStart(5, '0'), sr = this.wireSr || this.sr;
+      await db.put('files', { id, data: seg, sr });
+      const mark = { spool: id, len, sr };
+      if (this.chunks === arr) { arr.splice(0, k); this.parts.push(mark); }
+      else {
+        // (meanwhile the microphone came back: those chunks were moved into a part)
+        const at = this.parts.findIndex((q) => q.chunks === arr);
+        if (at >= 0) { arr.splice(0, k); this.parts.splice(at, 0, mark); } else { await db.del('files', id).catch(() => {}); }
+      }
+    } finally { this._spilling = false; }
   }
   async stop() {
     const ctx = this.ctx || getCtx();
@@ -124,7 +148,8 @@ export class Recorder {
     if (this.node.port) {
       await new Promise((res) => { this._resolveStop = res; this.node.port.postMessage({ cmd: 'stop' }); setTimeout(res, 500); });
     }
-    this.recording = false;
+    this.recording = false; clearInterval(this._spoolT);
+    for (let k = 0; k < 100 && this._spilling; k++) await new Promise((r) => setTimeout(r, 30));
     try { this.src.disconnect(this.node); this.node.disconnect(); this.sink.disconnect(); } catch {}
     releaseMic();
     const sr = this.sr || ctx.sampleRate;
@@ -134,6 +159,13 @@ export class Recorder {
     const pieces = [];
     for (const p of this.parts || []) {
       if (p.silence) { pieces.push(new Float32Array(p.silence)); continue; }
+      // (a piece already in the database: read back; at another rate, brought to the take's own)
+      if (p.spool) {
+        const r = await db.get('files', p.spool).catch(() => null);
+        let d = r && r.data ? r.data : new Float32Array(p.len);
+        if (p.sr && p.sr !== sr) { const k = p.sr / sr, n = Math.floor(d.length / k), q = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * k, j = Math.floor(x), f = x - j; q[i] = (d[j] || 0) * (1 - f) + (d[j + 1] || 0) * f; } d = q; }
+        pieces.push(d); continue;
+      }
       let len = 0; for (const c of p.chunks) len += c.length;
       let d = new Float32Array(len); let o = 0; for (const c of p.chunks) { d.set(c, o); o += c.length; }
       p.chunks = null;   // (let go at once: a long take is never held three times over)
@@ -149,6 +181,8 @@ export class Recorder {
     return { data, sr };
   }
   cancel() { if (this.node) { this.stop(); } }
+  // the pieces of a take in the database go, once the take itself is kept (or thrown away)
+  async dropSpool(spool) { if (!spool) return; for (const k of await db.keys('files')) if (String(k).startsWith('recspool:' + spool + ':')) await db.del('files', k).catch(() => {}); await db.del('kv', 'recspool:' + spool).catch(() => {}); }
 }
 
 export function computePeaks(data, n = 600) {
