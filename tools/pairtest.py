@@ -67,10 +67,13 @@ class Net:
             d, n = m['d'], m['n']
             me.peerDev[peer.name] = d; me.peerKind[peer.name] = m['k']
             if me.pairMode and m['pm']:
-                if me.pairing and me.pairing['peer'] != peer.name: await self.drop(me, peer); return
+                if me.pairing:
+                    if me.pairing['peer'] != peer.name: await self.drop(me, peer)
+                    else: me.pairing['theirNonce'] = n
+                    return
                 show = (me.kind == 'iPad' and m['k'] != 'iPad') or (me.kind == m['k'] and me.id < d)
                 code = '%04d' % random.randint(0, 9999)
-                me.pairing = {'peer': peer.name, 'shower': show, 'code': code, 'theirNonce': n, 'tries': 0}
+                me.pairing = {'peer': peer.name, 'shower': show, 'code': code, 'theirNonce': n, 'tries': 0, 'typed': None, 'pendingKey': None}
                 await self.event(me, 'show' if show else 'ask', {'code': code, 'kind': m['k']} if show else {'kind': m['k']})
             elif d in me.linked and m['tr']:
                 await self.auth(me, peer, {'op': 'proof', 'm': mac(me.linked[d]['key'], n + '|' + me.id)})
@@ -81,17 +84,17 @@ class Net:
         elif op == 'proof':
             d = me.peerDev.get(peer.name)
             if d in me.linked and m['m'] == mac(me.linked[d]['key'], me.nonce[peer.name] + '|' + d):
-                me.verified.add(peer.name); await self.state(me)
-            else: await self.drop(me, peer)
+                me.verified.add(peer.name); me.linked[d]['stale'] = False; await self.state(me)
+            else:
+                if d in me.linked: me.linked[d]['stale'] = True
+                await self.drop(me, peer)
         elif op == 'pc':
             p = me.pairing
-            if not p or p['peer'] != peer.name or not p['shower']: return
+            if not p or p['peer'] != peer.name or not p['shower'] or p['pendingKey']: return
+            if p['tries'] >= 5: await self.drop(me, peer); return
             if m['m'] == mac(p['code'], me.nonce[peer.name] + '|pair'):
-                key = base64.b64encode(os.urandom(32)).decode()
-                me.linked[me.peerDev[peer.name]] = {'key': key, 'kind': me.peerKind[peer.name], 'at': 1.7e12}
-                me.pairing = None; me.verified.add(peer.name)
-                await self.auth(me, peer, {'op': 'key', 'k': key})
-                await self.event(me, 'done', {'kind': me.peerKind[peer.name]}); await self.list(me); await self.state(me)
+                key = base64.b64encode(os.urandom(32)).decode(); p['pendingKey'] = key
+                await self.auth(me, peer, {'op': 'key', 'k': key, 'm': mac(p['code'], p['theirNonce'] + '|show')})
             else:
                 p['tries'] += 1; left = 5 - p['tries']
                 await self.auth(me, peer, {'op': 'bad', 'left': left})
@@ -99,16 +102,27 @@ class Net:
                 if left <= 0: await self.drop(me, peer)
         elif op == 'key':
             p = me.pairing
-            if not p or p['peer'] != peer.name or p['shower']: return
+            if not p or p['peer'] != peer.name or p['shower'] or not p['typed']: return
+            if m.get('m') != mac(p['typed'], me.nonce[peer.name] + '|show'): self.log.append(f"key without proof refused typed={p['typed']} shower={getattr(peer, 'pairing', None) and peer.pairing.get('code')}"); await self.drop(me, peer); return
             me.linked[me.peerDev[peer.name]] = {'key': m['k'], 'kind': me.peerKind[peer.name], 'at': 1.7e12}
+            await self.auth(me, peer, {'op': 'ok', 'm': mac(m['k'], p['theirNonce'] + '|ok')})
+            me.pairing = None; me.verified.add(peer.name)
+            await self.event(me, 'done', {'kind': me.peerKind[peer.name]}); await self.list(me); await self.state(me)
+        elif op == 'ok':
+            p = me.pairing
+            if not p or p['peer'] != peer.name or not p['shower'] or not p['pendingKey']: return
+            if m['m'] != mac(p['pendingKey'], me.nonce[peer.name] + '|ok'): return
+            me.linked[me.peerDev[peer.name]] = {'key': p['pendingKey'], 'kind': me.peerKind[peer.name], 'at': 1.7e12}
             me.pairing = None; me.verified.add(peer.name)
             await self.event(me, 'done', {'kind': me.peerKind[peer.name]}); await self.list(me); await self.state(me)
         elif op == 'bad':
             await self.event(me, 'bad', {'left': m['left']})
         elif op == 'forgot':
-            me.linked.pop(me.peerDev.get(peer.name), None); await self.list(me); await self.drop(me, peer)
+            d = me.peerDev.get(peer.name)
+            if d in me.linked: me.linked[d]['stale'] = True
+            await self.list(me); await self.drop(me, peer)
     async def list(self, me):
-        l = [{'d': d, 'kind': v['kind'], 'at': v['at']} for d, v in me.linked.items()]
+        l = [{'d': d, 'kind': v['kind'], 'at': v['at'], 'stale': bool(v.get('stale'))} for d, v in me.linked.items()]
         await self.event(me, 'list', {'list': l, 'me': me.kind})
     # messages from a page
     async def from_page(self, me, msg):
@@ -124,6 +138,7 @@ class Net:
                     self.log.append('dropped at ' + o.name)
         elif op == 'pairMode':
             me.pairMode = bool(msg.get('on'))
+            if me.pairMode: me.codes = 0
             if me.pairMode: await self.settle()
             elif me.pairing:
                 p = me.pairing; me.pairing = None
@@ -132,6 +147,7 @@ class Net:
         elif op == 'pairCode':
             p = me.pairing
             if p and not p['shower']:
+                p['typed'] = msg['code']
                 peer = next(o for o in self.devs if o.name == p['peer'])
                 await self.auth(me, peer, {'op': 'pc', 'm': mac(msg['code'], p['theirNonce'] + '|pair')})
         elif op == 'pairList':
@@ -244,6 +260,22 @@ async def main():
         await net.greet(ipad, fake); await net.greet(fake, ipad)
         ok('fake' not in ipad.verified and net.key(ipad, fake) not in net.conn, 'a device claiming to be the iPhone without its key is refused')
         net.devs.remove(fake)
+        # a device that says "forget me" without proving anything: nothing is deleted
+        fake2 = Dev('fake2', 'iPhone'); fake2.id = phone.id; fake2.on = True; net.devs.append(fake2)
+        net.conn.add(net.key(ipad, fake2)); ipad.peerDev['fake2'] = phone.id
+        await net.auth(fake2, ipad, {'op': 'forgot'})
+        ok(phone.id in ipad.linked, 'a "forget me" from a device that proved nothing deletes nothing')
+        ipad.linked[phone.id]['stale'] = False; net.devs.remove(fake2); net.conn.discard(net.key(ipad, fake2))
+        # a device on the linking screen that hands over a key without knowing the code: refused
+        evil = Dev('evil', 'iPad'); evil.id = '00000000-EVIL'; evil.on = True; evil.pairMode = True; net.devs.append(evil)
+        await stranger.pg.evaluate("async () => { (await import('/js/pair.js')).openPair(); }"); await stranger.pg.wait_for_timeout(800)
+        if net.key(evil, stranger) in net.conn:
+            await net.auth(evil, stranger, {'op': 'key', 'k': 'evilkey', 'm': 'nothing'})
+            await stranger.pg.fill('.pair .pair-input', '1234'); await stranger.pg.wait_for_timeout(300)
+            await net.auth(evil, stranger, {'op': 'key', 'k': 'evilkey', 'm': 'still nothing'})
+        ok(evil.id not in stranger.linked and net.key(evil, stranger) not in net.conn, 'a key handed over without knowing the code is refused')
+        await stranger.pg.evaluate("() => document.querySelector('.pair .btn')?.click()")
+        net.devs.remove(evil); evil.on = False
         # Forget on the iPad
         await ipad.pg.evaluate("() => document.querySelector('[data-panel=app]').click()"); await ipad.pg.wait_for_timeout(600)
         await ipad.pg.evaluate("() => document.querySelector('#pairCard .pair-list button').click()"); await ipad.pg.wait_for_timeout(300)
@@ -254,7 +286,9 @@ async def main():
         ok(net.key(ipad, phone) not in net.conn, 'forgotten: the iPhone started again does not connect')
         # linking again works (the iPhone still remembered the iPad: a new code replaces it)
         await ipad.pg.evaluate("async () => { (await import('/js/pair.js')).openPair(); }")
-        await phone.pg.evaluate("async () => { (await import('/js/pair.js')).openPair(); }"); await phone.pg.wait_for_timeout(800)
+        await phone.pg.evaluate("async () => { (await import('/js/pair.js')).openPair(); }")
+        await phone.pg.wait_for_function("() => { const i = document.querySelector('.pair .pair-input'); return i && !i.hidden; }", timeout=10000)
+        await ipad.pg.wait_for_function("() => { const c = document.querySelector('.pair .pair-code'); return c && !c.hidden && c.textContent.trim().length > 0; }", timeout=10000)
         code = await ipad.pg.evaluate("() => document.querySelector('.pair .pair-code').textContent.replace(/\\s/g, '')")
         await phone.pg.fill('.pair .pair-input', code); await phone.pg.wait_for_timeout(800)
         ok(phone.id in ipad.linked and ipad.linked[phone.id]['key'] == phone.linked[ipad.id]['key'] and await peers(phone) == 1, 'linked again with a new code')

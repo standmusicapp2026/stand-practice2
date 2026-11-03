@@ -25,7 +25,7 @@ async def main():
             await J(LV + f" await send(0.05, 0.05, {str(look).lower()}, 1200); await send(0.85, 0.08, {str(look).lower()}, 330); await send(0.05, 0.05, {str(look).lower()}, 900);")
         async def wink_by_ipad(look):
             l = 'undefined' if look is None else str(look).lower()
-            await J(LV + f" const lk = {'true' if look is None else l}; await send(0.05, 0.05, lk, 1200); window.__fastOff = true; for (let t = 0; t < 200; t += 33) {{ window.standFaceEvent({{ type: 'levels', l: 0.85, r: 0.08, hand: false, ...({l} === undefined ? {{}} : {{ look: lk }}) }}); await sleep(33); }} window.standFaceEvent({{ type: 'wink', eye: 'left', look: {l} }}); await send(0.05, 0.05, lk, 900);")
+            await J(LV + f" const lk = {'true' if look is None else l}; await send(0.05, 0.05, lk, 1200); window.__fastOff = true; for (let t = 0; t < 400; t += 33) {{ window.standFaceEvent({{ type: 'levels', l: 0.85, r: 0.08, hand: false, ...({l} === undefined ? {{}} : {{ look: lk }}) }}); await sleep(33); }} window.standFaceEvent({{ type: 'wink', eye: 'left', look: {l} }}); await send(0.05, 0.05, lk, 1500);")
         p0 = await page()
         await wink_by_levels(False); p1 = await page()
         ok(p1 == p0, f'looking away, a wink seen in the levels: the page stays ({p0} -> {p1})')
