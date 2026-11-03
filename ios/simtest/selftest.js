@@ -102,6 +102,12 @@ async function run() {
   await step('back home 3', async () => { await home(); return !$('#library').hidden; });
   await step('settings', async () => { $('[data-panel=app]').click(); await sleep(800); return !$('#panel-app').hidden; });
   await shot('11-settings');
+  // linking a device: the card in Settings, and the linking screen (looking; nothing nearby here)
+  await step('linked devices card', async () => { const c = $('#pairCard'); if (c) c.scrollIntoView(); await sleep(600); return !!c && !c.hidden; });
+  await shot('11b-linked-devices');
+  await step('linking screen', async () => { $('#pairNew').click(); await sleep(1500); return !!$('.pair') && !$('.pair .pair-find').hidden; });
+  await shot('11c-linking');
+  await step('linking screen closes', async () => { const c = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); c && c.click(); await sleep(500); return !$('.pair'); });
   await step('backup panel', async () => { await closePanels(); const b = $('[data-panel=backup]'); if (b) b.click(); await sleep(1200); return true; });
   await shot('12-backup');
   await closePanels();
