@@ -54,10 +54,16 @@ async function run() {
     return 'pages ' + before;
   });
   await step('write with the Pencil', async () => {
-    $('#inkBtn') && $('#inkBtn').click(); await sleep(500);
-    await stroke('pen', 0.3, 0.3); await sleep(300); await stroke('pen', 0.3, 0.5); await sleep(2500);
-    const { db } = await import('./db.js');
-    const keys = await db.keys('ink'); return keys.length > 0 ? keys.length + ' pages with markings' : false;
+    // (each part timed: a slow simulator and a real stall look different here)
+    const T = [], t0 = performance.now(), mark = (w) => T.push(w + ' ' + Math.round(performance.now() - t0));
+    $('#inkBtn') && $('#inkBtn').click(); await sleep(500); mark('tools');
+    await stroke('pen', 0.3, 0.3); mark('stroke1'); await sleep(300); await stroke('pen', 0.3, 0.5); mark('stroke2'); await sleep(2500); mark('wait');
+    const { db } = await import('./db.js'); mark('import');
+    // (a timer beside the database read: does the page still run while it waits?)
+    let ticks = 0; const tk = setInterval(() => { ticks++; if (ticks % 25 === 0) say('SELFTEST pencil: database read still waiting, page alive ' + T.join(', ')); }, 200);
+    const keys = await db.keys('ink'); clearInterval(tk); mark('keys');
+    say('SELFTEST pencil timings ' + T.join(', '));
+    return keys.length > 0 ? keys.length + ' pages with markings' : false;
   });
   await shot('04-writing');
   await step('zoom with two fingers', async () => {
