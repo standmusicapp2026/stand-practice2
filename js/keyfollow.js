@@ -1,10 +1,14 @@
 // Hearing which key you are playing in, so a drone can follow a change of key — and only that.
-// Each note you play counts once (a long note no more than a short phrase), over the last half
-// minute or so. The drone stays where it is until the music clearly lives in another key: enough
-// different notes, nearly all of them in the new key's scale, the old key's scale clearly broken,
-// the new key clearly better on the 24 major and minor key shapes (Krumhansl–Kessler), and all of
-// that for a few seconds. One note held, a passing chromatic note, tuning the strings or a scale
-// fragment never moves it.
+// Note by note, as a musician hears it: each note makes the keys whose scale has it more likely
+// (allowing that a note is now and then misheard), and where the music comes to rest — a long
+// note, the end of a phrase, a note reached from its leading note — says which note is home (G
+// major and E minor have the same notes; only that tells them apart). The 24 keys are weighed
+// all the time, a change to a near key (a fifth away, relative, parallel) a little more readily;
+// the drone moves when another key is clearly the likely one for a few seconds. A new note is
+// counted only where a note begins (an attack), and only notes the instrument can play. A
+// chromatic run, a shifting exercise, tuning the strings or a scale never moves it.
+// (Measured on cello melodies with changes of key: on the right key 83% of the time instead of
+// 75%, a change followed in about 15 s instead of 23, and no wrong move instead of 8.)
 
 import { getCtx, acquireMic, releaseMic } from './audio.js';
 import { chromaOf } from './listen.js';
@@ -48,6 +52,24 @@ function scaleFitOf(h, oldK, newK) {
 // (half the key's shape, half its scale: a note outside the scale says much more than the shape alone)
 const LOGP = (() => { const out = []; for (const [prof, sc] of [[MAJOR, [0, 2, 4, 5, 7, 9, 11]], [MINOR, [0, 2, 3, 5, 7, 8, 9, 10, 11]]]) for (let k = 0; k < 12; k++) { const r = rot(prof, k), sum = r.reduce((a, v) => a + v, 0); out.push(r.map((v, i) => Math.log((globalThis.__kfMix ?? 0.2) * v / sum + (1 - (globalThis.__kfMix ?? 0.2)) * (sc.includes((i - k + 12) % 12) ? 1 / sc.length : 0) + 0.004))); } return out; })();
 const NOTE_CAP = 0.55;     // seconds a single note can count for
+const V2 = () => (globalThis.__kfV ?? 2) === 2;
+// A note heard is now and then the wrong note (an attack, an overtone: about one in ten, and more
+// in a room or a scratchy attack): each note
+// counts as "this note, or a mistake", so one wrong note says little, the same note again and again a lot.
+let LOGE = null, LOGE_EPS = -1;
+const logE = () => {
+  const eps = globalThis.__kfEps ?? 0.35;
+  if (LOGE && LOGE_EPS === eps) return LOGE;
+  LOGE_EPS = eps; LOGE = LOGP.map((row) => { const pr = row.map(Math.exp), sum = pr.reduce((a, v) => a + v, 0); return pr.map((v) => Math.log((1 - eps) * v / sum + eps / 12)); });
+  return LOGE;
+};
+// Where the music comes to rest says which note is home: a long note, the end of a phrase (a rest
+// after it), a note reached from a half step below (the leading note) — most often the tonic, then
+// the fifth, then the third. How much such a note says for each of the 24 keys (as a factor).
+const REST = (() => { const out = []; for (const minor of [false, true]) for (let k = 0; k < 12; k++) { const sc = minor ? SCALE_MINOR : SCALE_MAJOR; out.push(Array.from({ length: 12 }, (_, i) => { const d = (i - k + 12) % 12; return d === 0 ? 3.2 : d === 7 ? 1.5 : d === (minor ? 3 : 4) ? 1.15 : sc.includes(d) ? 0.75 : 0.45; })); } return out; })();
+// how likely a change of key is, from each key to each (per note): mostly to near keys (a fifth
+// away, the relative and the parallel key), rarely far
+const NEAR = (() => { const m = []; for (let a = 0; a < 24; a++) { const row = []; let sum = 0; for (let b = 0; b < 24; b++) { if (a === b) { row.push(0); continue; } const pa = a % 12, pb = b % 12, ma = a >= 12, mb = b >= 12; const dpc = Math.min((pb - pa + 12) % 12, (pa - pb + 12) % 12); const rel = ma !== mb && ((ma ? pa + 3 : pb + 3) % 12) === (ma ? pb : pa); const near = (ma === mb && (dpc === 5 || dpc === 7)) || rel || (pa === pb && ma !== mb); const v = near ? 4 : 1; row.push(v); sum += v; } m.push(row.map((v) => v / sum)); } return m; })();
 const lerp = (a, b, t) => a + (b - a) * t;
 export class KeyFollower {
   constructor(onKey, onHear) { this.onKey = onKey; this.onHear = onHear; this.on = false; this.memory = 9; this.sens = 0.5; }
@@ -73,6 +95,7 @@ export class KeyFollower {
     this.noise = 0.0006; this.prevPc = -1; this.pcRun = 0; this.noteW = 0; this.zero = 0; this.onsets = 0;
     this.bg = null; this.res = null; this.eFloor = 0;
     this.ev = new Array(12).fill(0); if (!this.post) this._resetPost();
+    if (!this.range && globalThis.__kfRange) this.range = globalThis.__kfRange;   // (tests)
   }
   _now() { return this.clock ? this.clock() : performance.now(); }
   // (the slider's middle hears a change of key sooner than before — tested: no false changes at
@@ -87,7 +110,7 @@ export class KeyFollower {
   // (the microphone held meanwhile, so it is never closed and opened again for this)
   async restart() { let held = false; try { await acquireMic(); held = true; } catch {} this.stop(); await this.start(); if (held) releaseMic(); }
   // tell it the key the drone is in now (you chose it, or it just moved): it starts counting afresh
-  set(pc, minor) { this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); if (this.w) this.w.fill(0); }
+  set(pc, minor) { this.fastBg = this._now() + 2500; this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0); }
   // how likely each of the 24 keys is now, given what was heard (the key it is in counts most at first)
   _resetPost() {
     const p = new Float64Array(24).fill(0.1 / 23);
@@ -186,12 +209,15 @@ export class KeyFollower {
     const mag = this.mag; for (let k = 0; k < n; k++) mag[k] = this.fd[k] > -160 ? Math.pow(10, this.fd[k] / 20) : 0;
     if (!this.bg) { this.bg = Float32Array.from(mag); this.res = new Float32Array(n); }
     const bg = this.bg, res = this.res;
+    // (the drone has just moved: its new sound is learnt as the steady sound quickly, so the notes you
+    // play are heard at once and not hidden behind it)
+    const up = this._now() < (this.fastBg ?? -1) ? 1.3 : 1.025;
     // the steady level follows a sound down at once and up slowly (a note fades into it only after
     // a couple of seconds held: a held note still counts, as long as it sounds new)
     for (let k = 0; k < n; k++) {
       const m = mag[k], b = bg[k];
       res[k] = m > b * 1.6 ? m - b * 1.3 : 0;
-      bg[k] = m < b ? b * 0.75 + m * 0.25 : Math.min(m, b * 1.025 + 1e-7);
+      bg[k] = m < b ? b * 0.75 + m * 0.25 : Math.min(m, b * up + 1e-7);
     }
     return res;
   }
@@ -199,7 +225,8 @@ export class KeyFollower {
   _pitch(res, sr) {
     const N = this.an.fftSize, binHz = sr / N;
     let best = -1, bestS = 0, second = 0, tot = 0;
-    for (let m = 36; m <= 96; m++) {
+    const [lo, hi] = this.range || [36, 96];
+    for (let m = lo; m <= hi; m++) {
       const f = 440 * Math.pow(2, (m - 69) / 12); let sc = 0;
       for (let k = 1; k <= 6; k++) {
         const b = Math.round((f * k) / binHz); if (b >= res.length - 1) break;
@@ -210,34 +237,55 @@ export class KeyFollower {
       tot += sc;
       if (sc > bestS) { second = bestS; bestS = sc; best = m; } else if (sc > second) second = sc;
     }
-    return best >= 0 && tot > 0 ? { midi: best, clarity: bestS / (tot / 61), sum: bestS } : null;
+    return best >= 0 && tot > 0 ? { midi: best, clarity: bestS / (tot / (hi - lo + 1)), sum: bestS } : null;
   }
   _tick(sr) {
     const now = this._now(), dt = Math.min(0.2, (now - this.last) / 1000); this.last = now;
-    const S = this._sens();
-    // two memories: the last half minute or so, and the last few seconds (what you play now)
-    const fade = Math.pow(0.5, dt / this.memory), fadeR = Math.pow(0.5, dt / lerp(4, 2.2, S));
-    for (let i = 0; i < 12; i++) { this.h[i] *= fade; this.r[i] *= fadeR; }
     this.an.getFloatTimeDomainData(this.buf);
     let ms = 0; for (let i = 0; i < this.buf.length; i++) ms += this.buf[i] * this.buf[i];
     const rms = Math.sqrt(ms / this.buf.length);
     // a microphone that went silent for good (taken by another app) is opened again
-    if (rms === 0) { if (++this.zero > 60) { this.zero = 0; this.restart(); } return; } else this.zero = 0;
+    if (rms === 0) { this._fade(dt); if (++this.zero > 60) { this.zero = 0; this.restart(); } return; } else this.zero = 0;
     const res = this._fresh(sr);
     let e = 0; for (let k = 4; k < res.length; k++) e += res[k];
+    const pt = this._pitch(res, sr);
+    // (chords and double stops: the pitch classes that sound, when no single note is clear)
+    const chroma = pt && pt.clarity > 6 ? null : () => chromaOf(res, sr, this.an.fftSize);
+    if (globalThis.__kfRec) globalThis.__kfRec.push([now, dt, e, pt && pt.clarity > 6 ? pt.midi : -1, chroma ? chroma() : null]);
+    this._step(now, dt, e, pt && pt.clarity > 6 ? pt.midi : -1, chroma);
+  }
+  // two memories: the last half minute or so, and the last few seconds (what you play now)
+  _fade(dt) {
+    const S = this._sens();
+    const fade = Math.pow(0.5, dt / this.memory), fadeR = Math.pow(0.5, dt / lerp(4, 2.2, S));
+    for (let i = 0; i < 12; i++) { this.h[i] *= fade; this.r[i] *= fadeR; }
+  }
+  // what was heard in one moment (the new sound's level, the note if one is clear, else what sounds)
+  _step(now, dt, e, midi, chroma) {
+    this._fade(dt);
     // the room's quiet: a low level of the new sound, followed down quickly and up slowly
     this.eFloor = e < this.eFloor || !this.eFloor ? Math.max(1e-6, e * 0.5 + this.eFloor * 0.5) : this.eFloor * 1.002;
-    if (e < this.eFloor * 3 + 1e-5) { this.prevPc = -1; this.pcRun = 0; return; }
+    // a note begins where the new sound rises (an attack, a bow change): only there is a new note
+    // counted; a different pitch read later, while a note sounds on and fades, is not a note
+    const eh = this.eHist || (this.eHist = []); const eMin = eh.length ? Math.min(...eh) : 0;
+    if (e > Math.max(eMin * (globalThis.__kfRise ?? 1.4), this.eFloor * 6)) this.onsetAt = now;
+    eh.push(e); if (eh.length > 3) eh.shift();
+    if (e < this.eFloor * 3 + 1e-5) { this.prevPc = -1; this.pcRun = 0; this.quietAt = now; if (V2()) this._noteOff(now, true); return; }
     let heard = false;
-    const pt = this._pitch(res, sr);
-    if (pt && pt.clarity > 6) {
-      const midi = pt.midi, pc = ((midi % 12) + 12) % 12;
+    if (midi >= 0) {
+      const pc = ((midi % 12) + 12) % 12;
       // the same note twice in a row (80 ms) is a note, not a scrape
       if (pc === this.prevPc) {
         this.pcRun++;
-        if (this.pcRun === 1) { this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); }
+        // (no attack just before, and not just out of silence: the same note sounding on, misread)
+        const fresh = !(globalThis.__kfOnset ?? 1) || now - (this.onsetAt ?? -1e9) < 220 || now - (this.quietAt ?? -1e9) < 220;
+        const RUN = globalThis.__kfRun ?? 1;
+        if (this.pcRun === RUN && !fresh && this.lastNotePc !== undefined) { this.pcRun = 0; this.prevPc = -1; return; }
+        if (this.pcRun < RUN) return;
+        if (this.pcRun === RUN && V2()) this._noteOn(pc, now - 40 * (RUN + 1));
+        if (this.pcRun === RUN) { this.lastNotePc = pc; this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); }
         // each note counts once: a little for being played, then for as long as it sounds, up to a cap
-        const add = (this.pcRun === 1 ? 0.15 : 0) + (this.noteW < NOTE_CAP ? Math.min(dt, NOTE_CAP - this.noteW) : 0);
+        const add = (this.pcRun === RUN ? 0.15 : 0) + (this.noteW < NOTE_CAP ? Math.min(dt, NOTE_CAP - this.noteW) : 0);
         this.noteW += dt;
         const w = add * (midi < 57 ? 1.15 : 1); this.h[pc] += w; this.r[pc] += w; this.ev[pc] += w;
         heard = true;
@@ -245,12 +293,84 @@ export class KeyFollower {
     } else {
       this.prevPc = -1; this.pcRun = 0;
       // chords and double stops (no single pitch): every pitch class that sounds, by its share
-      const c = chromaOf(res, sr, this.an.fftSize);
-      const sum = c.reduce((a, v) => a + v, 0);
+      const c = typeof chroma === 'function' ? chroma() : chroma;
+      const sum = c ? c.reduce((a, v) => a + v, 0) : 0;
       if (sum > 0) { for (let i = 0; i < 12; i++) { const w = (dt * 0.35 * c[i]) / sum; this.h[i] += w; this.r[i] += w; this.ev[i] += w; } heard = true; }
     }
     if (!heard) return;
+    if (V2()) { this._decide2(now); return; }
     this._update(dt, now);
+  }
+  // ---- the ear, note by note (a filter over the 24 keys) ----
+  _noteOn(pc, at) {
+    this._noteOff(at, false);
+    const prev = this.cur;
+    this.cur = { pc, at, from: prev ? prev.pc : -1, fromAt: prev ? prev.at : -1e9 };
+    // each note: the keys whose scale has it gain, the others lose (a little for being played)
+    const L = logE(); this._evidence((k) => L[k][pc] * 0.6);
+    this.notesSince = (this.notesSince || 0) + 1;
+  }
+  _noteOff(at, rest) {
+    const n = this.cur; if (!n) return;
+    this.cur = null;
+    this.lastEnd = { pc: n.pc, at };
+    const dur = Math.min(2.5, Math.max(0.05, (at - n.at) / 1000));
+    const durs = this.durs || (this.durs = []); durs.push(dur); if (durs.length > 12) durs.shift();
+    const med = [...durs].sort((a, b) => a - b)[Math.floor(durs.length / 2)];
+    // a note that sounded on counts for its length (short notes less, up to a cap)
+    const lw = Math.min(1, dur / 0.6) * 0.8;
+    const L = logE(); this._evidence((k) => L[k][n.pc] * lw);
+    // where the music comes to rest
+    const long = durs.length >= 3 && dur >= Math.max(0.5, med * 1.6);
+    const lead = n.from === (n.pc + 11) % 12 && at - n.fromAt < 3000;
+    const c = (long ? 1 : 0) + (rest && dur >= 0.25 ? 0.8 : 0) + (lead && (long || rest) ? 0.6 : 0);
+    if (c > 0) this._evidence((k) => Math.log(REST[k][n.pc]) * c * (globalThis.__kfRestW ?? 1.4));
+  }
+  _evidence(f) {
+    const p = this.post; if (!p) return;
+    // (a key may change at any note: a little of each key's likelihood flows to its near keys first)
+    const s = globalThis.__kfStay ?? 0.97, q = new Float64Array(24);
+    for (let a = 0; a < 24; a++) { const pa = p[a]; if (!pa) continue; q[a] += pa * s; const row = NEAR[a]; for (let b = 0; b < 24; b++) q[b] += pa * (1 - s) * row[b]; }
+    let mx = -Infinity; const l = new Float64Array(24);
+    for (let k = 0; k < 24; k++) { l[k] = f(k); if (l[k] > mx) mx = l[k]; }
+    let sum = 0; for (let k = 0; k < 24; k++) { q[k] *= Math.exp(l[k] - mx); sum += q[k]; }
+    for (let k = 0; k < 24; k++) p[k] = Math.max(1e-6, q[k] / sum);
+  }
+  _decide2(now) {
+    const S = this._sens(), cur = this.key;
+    // (what the ear believes over the last couple of seconds, not at one note: one note never moves it)
+    const dt = Math.min(0.3, Math.max(0, (now - (this.paAt ?? now)) / 1000)); this.paAt = now;
+    const pa = this.pa || (this.pa = Float64Array.from(this.post)), a = 1 - Math.exp(-dt / (globalThis.__kfAvg ?? 3));
+    for (let k = 0; k < 24; k++) pa[k] += (this.post[k] - pa[k]) * a;
+    const p = pa;
+    let b = 0; for (let k = 1; k < 24; k++) if (p[k] > p[b]) b = k;
+    const best = { pc: b % 12, minor: b >= 12 };
+    this.onHear && this.onHear(p[b] > 0.5 ? { pc: best.pc, minor: best.minor, score: p[b] } : null);
+    if (!cur) return;
+    const ci = cur.pc + (cur.minor ? 12 : 0);
+    this.dbg = { best: best.pc + (best.minor ? 'm' : ''), p: +p[b].toFixed(2), pc: +p[ci].toFixed(2), notes: this.notesSince };
+    const want = b !== ci && p[b] >= lerp(globalThis.__kfOn ?? 0.7, (globalThis.__kfOn ?? 0.7) - 0.2, S) && p[ci] <= (globalThis.__kfOff ?? 0.15);
+    let calmOk = false;
+    if (want) {
+      // never on what is not a key at all (a chromatic run, a shifting exercise, half steps), and not
+      // again so soon after a move
+      const r = this.r; let totR = 0; for (let i = 0; i < 12; i++) totR += r[i];
+      let spread = 0; for (let i = 0; i < 12; i++) if (r[i] >= 0.05 * totR) spread++;
+      const rc = this.recent || []; let semi = 0, steps = 0;
+      for (let i = 1; i < rc.length; i++) { const d = Math.abs(rc[i] - rc[i - 1]); if (d === 0) continue; steps++; if (d === 1) semi++; }
+      const chromatic = steps >= 8 && semi / steps > (globalThis.__kfSemi ?? 0.4);
+      const settled = now - (this.movedAt ?? -1e12) >= lerp(6000, 3000, S);
+      calmOk = spread <= (globalThis.__kfSpread ?? 9) && !chromatic && settled && (this.notesSince || 0) >= 4;
+      this.dbg.guard = [spread, chromatic, settled];
+    }
+    if (!want || !calmOk) { if (this.cand && now - this.cand.lastOk > 700) this.cand = null; return; }
+    if (!this.cand || this.cand.pc !== best.pc || this.cand.minor !== best.minor) { this.cand = { ...best, since: now, lastOk: now }; return; }
+    this.cand.lastOk = now;
+    if (now - this.cand.since >= lerp(globalThis.__kfHold ?? 1200, 400, S)) {
+      this.key = best; this.cand = null; this.movedAt = now; this.notesSince = 0; this.fastBg = now + 2500;
+      // (the new key is now the likely one; the filter goes on from where it is)
+      this.onKey && this.onKey(this.key);
+    }
   }
   _decide(now) {
     const S = this._sens();

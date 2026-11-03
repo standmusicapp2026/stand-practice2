@@ -6831,6 +6831,8 @@ const keyEar = {
         else t.innerHTML = `Listening… the drone stays on <b>${NOTE_NAMES[drone.pc]}</b> until the key clearly changes`;
       });
       this.ear.sens = S.earSens ?? 0.6;
+      // (only the notes your instrument can play: an overtone, higher than any of them, is never taken for a note)
+      this.ear.range = { cello: [36, 84], violin: [55, 100], viola: [48, 91], bass: [28, 67], guitar: [40, 88], flute: [60, 98], clarinet: [50, 94], oboe: [58, 91] }[S.instrument] || [36, 96];
       this.ear.set(drone.pc, drone.chord === 'minor');
       this.ear.start();
     } else if (!want && this.ear) { this.ear.stop(); this.ear = null; $('#droneHear').textContent = 'Play: when the key clearly changes, the drone moves to it.'; }
