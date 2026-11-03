@@ -664,6 +664,13 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     private var lastLevels: TimeInterval = 0
     private var smoothL: Float?
     private var smoothR: Float?
+    // Looking at the iPad? From the turn of the head and where the eyes point (both from the face
+    // tracking), against the direction of the camera, which sits beside the screen. Looking away (at
+    // a teacher, a partner) the face is turned and one eye can look shut: no wink counts then, nor
+    // for a moment after coming back to the music.
+    private var lookSince: TimeInterval?
+    private var lookGaze: Float = 0
+    private var lookHead: Float = 0
     // A hand in front of the eyes covers them, and the covered eye can look closed: no page turns
     // while a hand is over the eyes (and for a moment after). Only a hand over the eyes counts, so
     // a violinist's left hand beside the face changes nothing.
@@ -697,6 +704,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         locked = false
         smoothL = nil; smoothR = nil
         handUntil = 0
+        lookSince = nil; lookGaze = 0; lookHead = 0
     }
     // About ten times a second: is a hand over the eyes? (Vision on the camera picture, off the face queue.)
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
@@ -754,9 +762,11 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         let left = smoothL!, right = smoothR!
         let now = CACurrentMediaTime()
         let handOver = now < handUntil
+        let look = lookingAt(face, now, closing: max(left, right) > 0.3)
         if test && now - lastLevels > 0.07 {
             lastLevels = now
-            emit(["type": "levels", "l": Double(left), "r": Double(right), "hand": handOver])
+            emit(["type": "levels", "l": Double(left), "r": Double(right), "hand": handOver,
+                  "look": look, "head": Double(lookHead), "gaze": Double(lookGaze)])
         }
         // a hand over the eyes: nothing counts (the detector stays ready for when it moves away)
         if handOver { candidate = nil; return }
@@ -779,11 +789,37 @@ final class FaceTurner: NSObject, ARSessionDelegate {
             // about two frames in a row, so a single noisy frame can't turn a page
             if now - c.since >= 0.04 && now - lastFire > 0.35 {
                 lastFire = now; locked = true; candidate = nil
-                emit(["type": "wink", "eye": e])
+                emit(["type": "wink", "eye": e, "look": look])
             }
         } else {
             candidate = (e, now)
         }
+    }
+    // The angle (degrees) between where the face points and the camera, and between where the eyes
+    // look and the camera. The screen is next to the camera: at a normal distance every part of the
+    // music is within about 30 degrees of it; a teacher beside the stand is well beyond.
+    private func lookingAt(_ face: ARFaceAnchor, _ now: TimeInterval, closing: Bool) -> Bool {
+        guard let cam = session.currentFrame?.camera.transform else { return true }
+        let rel = simd_mul(simd_inverse(cam), face.transform)                 // the face, seen from the camera
+        let pos = simd_make_float3(rel.columns.3.x, rel.columns.3.y, rel.columns.3.z)
+        guard simd_length(pos) > 0.05 else { return true }
+        let toCam = simd_normalize(-pos)
+        let rot = simd_float3x3(simd_make_float3(rel.columns.0.x, rel.columns.0.y, rel.columns.0.z),
+                                simd_make_float3(rel.columns.1.x, rel.columns.1.y, rel.columns.1.z),
+                                simd_make_float3(rel.columns.2.x, rel.columns.2.y, rel.columns.2.z))
+        let fwd = simd_normalize(simd_mul(rot, simd_float3(0, 0, 1)))        // out of the face
+        let deg: (simd_float3, simd_float3) -> Float = { a, b in acos(max(-1, min(1, simd_dot(a, b)))) * 180 / .pi }
+        lookHead = deg(fwd, toCam)
+        // (with an eye closing the eyes' direction is not to be trusted: the one from just before stays)
+        if !closing {
+            let la = face.lookAtPoint
+            if simd_length(la) > 0.01 { lookGaze = deg(simd_normalize(simd_mul(rot, la)), toCam) }
+        }
+        let now_ok = lookHead < 35 && lookGaze < 40
+        if !now_ok { lookSince = nil; return false }
+        if lookSince == nil { lookSince = now }
+        // (back on the music for a moment first: the face turning back is not a wink)
+        return now - lookSince! >= 0.5
     }
     func session(_ session: ARSession, didFailWithError error: Error) {
         running = false

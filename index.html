@@ -1082,8 +1082,9 @@
       <div class="sub-body" id="winkBody" hidden>
         <div class="ctl"><div class="ctl-head"><span>Sensitivity</span></div><input type="range" id="winkSens" min="20" max="100" value="70"></div>
         <label class="check"><input type="checkbox" id="winkSwap"> Swap left and right</label>
+        <label class="check"><input type="checkbox" id="winkLook"> Only while I look at the iPad <span class="hint">(a wink while looking at someone else never turns the page)</span></label>
         <div class="row-even"><button class="btn" id="winkTest">Test</button><span class="hint" id="winkLast"></span></div>
-        <div class="eye-meter" id="winkMeter" hidden><div><span>Left eye</span><i id="eyeL"></i></div><div><span>Right eye</span><i id="eyeR"></i></div></div>
+        <div class="eye-meter" id="winkMeter" hidden><div><span>Left eye</span><i id="eyeL"></i></div><div><span>Right eye</span><i id="eyeR"></i></div><p class="hint" id="winkLookState"></p></div>
       </div>
     </section>
     <section class="sub-card ipad-only" id="followCard">
@@ -1122,6 +1123,10 @@
     <section class="sub-card">
       <div class="sub-head"><div><h3>Backup to iCloud Drive</h3><p class="hint" id="bkSettingsState">Everything in Stand, kept safe outside the app.</p></div></div>
       <button class="btn" data-panel="backup"><svg><use href="#i-cloud"/></svg><span>Backup and restore</span></button>
+    </section>
+    <section class="sub-card">
+      <div class="sub-head"><div><h3>Something went wrong?</h3><p class="hint">Sends what Stand noted about this iPad and what went wrong lately (no scores, no recordings, nothing you wrote). Add a line about what you were doing.</p></div></div>
+      <button class="btn" id="sendReport"><svg><use href="#i-share"/></svg><span>Send a problem report</span></button>
     </section>
     <button class="btn ghost" id="tourAgain">Show the tour again</button>
     <p class="hint center">Stand 2.10 · everything stays on your device</p>

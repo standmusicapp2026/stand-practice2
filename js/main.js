@@ -1314,8 +1314,10 @@ async function closeScore() {
   step(() => leaveScoreView());
   step(() => { wakeLock && wakeLock.release(); });
   wakeLock = null;
-  refreshLibrary();
+  await refreshLibrary();
   if (sc && V.fileKindClosed === 'paper') nbCoverRefresh(sc.id);
+  // (the name shown at home is the one just given: if not, a line in the report says so)
+  if (sc) { const l = scores.find((x) => x.id === sc.id); if (l && l.title !== sc.title) nlog('title at home differs from the score just closed (' + l.title.length + ' / ' + sc.title.length + ' letters)'); }
 }
 // A notebook renamed: its cover (with the name on it) and its picture in the library are made again,
 // just after it closes (in the background).
@@ -5424,7 +5426,13 @@ function saveScoreMeta(typing) {
   // (the library's own list too, at once)
   { const l = scores.find((x) => x.id === V.score.id); if (l && l !== V.score) { l.title = V.score.title; l.composer = V.score.composer; } }
   $('#scoreTitle').textContent = V.score.title;
-  db.put('scores', V.score);
+  // (marked as changed now: a backup or another copy from before never brings the old name back)
+  V.score.edited = Date.now();
+  const sc = V.score;
+  db.put('scores', sc).then(() => { if (typing !== true) nlog('title saved (' + sc.title.length + ' letters)'); }).catch((e) => {
+    nlog('title NOT saved: ' + ((e && (e.name + ' ' + e.message)) || e));
+    toast('The new title could not be saved: ' + ((e && e.message) || e), 5000);
+  });
   // a notebook carries its title on the cover and the first page
   if (typing !== true && V.file && V.file.kind === 'paper' && V.file.title !== V.score.title) {
     V.file.title = V.score.title; db.put('files', V.file);
@@ -8453,7 +8461,15 @@ $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => { S.them
 $$('#accentSeg button').forEach((b) => b.addEventListener('click', () => { S.accent = b.dataset.accent; saveSettings(); applyAppearance(); }));
 
 // --- wink to turn pages (iPad app, face tracking) ---
-const wink = { on: false, testing: false, lv: [], det: new WinkLevels(), lastLv: 0, lastTurn: 0 };
+const wink = { on: false, testing: false, lv: [], det: new WinkLevels(), lastLv: 0, lastTurn: 0, look: true, lookAt: 0 };
+// Looking at the iPad? (the iPad's face tracking says, with each level; an app without it: always yes)
+// A wink while looking at a teacher or a partner, or while turning back to the music, never counts.
+function winkLookOk(evLook) {
+  if (S.winkLook === false) return true;
+  if (evLook === false) return false;
+  // (the latest word on it, if recent)
+  return performance.now() - wink.lookAt > 600 || wink.look !== false;
+}
 // a wink as the iPad saw it, checked against the levels of both eyes just before it: the winking eye
 // clearly shut, the other clearly open all along (with no levels to go by, it stands)
 function winkOk(eye) {
@@ -8522,7 +8538,7 @@ function syncWinkUI() {
   const ok = winkSupported();
   $('#winkRow').hidden = !ok; $('#winkNo').hidden = ok;
   $('#winkOn').checked = !!S.wink; $('#winkSens').value = Math.round((S.winkSens || 0.7) * 100);
-  $('#winkSwap').checked = !!S.winkSwap; $('#winkBody').hidden = !S.wink;
+  $('#winkSwap').checked = !!S.winkSwap; $('#winkLook').checked = S.winkLook !== false; $('#winkBody').hidden = !S.wink;
 }
 $('#winkOn').addEventListener('change', (e) => { S.wink = e.target.checked; saveSettings(); syncWinkUI(); sendFace(); });
 $('#winkSens').addEventListener('input', (e) => { S.winkSens = +e.target.value / 100; saveSettings(); sendFace(); });
@@ -8550,6 +8566,7 @@ $('#soundTest').addEventListener('click', () => { unlock(); testBeep(); setTimeo
 $('#soundLog').closest('details').addEventListener('toggle', syncSoundState);
 $('#penOpens').addEventListener('change', (e) => { S.penOpens = e.target.checked; saveSettings(); });
 $('#winkSwap').addEventListener('change', (e) => { S.winkSwap = e.target.checked; saveSettings(); });
+$('#winkLook').addEventListener('change', (e) => { S.winkLook = e.target.checked; saveSettings(); });
 $('#winkTest').addEventListener('click', () => { wink.testing = !wink.testing; $('#winkTest').textContent = wink.testing ? 'Stop test' : 'Test'; $('#winkMeter').hidden = !wink.testing; sendFace(); });
 // a wink seen (from the levels here, or the iPad's own): the page turns, once
 // (one wink seen twice, by the iPad and from the levels here, turns once; two winks of yours, one
@@ -8579,22 +8596,25 @@ window.standFaceEvent = (ev) => {
     const now = performance.now();
     wink.lv.push({ t: now, l: +ev.l || 0, r: +ev.r || 0 }); while (wink.lv.length && now - wink.lv[0].t > 1500) wink.lv.shift();
     wink.lastLv = now;
+    if (ev.look !== undefined) { wink.look = !!ev.look; wink.lookAt = now; }
     // the iPad's own winks turn the page as they always did; with the face aside the levels are
     // judged here too, each eye against its own rest (the iPad misses those winks)
     wink.det.sens = S.winkSens || 0.7;
     // (judged here as well, from the levels: a wink is seen ~0.12 s after the eye shuts, sooner than
     // the iPad's own, which comes later; the first of the two turns the page, once)
     const e = wink.det.feed(now, +ev.l || 0, +ev.r || 0, !ev.hand);
-    if (e && (faceAside() || (S.winkFast ?? true))) winkFound(e, 'levels');
+    if (e && (faceAside() || (S.winkFast ?? true))) { if (winkLookOk(ev.look)) winkFound(e, 'levels'); else if (wink.testing) $('#winkLast').textContent = 'Looking away: not turned'; }
     if (!wink.testing) return;
     const [l, r] = S.winkSwap ? [ev.r, ev.l] : [ev.l, ev.r];
     $('#eyeL').style.setProperty('--v', l); $('#eyeR').style.setProperty('--v', r);
     // a hand over the eyes pauses winking (shown while testing)
     const wm = $('#winkMeter'); if (wm) wm.classList.toggle('hand', !!ev.hand);
+    if (ev.look !== undefined) $('#winkLookState').textContent = (ev.look ? 'Looking at the iPad' : 'Looking away: winks are ignored') + (ev.head !== undefined ? ` (head ${Math.round(ev.head)}°, eyes ${Math.round(ev.gaze)}°)` : '');
     return;
   }
   if (ev.type === 'wink') {
     if (!winkOk(ev.eye)) { if (wink.testing) $('#winkLast').textContent = 'Both eyes closed: not a wink'; return; }
+    if (!winkLookOk(ev.look)) { if (wink.testing) $('#winkLast').textContent = 'Looking away: not turned'; return; }
     winkFound(ev.eye);
   }
   if (ev.type === 'unsupported') { CAPS.face = false; syncWinkUI(); }
@@ -9919,8 +9939,16 @@ async function problemReport() {
   }
   return L.join('\n');
 }
-// (no button for it in the app: kept for looking into a problem when needed)
 window.__standReport = problemReport;
+$('#sendReport').addEventListener('click', async () => {
+  const b = $('#sendReport'); b.disabled = true;
+  try {
+    const text = await problemReport();
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    await shareBlob(new Blob([text], { type: 'text/plain' }), `Stand report ${stamp}.txt`);
+  } catch (e) { toast('The report could not be made: ' + ((e && e.message) || e), 4000); }
+  finally { b.disabled = false; }
+});
 
 // (the page started: the notice for a failed start is not needed)
 window.__standUp = true;
