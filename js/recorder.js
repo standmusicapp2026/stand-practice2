@@ -182,7 +182,15 @@ export class Recorder {
   }
   cancel() { if (this.node) { this.stop(); } }
   // the pieces of a take in the database go, once the take itself is kept (or thrown away)
-  async dropSpool(spool) { if (!spool) return; for (const k of await db.keys('files')) if (String(k).startsWith('recspool:' + spool + ':')) await db.del('files', k).catch(() => {}); await db.del('kv', 'recspool:' + spool).catch(() => {}); }
+  // The pieces of a take that was kept go. First it is written down that the take was kept (so a
+  // Stand ended in the middle of this never brings it back as a "Recovered take" too), then all the
+  // pieces in one go.
+  async dropSpool(spool, kept = true) {
+    if (!spool) return;
+    if (kept) await db.put('kv', { k: 'recspool:' + spool, v: { kept: true } }).catch(() => {});
+    await db.delPrefix('files', 'recspool:' + spool + ':').catch(async () => { for (const k of await db.keys('files')) if (String(k).startsWith('recspool:' + spool + ':')) await db.del('files', k).catch(() => {}); });
+    await db.del('kv', 'recspool:' + spool).catch(() => {});
+  }
 }
 
 export function computePeaks(data, n = 600) {

@@ -25,11 +25,27 @@ const maxMerge = (a, b) => {
   if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) { const o = { ...a }; for (const [k, v] of Object.entries(b)) o[k] = k in a ? maxMerge(a[k], v) : v; return o; }
   return a ?? b;
 };
+// Bringing back a backup over a library in use keeps what was made since: sets and folders made
+// after the backup stay (those only in the backup come back); the settings and the practice plan
+// as they are now stay, unless this device has no library yet (a new iPad: then they come back too).
+let restoreHadLibrary = null;
 async function putKvMerged(rec) {
   if (LOCAL_KV.has(rec.k)) return;
   if (rec.k === 'log' || rec.k === 'log2' || rec.k === 'slots') {
     const cur = await db.get('kv', rec.k).catch(() => null);
     if (cur && cur.v) { await db.put('kv', { k: rec.k, v: maxMerge(cur.v, rec.v) }); return; }
+  }
+  if ((rec.k === 'sets' || rec.k === 'folders') && Array.isArray(rec.v)) {
+    const cur = await db.get('kv', rec.k).catch(() => null);
+    if (cur && Array.isArray(cur.v) && cur.v.length) {
+      const have = new Set(cur.v.map((x) => x && x.id));
+      await db.put('kv', { k: rec.k, v: [...cur.v, ...rec.v.filter((x) => x && !have.has(x.id))] });
+      return;
+    }
+  }
+  if (rec.k === 'settings' || rec.k === 'plan') {
+    const cur = await db.get('kv', rec.k).catch(() => null);
+    if (restoreHadLibrary && cur && cur.v) return;
   }
   await db.put('kv', rec);
 }
@@ -286,6 +302,8 @@ Please do not change the files inside Stand data.
 // erased marking comes back) or the one in the backup. Anything only in the backup is added.
 const stampOf = (x) => Math.max((x && x.edited) || 0, (x && x.opened) || 0, (x && x.added) || 0, (x && x.thumbAt) || 0);
 async function restorePlan(lib) {
+  // (whether this device had a library before the backup came: decides whether its settings stay)
+  restoreHadLibrary = (await db.keys('scores').catch(() => [])).length > 0;
   const fromBackup = new Set();
   for (const s of lib.scores) { const loc = await db.get('scores', s.id).catch(() => null); if (!loc || stampOf(s) > stampOf(loc)) fromBackup.add(s.id); }
   const scoreOfFile = new Map(lib.scores.filter((s) => s.fileId).map((s) => [s.fileId, s.id]));
@@ -431,6 +449,7 @@ async function restoreV1(file) {
     if (v && typeof v === 'object') { const r = {}; for (const [k, x] of Object.entries(v)) r[k] = await unpack(x); return r; }
     return v;
   };
+  restoreHadLibrary = (await db.keys('scores').catch(() => [])).length > 0;
   for (const f of data.files) await db.put('files', await unpack(f));
   for (const s of data.scores) await db.put('scores', await unpack(s));
   for (const i of data.ink) await putInkMerged(await unpack(i));

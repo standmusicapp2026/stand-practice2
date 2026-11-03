@@ -316,6 +316,18 @@ const NAME_SET = new Map(), PAGES_SET = new Map();
       const m = PAGES_SET.get(value.id);
       if (JSON.stringify(value.pageMap || null) !== JSON.stringify(m)) { try { nlog('pages kept: an older copy of a score was being saved'); } catch {} if (m) value.pageMap = m.slice(); else delete value.pageMap; }
     }
+    // A score whose cover picture the iPad can no longer read cannot be saved with it (WebKit: "Error
+    // preparing Blob/File data"): every save of it failed — a new title, the page, the practice time —
+    // and the old title came back. Saved again without the cover; the cover is made anew by itself.
+    if (store === 'scores' && value && value.thumb) {
+      return put0(store, value).catch(async (e) => {
+        try { nlog('score not saved (' + ((e && e.name) || e) + '): saved again without its cover'); } catch {}
+        const v = { ...value }; delete v.thumb; delete v.thumbTitle; v.thumbAt = 0;
+        await put0(store, v);
+        delete value.thumb; delete value.thumbTitle; value.thumbAt = 0;
+        try { thumbChecked.delete(value.id); } catch {}
+      });
+    }
     return put0(store, value);
   };
 }
@@ -343,6 +355,8 @@ const folderShown = (s) => (s.folder && FOLD.list.some((f) => f.id === s.folder)
 async function refreshLibrary() {
   scores = await db.all('scores').catch(() => []);
   renderGrid();
+  // (the sets show the scores' names as they are now)
+  try { renderSets(); } catch {}
   renderBackupBanner().catch(() => {});
   renderToday();
   renderGoal();
@@ -1276,7 +1290,8 @@ async function openScore(id, opts = {}) {
 function updateScrub() { $('#pageRange').max = V.doc.pages; $('#pageScrub').hidden = V.doc.pages < 3; }
 const step0 = (fn) => { try { fn(); } catch (e) { console.warn(e); } };
 async function closeScore() {
-  V.openToken = (V.openToken || 0) + 1;     // cancels a score that is still opening
+  const closeTok = V.openToken = (V.openToken || 0) + 1;     // cancels a score that is still opening
+  const myBase = V.base;
   // Show the library first, so going home always works even if a clean-up step fails.
   const sc = V.score; V.fileKindClosed = V.file && V.file.kind;
   // (a name still being typed in the score's settings is kept: the field is not always told it was left)
@@ -1306,6 +1321,9 @@ async function closeScore() {
   }
   else if (sc) { sc.lastPage = V.page; await db.put('scores', sc).catch(() => {}); }
   $('#previewBar').hidden = true;
+  // (another score opened while this one was closing — after the question above, or the save: only
+  // this one's own document goes; what is on screen now is the other's)
+  if (V.openToken !== closeTok) { step(() => { if (myBase && myBase !== V.base) myBase.destroy(); }); refreshLibrary(); return; }
   step(() => freePages());
   step(() => { for (const p of V.cache.values()) p.then(freeCanvas, () => {}); });
   step(() => { if (V.base) V.base.destroy(); });
@@ -5429,6 +5447,8 @@ function saveScoreMeta(typing) {
   // (marked as changed now: a backup or another copy from before never brings the old name back)
   V.score.edited = Date.now();
   const sc = V.score;
+  // (the iPhone's copy of the list of scores is asked for again, with the new name)
+  try { phoneAnswers.clear(); } catch {}
   db.put('scores', sc).then(() => { if (typing !== true) nlog('title saved (' + sc.title.length + ' letters)'); }).catch((e) => {
     nlog('title NOT saved: ' + ((e && (e.name + ' ' + e.message)) || e));
     toast('The new title could not be saved: ' + ((e && e.message) || e), 5000);
@@ -5436,7 +5456,8 @@ function saveScoreMeta(typing) {
   // a notebook carries its title on the cover and the first page
   if (typing !== true && V.file && V.file.kind === 'paper' && V.file.title !== V.score.title) {
     V.file.title = V.score.title; db.put('files', V.file);
-    openDocument(V.file).then((d) => { V.base = d; return reopenDoc(); }).catch(() => {});
+    const nb = V.score;
+    openDocument(V.file).then((d) => { if (V.score !== nb) { try { d.destroy && d.destroy(); } catch {} return; } V.base = d; return reopenDoc(); }).catch(() => {});
   }
 }
 $('#metaTitle').addEventListener('change', saveScoreMeta);
@@ -5847,6 +5868,12 @@ $('#shareIphone').addEventListener('change', (e) => { S.shareIphone = e.target.c
 // Linked devices (the apps): linked once with a code, then always
 $('#pairNew').addEventListener('click', async () => { await openPair(); drawLinked($('#pairCard')); });
 pairWatch((t) => { if (t === 'list' && !$('#pairCard').hidden) drawLinked($('#pairCard')); });
+// a device forgotten: what listens over the internet starts again with this device's new key
+window.addEventListener('stand-pair-forget', () => {
+  if (PHONE) return;
+  if (pHost.on) { pHost.stop(); syncPracticeHost(); }
+  if (host.state !== 'off' && host.state !== 'linked' && !(recState && recState.iphone)) { host.stop(); syncLink(); }
+});
 // (the first link wanted: the screen to link opens, then what was asked for goes on)
 async function needLink() {
   if (!PAIR() || await linkedCount() > 0) return true;
@@ -7026,7 +7053,7 @@ function drawLink() {
     : st === 'offline' ? 'Could not reach the internet to find the iPhone. Check the connection and try again.'
       : st === 'lost' ? 'The iPhone went away. Open Camera for iPad on it again.'
         : code ? 'On your iPhone, open Stand, tap Camera for iPad, then Use a code, and type this code.'
-          : host.code ? 'Open Stand on your iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves. If they do not, tap Use a code on the iPhone and type:' : 'Open Stand on your iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves.';
+          : host.code ? 'Open Stand on your iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves. If they do not, tap Use a code on the iPhone and type:' : PAIR() ? 'Open Stand on your linked iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves. Not linked yet? Settings › Linked devices.' : 'Open Stand on your iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves.';
   $('#linkOn').hidden = !linked;
   if (linked) {
     $$('#linkFacing button').forEach((b) => b.classList.toggle('on', b.dataset.f === (info.facing || 'environment')));
@@ -7044,6 +7071,8 @@ function drawLink() {
     $$('#linkQuality button, #linkFps button, #linkFacing button').forEach((b) => { b.disabled = busy; });
   }
   $('#linkRetry').textContent = code ? 'Find automatically' : st === 'offline' || st === 'lost' ? 'Try again' : 'Use a code';
+  // (with linking by code once: no six-digit code; the linked iPhone is found nearby)
+  if (PAIR()) $('#linkRetry').hidden = !(st === 'offline' || st === 'lost');
   $('#linkOff').hidden = st === 'off';
   syncRemoteShape();
 }
@@ -9014,7 +9043,7 @@ $('#pcResend').addEventListener('click', async () => { $('#pcResend').hidden = t
 phone.onLocal = (stream) => { const v = $('#pcVideo'); if (v.srcObject !== stream) { v.srcObject = stream; v.play().catch(() => {}); } };
 $('#phoneCamTile').addEventListener('click', async () => {
   if (!await needLink()) return;
-  $('#phonecam').hidden = false; $('#pcCodeBox').hidden = true; $('#pcUseCode').hidden = false; pcDraw('connecting');
+  $('#phonecam').hidden = false; $('#pcCodeBox').hidden = true; $('#pcUseCode').hidden = PAIR(); pcDraw('connecting');
   try { await phone.openCamera(); } catch (e) { toast('Camera access is off. Turn it on in Settings › Stand.', 5000); return; }
   phone.find();
   setTimeout(() => { if (!$('#phonecam').hidden) sectionTour('phonecam', { force: true }); }, 800);
@@ -9881,7 +9910,8 @@ async function recoverRecordings() {
       if (recState && recState.spool === sp) continue;
       const mine = keys.filter((k) => k.split(':')[1] === sp);
       const meta = (await getSetting('recspool:' + sp, null)) || {};
-      if (mine.length) {
+      // (a take that was kept already: its pieces only were left behind)
+      if (mine.length && !meta.kept) {
         const parts = []; let sr = 0, len = 0;
         for (const k of mine) { const r = await db.get('files', k).catch(() => null); if (r && r.data) { sr = sr || r.sr || 48000; let d = r.data; if (r.sr && r.sr !== sr) { const q = r.sr / sr, n = Math.floor(d.length / q), o = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * q, j = Math.floor(x), f = x - j; o[i] = (d[j] || 0) * (1 - f) + (d[j + 1] || 0) * f; } d = o; } parts.push(d); len += d.length; } }
         if (len > (sr || 48000) * 0.5) {
@@ -9893,7 +9923,7 @@ async function recoverRecordings() {
           toast(`A recording that was interrupted was kept (${fmtMinutes(Math.round(len / sr))}): "Recovered take" in Recordings.`, 6000);
         }
       }
-      await recorder.dropSpool(sp);
+      await recorder.dropSpool(sp, false);
     }
   } catch (e) { console.warn('recover', e); }
 }

@@ -669,6 +669,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     // a teacher, a partner) the face is turned and one eye can look shut: no wink counts then, nor
     // for a moment after coming back to the music.
     private var lookSince: TimeInterval?
+    private var awaySince: TimeInterval?
     private var lookGaze: Float = 0
     private var lookHead: Float = 0
     // A hand in front of the eyes covers them, and the covered eye can look closed: no page turns
@@ -704,7 +705,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         locked = false
         smoothL = nil; smoothR = nil
         handUntil = 0
-        lookSince = nil; lookGaze = 0; lookHead = 0
+        lookSince = nil; awaySince = nil; lookGaze = 0; lookHead = 0
     }
     // About ten times a second: is a hand over the eyes? (Vision on the camera picture, off the face queue.)
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
@@ -762,7 +763,8 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         let left = smoothL!, right = smoothR!
         let now = CACurrentMediaTime()
         let handOver = now < handUntil
-        let look = lookingAt(face, now, closing: max(left, right) > 0.3)
+        // (the eyes' direction is not trusted from the moment an eye starts to close for a wink)
+        let look = lookingAt(face, now, closing: max(left, right) > max(0.1, (0.28 - 0.18 * min(1, max(0, sensitivity))) * 0.7))
         if test && now - lastLevels > 0.07 {
             lastLevels = now
             emit(["type": "levels", "l": Double(left), "r": Double(right), "hand": handOver,
@@ -816,7 +818,14 @@ final class FaceTurner: NSObject, ARSessionDelegate {
             if simd_length(la) > 0.01 { lookGaze = deg(simd_normalize(simd_mul(rot, la)), toCam) }
         }
         let now_ok = lookHead < 35 && lookGaze < 40
-        if !now_ok { lookSince = nil; return false }
+        if !now_ok {
+            // (a frame or two out of range — a jitter of the tracking — changes nothing; a quarter of a
+            // second away does)
+            if awaySince == nil { awaySince = now }
+            if now - awaySince! < 0.25, let since = lookSince { return now - since >= 0.5 }
+            lookSince = nil; return false
+        }
+        awaySince = nil
         if lookSince == nil { lookSince = now }
         // (back on the music for a moment first: the face turning back is not a wink)
         return now - lookSince! >= 0.5

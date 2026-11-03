@@ -2,7 +2,7 @@
 // (on the same Wi-Fi by itself, anywhere once the two have met, or with a six-digit code).
 // The iPhone asks; the iPad answers with its practice log and the names of its pieces, straight
 // from device to device. Only the connection details pass through the meeting service.
-import { Signal, ICE, LS, myPairKey, roomName, DIRECT, DirectBox, directPeers, directWatch, knownPairs } from './link.js';
+import { Signal, ICE, LS, myPairKey, roomName, DIRECT, DirectBox, directPeers, directWatch, knownPairs, PAIR } from './link.js';
 
 const TAG = { standPractice: 1 };
 const PART = 15000, DPART = 60000;
@@ -58,6 +58,7 @@ export class PracticeHost {
   }
   // a code for when the two are on different networks and have never met
   async showCode() {
+    if (PAIR()) return null;   // (with linking by code, no six-digit code: only linked devices)
     if (this.codeSig) return this.code;
     for (let i = 0; i < 3; i++) {
       const code = newCode(); const sig = await this._listen(codeId(code), false);
@@ -99,7 +100,7 @@ export class PracticeHost {
         ch.onopen = async () => {
           try {
             const json = JSON.stringify(await this.getData());
-            ch.send(JSON.stringify({ t: 'pair', key: myPairKey() }));
+            if (!PAIR()) ch.send(JSON.stringify({ t: 'pair', key: myPairKey() }));
             for (let o = 0; o < json.length; o += PART) ch.send(JSON.stringify({ t: 'part', s: json.slice(o, o + PART) }));
             ch.send(JSON.stringify({ t: 'end' }));
             this.onShared && this.onShared();
@@ -143,7 +144,7 @@ function askOne(target, ms) {
       const parts = [];
       ch.onmessage = (ev) => {
         let m; try { m = JSON.parse(ev.data); } catch { return; }
-        if (m.t === 'pair' && m.key) rememberIpad(m.key);
+        if (m.t === 'pair' && m.key && !PAIR()) rememberIpad(m.key);
         else if (m.t === 'part') parts.push(m.s);
         else if (m.t === 'end') { try { ch.send(JSON.stringify({ t: 'thanks' })); } catch {} try { finish(null, JSON.parse(parts.join(''))); } catch (e) { finish(e); } }
         else if (m.t === 'error') finish(new Error('ipad:' + (m.why || '')));
@@ -256,7 +257,7 @@ export async function fetchPractice({ code } = {}) {
   const tries = [];
   if (!code && DIRECT()) tries.push(askDirect(directPeers() > 0 ? 9000 : 15000));
   const targets = [];
-  if (code) targets.push(codeId(code));
+  if (code && !PAIR()) targets.push(codeId(code));
   else {
     for (const k of knownIpads()) targets.push(pairId(k));
     try { const room = await roomName(); if (room) targets.push(room + '-pp'); } catch {}

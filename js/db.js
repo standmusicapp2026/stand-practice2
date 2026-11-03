@@ -52,6 +52,8 @@ export const db = {
   byIndex(store, index, value) { return withDb((d) => wrap(d.transaction(store).objectStore(store).index(index).getAll(value))); },
   put(store, value) { return withDb((d) => { const tx = d.transaction(store, 'readwrite'); tx.objectStore(store).put(value); return done(tx); }); },
   del(store, key) { return withDb((d) => { const tx = d.transaction(store, 'readwrite'); tx.objectStore(store).delete(key); return done(tx); }); },
+  // every record whose key starts with the prefix, in one go (all or none)
+  delPrefix(store, prefix) { return withDb((d) => { const tx = d.transaction(store, 'readwrite'); tx.objectStore(store).delete(IDBKeyRange.bound(prefix, prefix + '\uffff')); return done(tx); }); },
   keys(store) { return withDb((d) => wrap(d.transaction(store).objectStore(store).getAllKeys())); },
 };
 

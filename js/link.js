@@ -68,8 +68,11 @@ export function pairMode(on) { if (!PAIR()) return; hubStart(); pairPost({ op: '
 export function pairCode(code) { pairPost({ op: 'pairCode', code: String(code) }); }
 export function pairForget(d) {
   pairPost(d ? { op: 'pairForget', d } : { op: 'pairForget' });
-  // (and the way in over the internet changes: a forgotten device can no longer use it)
-  if (NATIVE()) LS.set('standPairKey2', '');
+  // (and the ways in over the internet go: this device's key is made anew, so a forgotten device can
+  // no longer use it, and the keys of others it kept are dropped; linked devices get the new key the
+  // next time they meet nearby)
+  if (NATIVE()) { LS.set('standPairKey2', ''); LS.set('standPairs', '[]'); LS.set('standPracticeIpads', '[]'); }
+  try { window.dispatchEvent(new Event('stand-pair-forget')); } catch {}
 }
 // a line in the app's diagnostics (Files › Stand › Diagnostics › events.log), to find what happened
 export function nlog(text) { try { window.webkit.messageHandlers.standDiag.postMessage({ op: 'log', text: String(text).slice(0, 300) }); } catch {} }
@@ -228,10 +231,12 @@ export class CameraHost {
     // the iPhone app finds the iPad app nearby directly, without a code or the internet
     if (NATIVE()) { const sa = new Signal(ANY_HOST, (m) => this._msg(m, sa), () => {}, true); try { await sa.open(); this.sig4 = sa; } catch {} }
 
-    this.mode = opts.code ? 'code' : 'auto';
+    this.mode = opts.code && !PAIR() ? 'code' : 'auto';
     if (this.mode === 'auto') {
       const room = await roomName();
       if (!room && this.state === 'opening') { if (await this._openPair(true)) { this._set('waiting'); return 'pair'; } }
+      // (with linking: waiting for a linked device, nearby or by its key; never a code anyone could read)
+      if (PAIR()) { if (this.state === 'opening') this._set('waiting'); return 'pair'; }
       if (room && this.state === 'opening') {
         for (let i = 0; i < 3; i++) {
           const id = `${room}-${i}`;
@@ -349,7 +354,7 @@ export class CameraHost {
   _channel(ch) {
     this.ch = ch; ch.binaryType = 'arraybuffer';
     ch.onopen = () => {
-      this._set('linked', this.info); this.send({ t: 'pair', key: myPairKey() });
+      this._set('linked', this.info); if (!PAIR()) this.send({ t: 'pair', key: myPairKey() });
       setTimeout(() => { if (this.permStream && this.state === 'linked') { this.permStream.getTracks().forEach((t) => t.stop()); this.permStream = null; } }, 3000);
     };
     ch.onclose = () => { if (this.state === 'linked' && this.ch === ch) this._set('lost'); };
@@ -527,12 +532,15 @@ export class CameraPhone {
     // the apps: say hello on the direct link at once (nothing to wait for)
     if (!code && DIRECT()) this._directPhone();
     let targets;
+    if (code && PAIR()) code = null;   // (with linking by code, no six-digit code: only linked devices)
     if (code) targets = ['stand-cam-' + code.replace(/\D/g, '')];
     else {
       const pairs = knownPairs().map((k) => 'stand-pair-' + k);
       const room = await roomName();
       if (this.state === 'linked') return true;
-      targets = [...(NATIVE() ? [ANY_HOST] : []), ...(room ? [0, 1, 2].map((i) => `${room}-${i}`).slice(0, 1) : []), ...pairs, ...(room ? [`${room}-1`, `${room}-2`] : [])];
+      // (never the "any host" address over the internet: anyone could take it on the meeting service;
+      // nearby, the direct link finds the iPad, only a linked one)
+      targets = [...(room ? [0, 1, 2].map((i) => `${room}-${i}`).slice(0, 1) : []), ...pairs, ...(room ? [`${room}-1`, `${room}-2`] : [])];
       if (!targets.length) { this._set('offline'); this.searching = false; this.retry = setTimeout(() => this.find(), 5000); return false; }
     }
     // the internet route only starts if the direct link stays silent
@@ -594,11 +602,11 @@ export class CameraPhone {
       this.direct = true; this.peer = m.src;
       clearTimeout(this.retry); clearInterval(this._helloT); this.searching = false;
       try { this.pc && this.pc.close(); } catch {} this.pc = null;
-      if (p.key) this._cmd({ t: 'pair', key: p.key });
+      if (p.key) this._cmd({ t: 'pair', key: p.key }, true);
       this._set('linked'); this.sendState();
       this._pump();
     } else if (m.type === 'D_ACK') { this._waitAck = false; }
-    else if (m.type === 'D' && this.direct) this._cmd(p);
+    else if (m.type === 'D' && this.direct) this._cmd(p, true);
   }
   // the live picture for the iPad: small JPEG frames, the next one when the iPad has shown the last
   _pump() {
@@ -631,7 +639,8 @@ export class CameraPhone {
   }
   send(m) { if (this.direct && this.box && this.peer) { this.box.send(this.peer, 'D', m); return; } if (this.ch && this.ch.readyState === 'open') this.ch.send(JSON.stringify(m)); }
   sendState() { this.send({ t: 'state', ...this.s, shape: this.shape, recording: this.recording, canLight: this.canLight, hwZoom: !!(this.caps.zoom && this.caps.zoom.max > 1) }); }
-  async _cmd(m) {
+  async _cmd(m, direct) {
+    if (m.t === 'pair' && PAIR() && !direct) return;   // (with linking: a key only from a linked device)
     if (m.t === 'pair') { const list = knownPairs().filter((k) => k !== m.key); list.unshift(m.key); LS.set('standPairs', JSON.stringify(list.slice(0, 4))); }
     else if (m.t === 'set') { const { t, ...rest } = m; await this.apply(rest); }
     else if (m.t === 'camera') await this.apply({ facing: m.facing });

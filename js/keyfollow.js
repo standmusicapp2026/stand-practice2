@@ -110,7 +110,14 @@ export class KeyFollower {
   // (the microphone held meanwhile, so it is never closed and opened again for this)
   async restart() { let held = false; try { await acquireMic(); held = true; } catch {} this.stop(); await this.start(); if (held) releaseMic(); }
   // tell it the key the drone is in now (you chose it, or it just moved): it starts counting afresh
-  set(pc, minor) { this.fastBg = this._now() + 2500; this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0); }
+  // (counting starts afresh, as after a move of its own: the notes before the key you chose never
+  // move the drone away from it a moment later)
+  set(pc, minor) {
+    const now = this._now();
+    this.fastBg = now + 2500; this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0);
+    this.notesSince = 0; this.movedAt = now; this.recent = []; this.cur = null; this.durs = [];
+    if (this.r) this.r.fill(0);
+  }
   // how likely each of the 24 keys is now, given what was heard (the key it is in counts most at first)
   _resetPost() {
     const p = new Float64Array(24).fill(0.1 / 23);

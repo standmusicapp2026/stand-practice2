@@ -287,7 +287,9 @@ async function openDocumentOne(file, known) {
         HEAVY.active++;
         try {
         if (gone) return;
-        page = await pdf.getPage(i + 1);
+        // (the score closed while this page was being asked for: its document is gone, not an error)
+        page = await pdf.getPage(i + 1).catch((e) => { if (gone) return null; throw e; });
+        if (!page) return;
         const vp1 = page.getViewport({ scale: 1 });
         const vp = page.getViewport({ scale: w / vp1.width });
         canvas.width = W; canvas.height = H;
@@ -296,7 +298,7 @@ async function openDocumentOne(file, known) {
         if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
         // (a drawing stopped because it is no longer wanted is not an error: whoever asked knows it was stopped)
         let stopped = false;
-        await task.promise.catch((e) => { if (e && e.name === 'RenderingCancelledException' && ((opts.ctl && opts.ctl.aborted) || gone)) { stopped = true; return; } throw e; });
+        await task.promise.catch((e) => { if (gone || (e && e.name === 'RenderingCancelledException' && opts.ctl && opts.ctl.aborted)) { stopped = true; return; } throw e; });
         if (stopped) return;
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
         if (key && (opts.keep || performance.now() - t0 > PIX_SLOW) && !looksBlank(canvas) && !looksBlack(canvas)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);

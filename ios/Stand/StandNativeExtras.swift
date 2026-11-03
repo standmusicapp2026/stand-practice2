@@ -23,7 +23,25 @@ import Security
 // remembered (its id and a secret key, made at the linking); every later connection proves, with
 // that key, that it is the same device. Nothing from a device that has not proved it reaches the
 // page, and nothing from the page goes to it.
-private struct LinkedDevice: Codable { var key: String; var kind: String; var at: Double }
+private struct LinkedDevice: Codable { var key: String; var kind: String; var at: Double; var stale: Bool? }
+
+// The link's secrets in the Keychain, for this device only: never in an iCloud or computer backup,
+// never moved to a new iPad (a device restored from a backup is linked again with a code).
+private enum StandKeychain {
+    static func get(_ account: String) -> Data? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "stand.link",
+                                kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var out: CFTypeRef?
+        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
+    }
+    @discardableResult static func set(_ account: String, _ data: Data) -> Bool {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "stand.link", kSecAttrAccount as String: account]
+        let attrs: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        if SecItemUpdate(q as CFDictionary, attrs as CFDictionary) == errSecSuccess { return true }
+        var add = q; for (k, v) in attrs { add[k] = v }
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+}
 
 final class StandNativeExtras: NSObject {
     static let shared = StandNativeExtras()
@@ -45,17 +63,22 @@ final class StandNativeExtras: NSObject {
     // linking (all of it touched on the main thread only)
     private let kind = UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad"
     private lazy var deviceId: String = {
-        let d = UserDefaults.standard
-        if let s = d.string(forKey: "standDeviceID"), !s.isEmpty { return s }
-        let s = UUID().uuidString; d.set(s, forKey: "standDeviceID"); return s
+        if let data = StandKeychain.get("device"), let s = String(data: data, encoding: .utf8), !s.isEmpty { return s }
+        let s = UUID().uuidString
+        StandKeychain.set("device", Data(s.utf8))
+        UserDefaults.standard.removeObject(forKey: "standDeviceID")   // (an earlier test build kept it there)
+        return s
     }()
     private lazy var linked: [String: LinkedDevice] = {
-        guard let data = UserDefaults.standard.data(forKey: "standLinked"),
+        // (an earlier test build kept them in the settings: moved to the Keychain, once)
+        let d = UserDefaults.standard
+        if let old = d.data(forKey: "standLinked") { d.removeObject(forKey: "standLinked"); StandKeychain.set("linked", old) }
+        guard let data = StandKeychain.get("linked"),
               let m = try? JSONDecoder().decode([String: LinkedDevice].self, from: data) else { return [:] }
         return m
     }()
     private func saveLinked() {
-        if let data = try? JSONEncoder().encode(linked) { UserDefaults.standard.set(data, forKey: "standLinked") }
+        if let data = try? JSONEncoder().encode(linked) { StandKeychain.set("linked", data) }
     }
     private var peerDev = [MCPeerID: String]()      // which device each peer is (from what it announces)
     private var peerKind = [MCPeerID: String]()
@@ -63,7 +86,8 @@ final class StandNativeExtras: NSObject {
     private var myNonce = [MCPeerID: String]()
     private var pairMode = false
     private var pairTimer: Timer?
-    private struct Pairing { let peer: MCPeerID; let shower: Bool; let code: String; let theirNonce: String; var tries: Int }
+    private struct Pairing { let peer: MCPeerID; let shower: Bool; let code: String; var theirNonce: String; var tries: Int; var typed: String?; var pendingKey: String? }
+    private var codesShown = 0                       // new codes in this time on the linking screen
     private var pairing: Pairing?
     private func allowed(_ d: String?) -> Bool { guard let d = d, !d.isEmpty, d != deviceId else { return false }; return pairMode || linked[d] != nil }
 
@@ -138,7 +162,8 @@ final class StandNativeExtras: NSObject {
         case "pairMode":
             setPairMode((body["on"] as? Bool) ?? false)
         case "pairCode":
-            guard let code = body["code"] as? String, let p = pairing, !p.shower else { return }
+            guard let code = body["code"] as? String, var p = pairing, !p.shower else { return }
+            p.typed = code; pairing = p   // (kept: the other device must prove it knows the same code)
             sendAuth(["op": "pc", "m": mac(code, p.theirNonce + "|pair")], to: p.peer)
         case "pairList":
             reportLinked()
@@ -254,6 +279,7 @@ final class StandNativeExtras: NSObject {
     private func setPairMode(_ on: Bool) {
         pairTimer?.invalidate(); pairTimer = nil
         pairMode = on
+        if on { codesShown = 0 }
         if on {
             // (a few minutes at most: never left open by mistake)
             pairTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: false) { [weak self] _ in
@@ -269,7 +295,7 @@ final class StandNativeExtras: NSObject {
         }
     }
     private func reportLinked() {
-        let list = linked.map { ["d": $0.key, "kind": $0.value.kind, "at": $0.value.at] as [String: Any] }
+        let list = linked.map { ["d": $0.key, "kind": $0.value.kind, "at": $0.value.at, "stale": $0.value.stale ?? false] as [String: Any] }
             .sorted { (($0["at"] as? Double) ?? 0) > (($1["at"] as? Double) ?? 0) }
         js("window.standPairEvent && window.standPairEvent('list', \(jsValue(["list": list, "me": kind] as [String: Any])))")
     }
@@ -298,16 +324,21 @@ final class StandNativeExtras: NSObject {
             let theyLink = (m["pm"] as? Bool) ?? false, theyTrust = (m["tr"] as? Bool) ?? false
             if pairMode && theyLink {
                 // both on the linking screen: a new code, even if the two were linked before
-                guard pairing == nil || pairing?.peer == peer else { drop(peer); return }   // (one at a time)
+                // (one at a time; a second "hi" from the same device makes no new code, but its newest
+                // number is the one both prove against)
+                guard pairing == nil else { if pairing?.peer == peer { pairing?.theirNonce = n } else { drop(peer) }; return }
+                // (a few codes per visit to the linking screen: guessing by trying again and again is no use)
+                codesShown += 1
+                guard codesShown <= 4 else { drop(peer); js("window.standPairEvent && window.standPairEvent('timeout', {})"); return }
                 let iShow = (kind == "iPad" && theirKind != "iPad") || (kind == theirKind && deviceId < d)
                 let code = String(format: "%04d", Int.random(in: 0...9999))
-                pairing = Pairing(peer: peer, shower: iShow, code: code, theirNonce: n, tries: 0)
+                pairing = Pairing(peer: peer, shower: iShow, code: code, theirNonce: n, tries: 0, typed: nil, pendingKey: nil)
                 if iShow { js("window.standPairEvent && window.standPairEvent('show', \(jsValue(["code": code, "kind": theirKind])))") }
                 else { js("window.standPairEvent && window.standPairEvent('ask', \(jsValue(["kind": theirKind])))") }
             } else if let dev = linked[d], theyTrust {
                 sendAuth(["op": "proof", "m": mac(dev.key, n + "|" + deviceId)], to: peer)
             } else if theyTrust {
-                // linked there, but no longer here (forgotten on this device): they forget it too
+                // linked there, but no longer here (forgotten on this device): they are told so
                 sendAuth(["op": "forgot"], to: peer)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.drop(peer) }
             } else if !pairMode {
@@ -317,38 +348,54 @@ final class StandNativeExtras: NSObject {
             guard let d = peerDev[peer], let dev = linked[d], let n = myNonce[peer], let got = m["m"] as? String else { drop(peer); return }
             if got == mac(dev.key, n + "|" + d) {
                 verified.insert(peer)
+                if linked[d]?.stale == true { linked[d]?.stale = nil; saveLinked(); reportLinked() }
                 StandLog.write("link: linked device proved")
                 reportPeers()
             } else {
+                // (the two hold different keys: shown in Settings as "link again")
                 StandLog.write("link: proof did not match")
+                if linked[d]?.stale != true { linked[d]?.stale = true; saveLinked(); reportLinked() }
                 drop(peer)
             }
         case "pc":
-            guard var p = pairing, p.peer == peer, p.shower, let d = peerDev[peer], let n = myNonce[peer], let got = m["m"] as? String else { return }
+            // (the code typed on the other device, proved without sending it; at most five tries, then no more)
+            guard var p = pairing, p.peer == peer, p.shower, p.pendingKey == nil, let n = myNonce[peer], let got = m["m"] as? String else { return }
+            guard p.tries < 5 else { drop(peer); return }
             if got == mac(p.code, n + "|pair") {
                 var bytes = [UInt8](repeating: 0, count: 32)
                 _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
                 let key = Data(bytes).base64EncodedString()
-                let k = peerKind[peer] ?? "iPhone"
-                linked[d] = LinkedDevice(key: key, kind: k, at: Date().timeIntervalSince1970 * 1000)
-                saveLinked()
-                sendAuth(["op": "key", "k": key], to: peer)
-                pairing = nil
-                verified.insert(peer)
-                StandLog.write("link: linked a new device")
-                js("window.standPairEvent && window.standPairEvent('done', \(jsValue(["kind": k])))")
-                reportLinked(); reportPeers()
+                p.pendingKey = key; pairing = p
+                // the key goes, with this device's own proof that it knows the code; it is kept only
+                // once the other device says it has it (a link dropped right then leaves no half link)
+                sendAuth(["op": "key", "k": key, "m": mac(p.code, p.theirNonce + "|show")], to: peer)
             } else {
                 p.tries += 1; pairing = p
                 let left = 5 - p.tries
                 sendAuth(["op": "bad", "left": left], to: peer)
                 js("window.standPairEvent && window.standPairEvent('bad', \(jsValue(["left": left, "here": true] as [String: Any])))")
-                if left <= 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.drop(peer) } }
+                if left <= 0 { drop(peer) }
             }
         case "key":
-            guard let p = pairing, p.peer == peer, !p.shower, let d = peerDev[peer], let key = m["k"] as? String, !key.isEmpty else { return }
+            // (kept only from the device that showed the code: it proves it knows it)
+            guard let p = pairing, p.peer == peer, !p.shower, let typed = p.typed, let n = myNonce[peer], let d = peerDev[peer],
+                  let key = m["k"] as? String, !key.isEmpty, let proof = m["m"] as? String else { return }
+            guard proof == mac(typed, n + "|show") else { StandLog.write("link: key without proof"); drop(peer); return }
             let k = peerKind[peer] ?? "iPad"
-            linked[d] = LinkedDevice(key: key, kind: k, at: Date().timeIntervalSince1970 * 1000)
+            linked[d] = LinkedDevice(key: key, kind: k, at: Date().timeIntervalSince1970 * 1000, stale: nil)
+            saveLinked()
+            sendAuth(["op": "ok", "m": mac(key, p.theirNonce + "|ok")], to: peer)
+            pairing = nil
+            verified.insert(peer)
+            StandLog.write("link: linked a new device")
+            js("window.standPairEvent && window.standPairEvent('done', \(jsValue(["kind": k])))")
+            reportLinked(); reportPeers()
+        case "ok":
+            // the other device has the key (it proves it): now it is kept here too
+            guard let p = pairing, p.peer == peer, p.shower, let key = p.pendingKey, let n = myNonce[peer], let d = peerDev[peer],
+                  let got = m["m"] as? String, got == mac(key, n + "|ok") else { return }
+            let k = peerKind[peer] ?? "iPhone"
+            linked[d] = LinkedDevice(key: key, kind: k, at: Date().timeIntervalSince1970 * 1000, stale: nil)
             saveLinked()
             pairing = nil
             verified.insert(peer)
@@ -359,7 +406,9 @@ final class StandNativeExtras: NSObject {
             let left = (m["left"] as? Int) ?? 0
             js("window.standPairEvent && window.standPairEvent('bad', \(jsValue(["left": left])))")
         case "forgot":
-            if let d = peerDev[peer] { linked.removeValue(forKey: d); saveLinked(); reportLinked() }
+            // (said by a device that has not proved anything: nothing is deleted on its word; the link
+            // is shown as "link again" in Settings, and a new code puts it right)
+            if let d = peerDev[peer], linked[d] != nil, linked[d]?.stale != true { linked[d]?.stale = true; saveLinked(); reportLinked() }
             drop(peer)
         default:
             break
@@ -533,12 +582,14 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
         // (the link's state is only ever touched on the main thread: an invitation arriving while the
         // link was being stopped read a session half taken down)
         DispatchQueue.main.async {
-            self.lastInvitation = Date()
             let s = self.session
             // (already linked to that device: no second link to it, which made the two drop each other)
             let already = s?.connectedPeers.contains(peerID) ?? false
             let ok = self.allowed(d)
             if ok, let d = d { self.peerDev[peerID] = d }
+            // (only an invitation taken holds back this device's own: one turned down, while this
+            // device was not yet linking, must not stop it from asking a moment later)
+            if ok && s != nil && !already { self.lastInvitation = Date() }
             invitationHandler(ok && s != nil && !already, s)
         }
     }

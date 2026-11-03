@@ -43,10 +43,10 @@ export function openPair() {
     };
     const off = pairWatch((type, d) => {
       if (type === 'show') {
-        find.hidden = true; code.hidden = false; code.textContent = String(d.code || '').split('').join(' ');
+        find.hidden = true; input.hidden = true; code.hidden = false; code.textContent = String(d.code || '').split('').join(' ');
         say.textContent = 'Type these four numbers on the ' + (d.kind || other) + '.';
       } else if (type === 'ask') {
-        find.hidden = true; input.hidden = false; input.value = ''; setTimeout(() => input.focus(), 50);
+        find.hidden = true; code.hidden = true; input.hidden = false; input.value = ''; setTimeout(() => input.focus(), 50);
         say.textContent = 'Type the four numbers shown on the ' + (d.kind || other) + '.';
       } else if (type === 'bad') {
         bad.hidden = false;
@@ -89,7 +89,8 @@ export async function drawLinked(card) {
   const fmt = (t) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   for (const x of list) {
     const li = el('li');
-    const name = el('span', '', x.kind + ' · linked ' + fmt(x.at));
+    // (the two no longer hold the same key — one was forgotten, or reset: a new code puts it right)
+    const name = el('span', x.stale ? 'pair-stale' : '', x.kind + (x.stale ? ' · link again with a code' : ' · linked ' + fmt(x.at)));
     const forget = el('button', 'btn small ghost', 'Forget');
     forget.addEventListener('click', async () => {
       if (!await ask('Forget this ' + x.kind + '?', { ok: 'Forget', danger: true, sub: 'The two will no longer connect until you link them again with a code.' })) return;
