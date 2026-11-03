@@ -1058,10 +1058,16 @@
     </section>
     <section class="sub-card ipad-only" id="iphoneCard">
       <div class="sub-head">
-        <div><h3>Always share my practice with my iPhone</h3><p class="hint">No account needed. Stand on your iPhone shows your practice from this iPad: today, the week and each piece. Linking the iPhone as a camera once is enough: from then on it is your iPhone, and the practice goes to it whenever the two are near each other (or on the same Wi-Fi). Straight from one device to the other, encrypted. Turn this off to stop sharing.</p></div>
+        <div><h3>Always share my practice with my iPhone</h3><p class="hint">No account needed. Stand on your iPhone shows your practice from this iPad: today, the week and each piece. Once your iPhone is linked, the practice goes to it whenever the two are near each other. Straight from one device to the other, encrypted. Turn this off to stop sharing.</p></div>
         <label class="switch"><input type="checkbox" id="shareIphone" checked><span></span></label>
       </div>
       <div class="row-even" id="iphoneCodeRow"><button class="btn small" id="iphoneCodeBtn">Show a code</button><b class="num ip-code" id="iphoneCode"></b></div>
+    </section>
+    <section class="sub-card" id="pairCard" hidden>
+      <div class="sub-head"><div><h3>Linked devices</h3><p class="hint">Your iPad and iPhone are linked once, with a four-number code. From then on they connect by themselves when they are near, for the camera, the practice and your scores. No other device can.</p></div></div>
+      <ul class="pair-list"></ul>
+      <p class="hint pair-none">None yet.</p>
+      <button class="btn small" id="pairNew"><svg><use href="#i-link"/></svg><span>Link</span></button>
     </section>
     <section class="sub-card ipad-only">
       <div class="sub-head"><div><h3>Writing</h3><p class="hint">With the Apple Pencil, the first touch on a score opens the markings tools (it writes nothing); then write. Finger gestures still turn pages.</p></div></div>
@@ -1116,10 +1122,6 @@
     <section class="sub-card">
       <div class="sub-head"><div><h3>Backup to iCloud Drive</h3><p class="hint" id="bkSettingsState">Everything in Stand, kept safe outside the app.</p></div></div>
       <button class="btn" data-panel="backup"><svg><use href="#i-cloud"/></svg><span>Backup and restore</span></button>
-    </section>
-    <section class="sub-card">
-      <div class="sub-head"><div><h3>Something went wrong?</h3><p class="hint">Sends what Stand noted about this iPad and what went wrong lately (no scores, no recordings, nothing you wrote). Add a line about what you were doing.</p></div></div>
-      <button class="btn" id="sendReport"><svg><use href="#i-share"/></svg><span>Send a problem report</span></button>
     </section>
     <button class="btn ghost" id="tourAgain">Show the tour again</button>
     <p class="hint center">Stand 2.10 · everything stays on your device</p>

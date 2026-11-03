@@ -1866,3 +1866,16 @@ body.phone .stat b { font-size: 22px; }
 
 /* (the back button never squeezed by a long title) */
 .topbar > .icon-btn { flex: none; min-width: 40px; }
+
+/* linking a device once, with a code */
+.pair-back { z-index: 2000; }
+.pair .pair-say { margin: 0; }
+.pair-find { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14.5px; color: var(--accent-text); padding: 6px 0; }
+.pair-find i { width: 10px; height: 10px; border-radius: 5px; background: currentColor; animation: linkpulse 1.4s ease-in-out infinite; }
+.pair-code { font-size: 44px; font-weight: 700; letter-spacing: .1em; text-align: center; padding: 8px 0; }
+.pair-input { font-size: 34px; letter-spacing: .4em; text-align: center; padding: 10px; border-radius: 12px; border: 1px solid var(--line, rgba(127,127,127,.35)); background: transparent; color: inherit; width: 100%; box-sizing: border-box; }
+.pair-bad { color: var(--rec); margin: 0; }
+.pair-find[hidden], .pair-code[hidden], .pair-input[hidden], .pair-bad[hidden] { display: none; }
+.pair-list { list-style: none; margin: 8px 0; padding: 0; }
+.pair-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); }
+.pair-list li:last-child { border-bottom: 0; }

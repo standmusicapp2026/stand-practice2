@@ -32,7 +32,8 @@ import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
-import { CameraHost, CameraPhone, directWatch, nlog, directSendFile } from './link.js';
+import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch } from './link.js';
+import { openPair, drawLinked, linkedCount } from './pair.js';
 import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
@@ -228,6 +229,7 @@ function showPanel(name, tab) {
   if (name === 'takes') { if (!VF.on && $('#player').hidden) $('#panel-takes').classList.remove('viewing'); if (!VF.on && !$('#player').hidden && !player.playing) { $('#player').hidden = true; $('#panel-takes').classList.remove('viewing'); currentTake = null; } refreshTakes(); }
   if (name === 'metronome') drawRamp();
   if (name === 'settings') fillScoreSettings();
+  if (name === 'app') { $('#pairNew').querySelector('span').textContent = PHONE ? 'Link an iPad' : 'Link an iPhone'; drawLinked($('#pairCard')); }
   if (name === 'scales') renderScaleStrip();
   if (name === 'pages') { PG.sel.clear(); PG.selecting = false; PG.staged = null; for (const [o, t] of PG.thumbs) if (PG.edited.has(o)) t.stale = true; PG.edited.clear(); renderPagesPanel(); }
   if (name === 'passages') renderPassages();
@@ -5830,10 +5832,18 @@ function syncPracticeHost() {
   const on = S.shareIphone !== false && document.visibilityState === 'visible';
   if (on) pHost.start(); else pHost.stop();
   $('#shareIphone').checked = S.shareIphone !== false;
-  $('#iphoneCodeRow').hidden = S.shareIphone === false;
+  $('#iphoneCodeRow').hidden = S.shareIphone === false || PAIR();
   if (!pHost.on) $('#iphoneCode').textContent = '';
 }
 $('#shareIphone').addEventListener('change', (e) => { S.shareIphone = e.target.checked; saveSettings(); syncPracticeHost(); });
+// Linked devices (the apps): linked once with a code, then always
+$('#pairNew').addEventListener('click', async () => { await openPair(); drawLinked($('#pairCard')); });
+pairWatch((t) => { if (t === 'list' && !$('#pairCard').hidden) drawLinked($('#pairCard')); });
+// (the first link wanted: the screen to link opens, then what was asked for goes on)
+async function needLink() {
+  if (!PAIR() || await linkedCount() > 0) return true;
+  return openPair();
+}
 $('#iphoneCodeBtn').addEventListener('click', async () => {
   if (!pHost.on) await pHost.start();
   $('#iphoneCode').textContent = '···';
@@ -5872,7 +5882,12 @@ async function getIpadPractice(quiet, code) {
     const d = await fetchPractice(code ? { code } : {});
     if (d && d.v === 1) { IPAD.data = d; IPAD.last = Date.now(); adoptPlan(d); await setSetting('ipadPractice', d); $('#icCodeBox').hidden = true; if (!quiet) toast('Practice from your iPad is here'); }
   } catch {
-    if (!quiet) { $('#icCodeBox').hidden = false; $('#icCode').value = ''; }
+    if (!quiet) {
+      $('#icCodeBox').hidden = false; $('#icCode').value = '';
+      // (the apps: linked devices find each other nearby; no code to type here)
+      $('#icCode').hidden = PAIR();
+      $('#icCodeBox p').textContent = PAIR() ? 'Your iPad was not found. Open Stand on the iPad, near this iPhone. Not linked yet? Settings › Linked devices.' : 'Open Stand on the iPad. On the same Wi-Fi it is found by itself. If not, on the iPad go to Settings › Your iPhone › Show a code, and type it here.';
+    }
   }
   IPAD.busy = false; $('#icFind').hidden = true;
   renderIpadCard(); renderGoal(); renderToday(); if (openPanel === 'goal') renderTracker();
@@ -5916,7 +5931,7 @@ async function initPracticeSync() {
   setTimeout(() => getIpadPractice(true), 1500);
   window.__phs = initPhoneScores({ askIpad: (q, ms) => (window.__askIpadTest || askIpad)(q, ms), toast, connected: (fn) => directWatch((n) => { if (n) fn(); }) });
 }
-$('#icConnect').addEventListener('click', () => getIpadPractice(false));
+$('#icConnect').addEventListener('click', async () => { if (await needLink()) getIpadPractice(false); });
 $('#icRefresh').addEventListener('click', () => getIpadPractice(false));
 $('#icTryAgain').addEventListener('click', () => getIpadPractice(false));
 $('#icCancel').addEventListener('click', () => { $('#icCodeBox').hidden = true; renderIpadCard(); });
@@ -6981,6 +6996,7 @@ $$('#camSeg button').forEach((b) => b.addEventListener('click', () => { S.cam = 
 const host = new CameraHost();
 function syncLink() {
   const on = S.cam === 'iphone';
+  if (on && PAIR() && !syncLink.asked) { syncLink.asked = true; linkedCount().then((n) => { if (!n && S.cam === 'iphone') openPair(); }); }
   $('#linkCard').hidden = !on;
   if (on && host.state === 'off') host.start();
   if (!on && host.state !== 'off' && !(recState && recState.iphone)) { host.stop(); hideRemotePreview(); }
@@ -8975,6 +8991,7 @@ phone.onUnsent = async (blob, mirror) => {
 $('#pcResend').addEventListener('click', async () => { $('#pcResend').hidden = true; const ok = await phone.resend(); if (!ok && phone.unsent) $('#pcResend').hidden = false; });
 phone.onLocal = (stream) => { const v = $('#pcVideo'); if (v.srcObject !== stream) { v.srcObject = stream; v.play().catch(() => {}); } };
 $('#phoneCamTile').addEventListener('click', async () => {
+  if (!await needLink()) return;
   $('#phonecam').hidden = false; $('#pcCodeBox').hidden = true; $('#pcUseCode').hidden = false; pcDraw('connecting');
   try { await phone.openCamera(); } catch (e) { toast('Camera access is off. Turn it on in Settings › Stand.', 5000); return; }
   phone.find();
@@ -9902,15 +9919,8 @@ async function problemReport() {
   }
   return L.join('\n');
 }
-$('#sendReport').addEventListener('click', async () => {
-  const b = $('#sendReport'); b.disabled = true;
-  try {
-    const text = await problemReport();
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    await shareBlob(new Blob([text], { type: 'text/plain' }), `Stand report ${stamp}.txt`);
-  } catch (e) { toast('The report could not be made: ' + ((e && e.message) || e), 4000); }
-  finally { b.disabled = false; }
-});
+// (no button for it in the app: kept for looking into a problem when needed)
+window.__standReport = problemReport;
 
 // (the page started: the notice for a failed start is not needed)
 window.__standUp = true;

@@ -40,6 +40,37 @@ function deliver(m) {
   if (sig && sig.onMsg) sig.onMsg(m);
 }
 export const nativeLink = () => NATIVE();
+
+// ---------- linking once with a code (apps whose native part has it) ----------
+// Two devices only talk once they have been linked: the first time, both open the linking screen,
+// one shows four numbers and the other types them; from then on they know each other for good.
+export const PAIR = () => NATIVE() && +((window.standCaps || {}).peer) >= 4;
+const PAIRS = { list: null, me: '', watch: new Set() };
+function pairPost(m) { try { window.webkit.messageHandlers.standPeer.postMessage(m); } catch {} }
+window.standPairEvent = (type, data) => {
+  data = data || {};
+  if (type === 'list') { PAIRS.list = data.list || []; PAIRS.me = data.me || ''; }
+  for (const f of [...PAIRS.watch]) { try { f(type, data); } catch {} }
+};
+export function pairWatch(f) { PAIRS.watch.add(f); return () => PAIRS.watch.delete(f); }
+// the devices linked to this one: [{ d, kind, at }]
+export function pairList() {
+  if (!PAIR()) return Promise.resolve([]);
+  hubStart();
+  return new Promise((res) => {
+    const off = pairWatch((t, d) => { if (t === 'list') { off(); clearTimeout(T); res(d.list || []); } });
+    const T = setTimeout(() => { off(); res(PAIRS.list || []); }, 1500);
+    pairPost({ op: 'pairList' });
+  });
+}
+export const pairKnown = () => PAIRS.list;
+export function pairMode(on) { if (!PAIR()) return; hubStart(); pairPost({ op: 'pairMode', on: !!on }); }
+export function pairCode(code) { pairPost({ op: 'pairCode', code: String(code) }); }
+export function pairForget(d) {
+  pairPost(d ? { op: 'pairForget', d } : { op: 'pairForget' });
+  // (and the way in over the internet changes: a forgotten device can no longer use it)
+  if (NATIVE()) LS.set('standPairKey2', '');
+}
 // a line in the app's diagnostics (Files › Stand › Diagnostics › events.log), to find what happened
 export function nlog(text) { try { window.webkit.messageHandlers.standDiag.postMessage({ op: 'log', text: String(text).slice(0, 300) }); } catch {} }
 export { ANY_HOST };
@@ -160,9 +191,15 @@ async function publicAddress() {
 // Once linked, the iPad and iPhone remember each other, so they also find each other later on
 // any network (no account needed).
 export const LS = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
-export function myPairKey() { let k = LS.get('standPairKey'); if (!k) { k = Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 8); LS.set('standPairKey', k); } return k; }
+// (the apps: a new key with linking by code, so that a key handed out before, to any device on the
+// same Wi-Fi, no longer reaches this iPad; it is handed only to linked devices now)
+export function myPairKey() { const n = NATIVE() ? 'standPairKey2' : 'standPairKey'; let k = LS.get(n); if (!k) { const a = new Uint8Array(12); crypto.getRandomValues(a); k = [...a].map((x) => x.toString(36).padStart(2, '0')).join(''); LS.set(n, k); } return k; }
+// (the apps: no room made from the Wi-Fi's internet address, where any device on the same network
+// could find this one; nearby, the direct link does it, and only between linked devices)
+const roomOk = () => !NATIVE();
 export function knownPairs() { try { return JSON.parse(LS.get('standPairs') || '[]'); } catch { return []; } }
 export async function roomName() {
+  if (!roomOk()) return null;
   if (roomCache) return roomCache;
   const ip = await publicAddress();
   if (!ip) return null;
