@@ -37,7 +37,8 @@ window.__keyReal = async function ({ url, start = 0, secs = 60, key = [7, 0], dr
   kf.clock = () => now * 1000;
   kf.set(cur.pc, cur.minor); droneOn(cur, 0);
   kf.on = true; kf.src = bus; kf.an = an; kf.buf = new Float32Array(2048); kf.fd = new Float32Array(an.frequencyBinCount); kf.mag = new Float32Array(an.frequencyBinCount); kf._init();
-  const snaps = []; for (let s = 0.04; s < secs - 0.05; s += 0.04) { const at = s; oc.suspend(at).then(() => { now = at; kf._tick(sr); if (globalThis.__snap && Math.round(at * 25) % 250 === 0) snaps.push([Math.round(at), kf.h.map((x) => +x.toFixed(1)).join(' ')]); oc.resume(); }); }
+  const heard = [];
+  const snaps = []; for (let s = 0.04; s < secs - 0.05; s += 0.04) { const at = s; oc.suspend(at).then(() => { now = at; const on0 = kf.onsets; kf._tick(sr); if (globalThis.__noteLog && kf.onsets !== on0 && kf.recent && kf.recent.length) heard.push([+at.toFixed(2), kf.recent[kf.recent.length - 1]]); if (globalThis.__snap && Math.round(at * 25) % 50 === 0) snaps.push([Math.round(at), globalThis.__snapDbg ? JSON.stringify(kf.dbg) + ' top ' + (kf.post ? Array.from(kf.post).map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).slice(0, 3).map(([v, i]) => (['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'][i % 12]) + (i >= 12 ? 'm' : '') + ':' + v.toFixed(2)).join(' ') : '') : kf.h.map((x) => +x.toFixed(1)).join(' ')]); oc.resume(); }); }
   await oc.startRendering();
-  return { events, snaps };
+  return { events, snaps, heard };
 };
