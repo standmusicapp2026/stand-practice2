@@ -56,7 +56,7 @@ targets:
               public.filename-extension: [standbackup]
         UIStatusBarHidden: true
         UIViewControllerBasedStatusBarAppearance: false
-        NSLocalNetworkUsageDescription: "Stand connects your iPhone and iPad so the iPhone can film for the iPad."
+        NSLocalNetworkUsageDescription: "Stand connects your iPad and iPhone once you have linked them with a code, so the iPhone can film for the iPad and show your practice and scores."
         NSPhotoLibraryAddUsageDescription: "Stand saves the videos and pictures you choose to export to your photo library."
         NSBonjourServices:
           - _stand-link._tcp
