@@ -4,6 +4,10 @@ on:
   push:
     branches: [main, 'stand-2*']
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Mac to build on (when the Intel ones are not to be had: macos-15)'
+        default: 'macos-15-intel'
 
 permissions:
   contents: write
@@ -11,7 +15,7 @@ permissions:
 jobs:
   ipa:
     # (the Intel Macs: the Apple-chip ones are often too busy and the build waited for hours)
-    runs-on: macos-15-intel
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     steps:
       - uses: actions/checkout@v4
 
