@@ -32,7 +32,7 @@ import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
-import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch } from './link.js';
+import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch, pairList } from './link.js';
 import { openPair, drawLinked, linkedCount } from './pair.js';
 import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
@@ -3496,6 +3496,57 @@ const LAYOUTS = [
     }
     return out;
   } },
+  { k: 'progmodern', cat: 'concert', label: 'Programme, modern', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      box(0, 0, 1, 0.012, LC.navy),
+      T('spaced', 0.08, 0.06, 'Programme', { w: 0.84, al: 'left', c: LC.blue, fs: 0.017 }),
+      T('heading', 0.08, 0.09, 'An Evening of Chamber Music', { w: 0.84, fs: 0.045, c: LC.ink, ff: 'avenir', b: 1 }),
+      T('body', 0.08, 0.16, 'Saturday 14 June · 7.30 pm · Concert Hall', { w: 0.84, fs: 0.019, c: LC.soft, ff: 'avenir' }),
+      rule(0.08, 0.205, 0.84, LC.ink, 0.0018)];
+    PROG.filter((q) => typeof q !== 'string').forEach((q, i) => {
+      const y = 0.235 + i * 0.15;
+      out.push(T('heading', 0.08, y, String(i + 1).padStart(2, '0'), { w: 0.12, fs: 0.045, c: LC.blue, ff: 'avenir', b: 1 }));
+      out.push(T('heading', 0.22, y + 0.004, q.who, { w: 0.5, fs: 0.022, c: LC.ink, ff: 'avenir', b: 1 }));
+      out.push(T('body', 0.72, y + 0.006, q.min, { w: 0.2, al: 'right', fs: 0.018, c: LC.blue, ff: 'avenir' }));
+      out.push(T('body', 0.22, y + 0.042, q.what, { w: 0.7, fs: 0.019, c: LC.ink, ff: 'avenir' }));
+      out.push(T('body', 0.22, y + 0.078, q.parts, { w: 0.7, fs: 0.015, c: LC.soft, ff: 'avenir', lh: 1.35 }));
+      out.push(rule(0.08, y + 0.135, 0.84, '#e6e8ee', 0.001));
+    });
+    out.push(T('body', 0.08, 0.86, 'Your Name, cello · Partner Name, piano', { w: 0.84, fs: 0.019, c: LC.ink, ff: 'avenir' }));
+    out.push(T('body', 0.08, 0.895, 'Please switch off your phones. Thank you for coming.', { w: 0.84, fs: 0.016, c: LC.soft, ff: 'avenir' }));
+    return out;
+  } },
+  { k: 'rehearsal', cat: 'concert', label: 'Rehearsal plan', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.07, 0.04, 'Rehearsals', { w: 0.6, c: '#1f2430' }),
+      T('note', 0.6, 0.06, 'for the concert on …', { w: 0.33, al: 'right', fs: 0.024, c: '#567c8d' })];
+    const cols = [[0.07, 0.15, 'Date'], [0.23, 0.13, 'Time'], [0.37, 0.2, 'Where'], [0.58, 0.35, 'What we play']];
+    out.push(rbox(0.06, 0.13, 0.88, 0.045, '#eef4f0'));
+    for (const [x, w, h] of cols) out.push(T('heading', x, 0.141, h, { w, fs: 0.016, c: '#2f4156', ff: 'avenir' }));
+    const rows = [['Mon 2 June', '18:00', 'Room 12', 'Brahms, first movement'], ['Thu 5 June', '18:00', 'Room 12', 'Schumann, all three'], ['Mon 9 June', '17:30', 'Concert Hall', 'Whole programme, in order'], ['Fri 13 June', '18:00', 'Concert Hall', 'Dress rehearsal']];
+    rows.forEach((r, i) => {
+      const y = 0.2 + i * 0.075;
+      cols.forEach(([x, w], j) => out.push(T('body', x, y, r[j], { w, fs: 0.017, c: '#1f2430', ff: 'avenir' })));
+      out.push(rule(0.06, y + 0.055, 0.88, '#e3e8ee', 0.001));
+    });
+    for (let i = 0; i < 4; i++) out.push(rule(0.06, 0.555 + i * 0.075, 0.88, '#e3e8ee', 0.001));
+    out.push(rbox(0.06, 0.86, 0.88, 0.08, '#f6f7fb'));
+    out.push(T('body', 0.09, 0.875, 'Bring: the parts, a pencil, a stand light for the hall.', { w: 0.82, fs: 0.017, c: '#2f4156', ff: 'avenir' }));
+    return out;
+  } },
+  { k: 'thanks', cat: 'concert', label: 'Thank-you card', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#fbf8f2', pat: '', a: 1 },
+      box(0.12, 0.2, 0.76, 0.6, '#ffffff', { lc: LC.gold, lw: 0.0015 }),
+      box(0.135, 0.21, 0.73, 0.58, '', { lc: LC.rule, lw: 0.001 }),
+      T('spaced', 0.15, 0.27, 'With all our thanks', { w: 0.7, c: LC.gold, fs: 0.017 }),
+      T('signature', 0.15, 0.32, 'Thank you', { w: 0.7, al: 'center', c: LC.ink, fs: 0.09 }),
+      ornament(0.5, 0.47, 0.28, LC.gold),
+      T('body', 0.2, 0.51, 'for coming, and for listening so warmly. It meant a great deal to us.', { w: 0.6, al: 'center', i: 1, fs: 0.02, c: LC.soft, lh: 1.5 }),
+      T('heading', 0.15, 0.68, 'Your Name & Partner Name', { w: 0.7, al: 'center', ff: 'baskerville', fs: 0.024, c: LC.ink }),
+    ];
+  } },
   // ---- career
   { k: 'cv', cat: 'career', label: 'CV', make: () => {
     const T = tbP(false), ink = LC.ink, soft = '#5c6270', acc = LC.blue;
@@ -3619,6 +3670,21 @@ const LAYOUTS = [
       T('body', 0.1, 0.895, 'name@email.com · +00 000 000 000', { w: 0.8, al: 'center', fs: 0.018, c: LC.gold2 }),
     ];
   } },
+  { k: 'students', cat: 'career', land: 1, label: 'Teaching week', make: () => {
+    const T = tbP(true), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.05, 0.04, 'Teaching week', { w: 0.5, c: '#1f2430', fs: 0.042 }),
+      T('note', 0.6, 0.06, 'from … to …', { w: 0.35, al: 'right', fs: 0.024, c: '#567c8d' })];
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], times = ['14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+    const x0 = 0.13, cw = 0.82 / 5, y0 = 0.25, rh = 0.1;
+    days.forEach((d, i) => { out.push(rbox(x0 + i * cw + 0.004, 0.17, cw - 0.008, 0.055, '#eef4f0')); out.push(T('heading', x0 + i * cw, 0.183, d, { w: cw, al: 'center', fs: 0.017, c: '#2f4156', ff: 'avenir' })); });
+    times.forEach((t, r) => {
+      out.push(T('body', 0.05, y0 + r * rh + 0.012, t, { w: 0.07, fs: 0.016, c: '#6b7480', ff: 'avenir' }));
+      out.push(rule(x0, y0 + r * rh, 0.82, '#e3e8ee', 0.001));
+    });
+    out.push(rule(x0, y0 + times.length * rh, 0.82, '#e3e8ee', 0.001));
+    out.push(T('sticky', 0.76, 0.875, 'Concert class: Friday 18:00', { w: 0.2, fs: 0.017 }));
+    return out;
+  } },
   { k: 'cert', cat: 'career', label: 'Certificate', make: () => {
     const T = tbP(false);
     return [
@@ -3704,28 +3770,95 @@ const LAYOUTS = [
     });
     return out;
   } },
-  { k: 'olive', cat: 'practice', label: 'Month goals', make: () => [
-    { t: 'bg', c: '#475540', pat: '', a: 1 },
-    tb('poster', 0.06, 0.05, 'GOALS', { w: 0.5, al: 'left', c: '#d4dbc4', fs: 0.1, ff: 'display', b: 0, ls: 0.06 }),
-    tb('fancy', 0.08, 0.15, 'this month', { w: 0.6, al: 'left', c: '#ffffff', fs: 0.042 }),
-    { t: 'img', id: null, x: 0.73, y: 0.18, w: 0.4, h: 0.26, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'arch' },
-    ...[0, 1, 2, 3].flatMap((i) => [
-      { t: 'shape', k: 'round', x: i % 2 ? 0.74 : 0.27, y: 0.47 + Math.floor(i / 2) * 0.23, w: 0.42, h: 0.2, f: '#2c3527', a: 1, rot: 0 },
-      { t: 'shape', k: 'circle', x: (i % 2 ? 0.74 : 0.27), y: 0.4 + Math.floor(i / 2) * 0.23, w: 0.06, h: 0.06 / 1.414, f: '#d4dbc4', a: 1, rot: 0 },
-      tb('body', (i % 2 ? 0.55 : 0.08), 0.44 + Math.floor(i / 2) * 0.23, ['Scales in thirds', 'Learn the second movement', 'Record a run-through', 'Twenty minutes of long notes'][i], { w: 0.38, al: 'center', c: '#e9eddf', fs: 0.024 }),
-    ]),
-  ] },
-  { k: 'journal', cat: 'practice', label: 'Practice journal', make: () => [
-    { t: 'bg', c: '#fffdf8', pat: 'grid', a: 1 },
-    tb('chapter', 0.08, 0.05, 'Practice journal', { w: 0.84, c: '#2f4156' }),
-    tb('note', 0.62, 0.12, 'date:', { w: 0.3, al: 'right', fs: 0.026, c: '#567c8d' }),
-    { t: 'shape', k: 'flower', x: 0.17, y: 0.27, w: 0.2, h: 0.2 / 1.414, f: '#c8d9e6', a: 1, rot: 0 },
-    tb('heading', 0.3, 0.2, 'Today I want to…', { w: 0.62, fs: 0.03, c: '#2f4156' }),
-    tb('checklist', 0.3, 0.25, 'Warm up with long notes\nShift slowly, with the drone\nPlay the piece once, no stops', { w: 0.62, c: '#2f4156' }),
-    { t: 'shape', k: 'round', x: 0.5, y: 0.62, w: 0.84, h: 0.22, f: '#f5efeb', a: 1, rot: 0 },
-    tb('heading', 0.12, 0.53, 'What went well', { w: 0.76, fs: 0.028, c: '#567c8d' }),
-    tb('sticky', 0.58, 0.79, 'Next time: record it!', { w: 0.34, rot: -0.04 }),
-  ] },
+  { k: 'session', cat: 'practice', label: 'Practice session', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.07, 0.04, 'Today’s practice', { w: 0.6, c: '#1f2430' }),
+      T('note', 0.62, 0.06, 'date …', { w: 0.31, al: 'right', fs: 0.026, c: '#567c8d' }),
+      T('body', 0.07, 0.115, 'One thing to get better at today:', { w: 0.86, fs: 0.018, c: '#6b7480' }),
+      rule(0.07, 0.17, 0.86, '#cfd8e0')];
+    const parts = [['Warm-up', 'Long notes · open strings · slow bows', '10'], ['Technique', 'Scales · arpeggios · shifting', '15'], ['Studies', 'One study, slowly first', '15'], ['Pieces', 'The hard bars first, then whole sections', '25'], ['Play it through', 'As if on stage: no stopping', '5']];
+    parts.forEach(([h, sub, min], i) => {
+      const y = 0.205 + i * 0.13;
+      out.push(rbox(0.07, y, 0.86, 0.11, i % 2 ? '#f6f7fb' : '#eef4f0'));
+      out.push(T('heading', 0.1, y + 0.018, h, { w: 0.5, fs: 0.024, c: '#2f4156' }));
+      out.push(T('body', 0.1, y + 0.058, sub, { w: 0.6, fs: 0.017, c: '#6b7480' }));
+      out.push(rbox(0.77, y + 0.025, 0.13, 0.06, '#ffffff', { lc: '#cfd8e0', lw: 0.0012 }));
+      out.push(T('heading', 0.77, y + 0.036, min + ' min', { w: 0.13, al: 'center', fs: 0.02, c: '#2f4156' }));
+    });
+    out.push(T('heading', 0.07, 0.87, 'How it went', { w: 0.4, fs: 0.02, c: '#2f4156' }));
+    out.push(rule(0.07, 0.93, 0.86, '#e3e8ee', 0.001));
+    out.push(T('note', 0.55, 0.865, 'total: 70 min', { w: 0.38, al: 'right', fs: 0.024, c: '#567c8d' }));
+    return out;
+  } },
+  { k: 'countdown', cat: 'practice', label: 'Audition countdown', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fbf8f2', pat: '', a: 1 },
+      T('spaced', 0.08, 0.05, 'Audition', { w: 0.84, c: LC.gold, fs: 0.018 }),
+      T('heading', 0.08, 0.08, 'Six weeks to go', { w: 0.84, al: 'center', ff: 'baskerville', fs: 0.05, c: LC.ink }),
+      T('body', 0.08, 0.15, 'Date · place · what to play', { w: 0.84, al: 'center', i: 1, fs: 0.019, c: LC.soft }),
+      ornament(0.5, 0.195, 0.3, LC.gold)];
+    const goals = ['Everything learnt, slowly', 'Up to tempo, with the metronome', 'Play-throughs, recorded', 'By heart where it is asked', 'For someone, every day', 'Rest, and play it once'];
+    goals.forEach((g, i) => {
+      const col = i % 2, row = Math.floor(i / 2), x = 0.08 + col * 0.43, y = 0.24 + row * 0.235;
+      out.push(rbox(x, y, 0.41, 0.21, '#ffffff', { lc: LC.rule, lw: 0.0012 }));
+      out.push(T('spaced', x + 0.03, y + 0.02, 'Week ' + (6 - i), { w: 0.35, al: 'left', c: LC.gold, fs: 0.015 }));
+      out.push(T('heading', x + 0.03, y + 0.05, g, { w: 0.35, ff: 'baskerville', fs: 0.021, c: LC.ink }));
+      out.push(T('checklist', x + 0.03, y + 0.11, '…\n…', { w: 0.35, fs: 0.017, lh: 1.7, c: LC.soft }));
+    });
+    return out;
+  } },
+  { k: 'analysis', cat: 'practice', label: 'Piece at a glance', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('spaced', 0.07, 0.045, 'Learning a piece', { w: 0.86, al: 'left', c: '#567c8d', fs: 0.015 }),
+      T('title', 0.07, 0.07, 'Title of the piece', { w: 0.86, c: '#1f2430' }),
+      T('body', 0.07, 0.135, 'Composer · year · for whom it was written', { w: 0.86, i: 1, fs: 0.018, c: '#6b7480' }),
+      T('heading', 0.07, 0.19, 'The shape of it', { w: 0.86, fs: 0.02, c: '#2f4156' })];
+    [['A', 'bars 1–24', '#eef4f0', 0.27], ['B', 'bars 25–48', '#f6f7fb', 0.3], ['A’', 'bars 49–70', '#eef4f0', 0.29]].reduce((x, [h, sub, c, w]) => {
+      out.push(rbox(x, 0.235, w - 0.01, 0.1, c));
+      out.push(T('heading', x, 0.25, h, { w: w - 0.01, al: 'center', ff: 'baskerville', fs: 0.03, c: '#2f4156' }));
+      out.push(T('body', x, 0.297, sub, { w: w - 0.01, al: 'center', fs: 0.015, c: '#6b7480' }));
+      return x + w;
+    }, 0.07);
+    const rows = [['Key', 'D minor → F major → D minor'], ['Tempo', 'Andante, ♩ = 72'], ['Character', 'Singing, simple, never heavy'], ['Hardest bars', '33–36: the shift up to the high D']];
+    rows.forEach(([h, v], i) => {
+      const y = 0.375 + i * 0.065;
+      out.push(T('heading', 0.07, y, h, { w: 0.25, fs: 0.018, c: '#2f4156' }));
+      out.push(T('body', 0.33, y, v, { w: 0.6, fs: 0.018, c: '#1f2430' }));
+      out.push(rule(0.07, y + 0.05, 0.86, '#e3e8ee', 0.001));
+    });
+    out.push(T('heading', 0.07, 0.65, 'Notes', { w: 0.86, fs: 0.02, c: '#2f4156' }));
+    for (let i = 0; i < 6; i++) out.push(rule(0.07, 0.72 + i * 0.045, 0.86, '#e3e8ee', 0.001));
+    return out;
+  } },
+  { k: 'masterclass', cat: 'practice', label: 'Masterclass notes', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fbf8f2', pat: '', a: 1 },
+      T('spaced', 0.08, 0.05, 'Masterclass', { w: 0.84, c: LC.gold, fs: 0.018 }),
+      T('heading', 0.08, 0.08, 'with Teacher Name', { w: 0.84, al: 'center', ff: 'baskerville', fs: 0.042, c: LC.ink }),
+      T('body', 0.08, 0.14, 'Date · the piece I played', { w: 0.84, al: 'center', i: 1, fs: 0.019, c: LC.soft }),
+      ornament(0.5, 0.185, 0.3, LC.gold),
+      T('heading', 0.08, 0.22, 'Three things to keep', { w: 0.84, ff: 'baskerville', fs: 0.024, c: LC.ink })];
+    ['The bow leads the phrase, not the left hand', 'Breathe before the upbeat', 'Less vibrato in the soft passages'].forEach((t, i) => {
+      const y = 0.27 + i * 0.09;
+      out.push({ t: 'shape', k: 'circle', x: 0.11, y: y + 0.022, w: 0.05, h: 0.05 / 1.414, f: '#ffffff', lc: LC.gold, lw: 0.0015, a: 1, rot: 0 });
+      out.push(T('heading', 0.085, y + 0.009, String(i + 1), { w: 0.05, al: 'center', ff: 'baskerville', fs: 0.022, c: LC.gold }));
+      out.push(T('body', 0.16, y + 0.006, t, { w: 0.76, fs: 0.02, c: LC.ink }));
+      out.push(rule(0.16, y + 0.06, 0.76, LC.rule, 0.001));
+    });
+    out.push(T('heading', 0.08, 0.57, 'To try this week', { w: 0.84, ff: 'baskerville', fs: 0.024, c: LC.ink }));
+    out.push(T('checklist', 0.08, 0.62, 'Play the opening only with the bow\nSing the phrase, then play it\nRecord the slow movement', { w: 0.84, fs: 0.019, lh: 1.8, c: LC.ink }));
+    out.push(T('heading', 0.08, 0.77, 'Other players, other ideas', { w: 0.84, ff: 'baskerville', fs: 0.024, c: LC.ink }));
+    for (let i = 0; i < 3; i++) out.push(rule(0.08, 0.84 + i * 0.045, 0.84, LC.rule, 0.001));
+    return out;
+  } },
+  { k: 'month', cat: 'practice', label: 'Month', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.07, 0.04, 'Month', { w: 0.5, c: '#1f2430' }),
+      T('note', 0.6, 0.06, 'year …', { w: 0.33, al: 'right', fs: 0.026, c: '#567c8d' })];
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], cw = 0.86 / 7;
+    days.forEach((d, i) => out.push(T('heading', 0.07 + i * cw, 0.13, d, { w: cw, al: 'center', fs: 0.016, c: '#2f4156', ff: 'avenir' })));
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 7; c++) out.push(rbox(0.07 + c * cw + 0.004, 0.17 + r * 0.15, cw - 0.008, 0.14, c >= 5 ? '#f6f7fb' : '#eef4f0'));
+    out.push(T('note', 0.07, 0.93, 'concerts · lessons · auditions', { w: 0.86, al: 'right', fs: 0.022, c: '#567c8d' }));
+    return out;
+  } },
   { k: 'elegant', cat: 'practice', label: 'Questions for my teacher', make: () => [
     { t: 'bg', c: '#f3ece6', pat: '', a: 1 },
     tb('title', 0.08, 0.05, 'Q&A', { w: 0.84, fs: 0.16, c: '#5d0d18', ff: 'bodoni', b: 0 }),
@@ -3736,12 +3869,6 @@ const LAYOUTS = [
     tb('elegant', 0.12, 0.755, 'answers next lesson', { w: 0.76, c: '#f3ece6', fs: 0.036 }),
   ] },
   // ---- for sharing
-  { k: 'collage', cat: 'social', label: 'Photo collage', make: () => [
-    tb('fancy', 0.1, 0.05, 'Concert memories', { w: 0.8 }),
-    { t: 'img', id: null, x: 0.3, y: 0.32, w: 0.42, h: 0.28, rot: -0.05, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
-    { t: 'img', id: null, x: 0.7, y: 0.4, w: 0.42, h: 0.28, rot: 0.06, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
-    { t: 'img', id: null, x: 0.45, y: 0.72, w: 0.5, h: 0.3, rot: 0.02, cr: [0, 0, 1, 1], a: 1, fr: 'tape', rr: 0 },
-  ] },
   { k: 'polaroids', cat: 'social', label: 'Polaroid wall', make: () => [
     { t: 'bg', c: '#f1ece4', pat: 'dots', a: 1 },
     tb('note', 0.1, 0.05, 'this year in music', { w: 0.8, al: 'center', fs: 0.05, c: '#3d2e22' }),
@@ -5868,6 +5995,41 @@ $('#shareIphone').addEventListener('change', (e) => { S.shareIphone = e.target.c
 // Linked devices (the apps): linked once with a code, then always
 $('#pairNew').addEventListener('click', async () => { await openPair(); drawLinked($('#pairCard')); });
 pairWatch((t) => { if (t === 'list' && !$('#pairCard').hidden) drawLinked($('#pairCard')); });
+// (the link is looked for as soon as Stand opens: a linked iPad or iPhone nearby is found while you
+// are still choosing what to do, not only once something asks for it)
+if (PAIR()) setTimeout(() => { pairList().catch(() => {}); }, 150);
+// The first link made easy. A Stand iPhone (or iPad) nearby that is not linked yet: an offer to link
+// it, once for each device (the other device shows the same offer: Link on both, and the code comes).
+// On an iPhone that has never been linked, the first time it opens: what linking is, and Link now.
+const LINKQ = { pending: null, open: false };
+const linkAsked = () => { try { return JSON.parse(localStorage.getItem('standNearbyAsked') || '[]'); } catch { return []; } };
+const linkAskedAdd = (d) => { try { localStorage.setItem('standNearbyAsked', JSON.stringify([...linkAsked(), d].slice(-30))); } catch {} };
+// (never over something being done: the welcome, the tour, a score, a recording, another question)
+const linkQuiet = () => $('#welcome').hidden && !document.querySelector('.tour') && !document.querySelector('.ask-back') && $('#score').hidden && $('#compose').hidden && !(typeof recState !== 'undefined' && recState) && !(typeof openPanel !== 'undefined' && openPanel);
+async function offerLink(d, kind) {
+  if (LINKQ.open || linkAsked().includes(d)) return;
+  if (!linkQuiet()) { LINKQ.pending = { d, kind }; return; }
+  LINKQ.open = true; LINKQ.pending = null; linkAskedAdd(d);
+  const other = kind === 'iPad' ? 'iPad' : 'iPhone', me = PHONE ? 'iPhone' : 'iPad';
+  const yes = await ask(`An ${other} with Stand is nearby`, { ok: 'Link', cancel: 'Not now', sub: `Link it to this ${me}? Once, with a four-number code: then the two connect by themselves whenever they are near${me === 'iPad' ? ' — the iPhone films for this iPad and shows your scores and practice' : ' — this iPhone films for the iPad and shows its scores and practice'}. Tap Link on the ${other} too.` });
+  LINKQ.open = false;
+  if (yes) { await openPair(); try { drawLinked($('#pairCard')); } catch {} }
+}
+pairWatch((t, d) => { if (t === 'nearby' && d && d.d) offerLink(d.d, d.kind); });
+// (an offer that came while something was being done: shown once back at home)
+setInterval(() => { if (LINKQ.pending && linkQuiet()) { const p = LINKQ.pending; LINKQ.pending = null; offerLink(p.d, p.kind); } }, 2000);
+// the iPhone's first start, never linked: once
+if (PAIR() && /iPhone|iPod/.test(navigator.userAgent)) setTimeout(async () => {
+  try { if (localStorage.getItem('standLinkIntro')) return; } catch { return; }
+  if ((await pairList()).length) { try { localStorage.setItem('standLinkIntro', '1'); } catch {} return; }
+  for (let i = 0; i < 30 && !linkQuiet(); i++) await new Promise((r) => setTimeout(r, 1000));
+  if (!linkQuiet() || LINKQ.open) return;
+  try { localStorage.setItem('standLinkIntro', '1'); } catch {}
+  LINKQ.open = true;
+  const yes = await ask('Use Stand with your iPad?', { ok: 'Link now', cancel: 'Not now', sub: 'Link this iPhone to your iPad once, with a four-number code. Then the iPhone shows your iPad’s scores and practice, and films for the iPad. On the iPad, open Stand too: it offers to link this iPhone, or go to Settings › Linked devices › Link an iPhone. You can do this later in Settings.' });
+  LINKQ.open = false;
+  if (yes) await openPair();
+}, 2500);
 // a device forgotten: what listens over the internet starts again with this device's new key
 window.addEventListener('stand-pair-forget', () => {
   if (PHONE) return;
@@ -5958,7 +6120,7 @@ if (cloudAvailable()) {
 }
 async function initPracticeSync() {
   if (cloudAvailable()) { if (!PHONE) IPAD.data = (await getSetting('ipadPractice', null)) || null; setTimeout(() => { pullPracticeFromCloud(); pushPracticeSoon(); }, 2000); }
-  if (!PHONE) { setTimeout(syncPracticeHost, 3000); return; }
+  if (!PHONE) { setTimeout(syncPracticeHost, 1000); return; }
   IPAD.data = (await getSetting('ipadPractice', null)) || null;
   phoneAutoPractice();
   renderIpadCard(); renderGoal(); renderToday();
