@@ -1880,3 +1880,13 @@ body.phone .stat b { font-size: 22px; }
 .pair-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)); }
 .pair-list li:last-child { border-bottom: 0; }
 .pair-list .pair-stale { color: var(--rec); }
+
+/* the score picker: all the pages at a glance */
+#pkPageNo { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; padding: 6px 4px; }
+.pk-grid { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg, #f3f4f7); }
+.pk-grid-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.pk-grid-list { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; padding: 16px; align-content: start; }
+.pk-grid-page { display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: inherit; font: inherit; }
+.pk-grid-page canvas { width: 100%; background: #fff; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.pk-grid-page.on canvas { outline: 3px solid var(--accent, #2B6FD6); outline-offset: 2px; }
+.pk-grid-page.picked span::after { content: ' ✓'; color: var(--accent, #2B6FD6); }

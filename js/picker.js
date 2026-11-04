@@ -1,7 +1,7 @@
 // Choose music from a score: pick a score from the library (or a photo / PDF), turn to the page,
 // and draw a loop around the part you want, like the Select tool in Markings. Returns the
 // picture of that part at a good resolution, and where it came from.
-import { db } from './db.js';
+import { db, getSetting, setSetting } from './db.js';
 import { openDocument, mapDoc } from './score.js';
 import { analyse } from './omr.js';
 import { linesOf } from './picker-lines.js';
@@ -26,7 +26,7 @@ export function pickRegion(src, file, opts = {}) {
 function finish(result) {
   $('#picker').hidden = true;
   // (a page still being read is let go: nothing keeps working, and warming the iPad, once closed)
-  try { dropReader(); } catch {}
+  try { dropReader(); closeGrid(); } catch {}
   for (const u of PK.thumbs) URL.revokeObjectURL(u); PK.thumbs = [];
   if (PK.doc && PK.ownDoc) try { PK.doc.destroy(); } catch {}
   PK.doc = null;
@@ -61,7 +61,7 @@ async function openLibraryScore(id, page) {
   if (!file) return;
   const base = await openDocument(file);
   PK.picks = new Map();
-  PK.doc = mapDoc(base, score.pageMap); PK.ownDoc = true; PK.source = { scoreId: id, title: score.title };
+  PK.doc = mapDoc(base, score.pageMap); PK.ownDoc = true; PK.source = { scoreId: id, title: score.title, fileId: score.fileId }; PK.kept = null;
   PK.page = Math.min(page, PK.doc.pages - 1);
   await showPage();
 }
@@ -73,7 +73,7 @@ async function openFile(f) {
   if (!isPdf) { try { const r = await cleanPhoto(f, { maxSide: 3000, look: 'none', straight: false }); if (r.found) img = await new Promise((res) => r.canvas.toBlob(res, 'image/jpeg', 0.92)); } catch (err) { console.warn(err); } }
   const base = await openDocument(isPdf ? { kind: 'pdf', data: await f.arrayBuffer() } : { kind: 'images', data: [img] });
   PK.picks = new Map();
-  PK.doc = mapDoc(base, null); PK.ownDoc = true; PK.source = { file: f.name };
+  PK.doc = mapDoc(base, null); PK.ownDoc = true; PK.source = { file: f.name }; PK.kept = null;
   PK.page = 0;
   await showPage();
 }
@@ -102,71 +102,115 @@ async function showPage() {
   tmp.width = tmp.height = 0;
 }
 // ---------- the lines of music on the page ----------
-let LW = null, lwBroken = false, lwSeq = 0; const lwWait = new Map();
-// a reader that is still busy with a page turned past is let go, and a fresh one reads this page
-// (pages queued behind each other made the last one wait, then read on the main thread: frozen)
+// Finding the lines takes the music reader a few seconds a page. So: the page shown is read first,
+// in a thread of its own, then the pages next to it, while you look (turning to them, their lines
+// are already there); what was read is kept for the score, so the next time it is there at once;
+// and the page itself never waits for any of it (no reading on the screen's own thread, which froze
+// every turn once the thread had been slow once).
+let LW = null, lwBroken = false, lwBusy = null, lwSeq = 0;
+const RQ = { want: [], running: false };
+const pageKey = (page) => PK.doc.id + ':' + page + ':' + (PK.source.scoreId || PK.source.file || '');
+const keepKey = () => (PK.source.fileId ? 'pklines:' + PK.source.fileId : null);
+const origOf = (page) => { try { return String(PK.doc.orig ? PK.doc.orig(page) : page); } catch { return String(page); } };
 function dropReader() {
   if (LW) { try { LW.terminate(); } catch {} LW = null; }
-  for (const w of lwWait.values()) { clearTimeout(w.t); w.res('dropped'); } lwWait.clear();
+  if (lwBusy) { clearTimeout(lwBusy.t); lwBusy.res(null); lwBusy = null; }
+  RQ.want = [];
 }
-function linesElsewhere(canvas) {
-  if (lwBroken || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return Promise.resolve(null);
-  if (lwWait.size) dropReader();
-  if (!LW) {
-    try {
-      LW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
-      LW.onmessage = (e) => { const d = e.data || {}; const w = lwWait.get(d.id); if (!w) return; lwWait.delete(d.id); clearTimeout(w.t); if (d.error) { lwBroken = true; w.res(null); } else w.res(d.lines || []); };   // (the thread could not read: read here from now on, as before)
-      LW.onerror = () => { lwBroken = true; for (const w of lwWait.values()) { clearTimeout(w.t); w.res(null); } lwWait.clear(); dropReader(); };
-    } catch { lwBroken = true; return Promise.resolve(null); }
-  }
-  return createImageBitmap(canvas).then((page) => new Promise((res) => {
+function reader() {
+  if (LW || lwBroken) return LW;
+  if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') { lwBroken = true; return null; }
+  try {
+    LW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
+    LW.onmessage = (e) => { const d = e.data || {}; if (!lwBusy || lwBusy.id !== d.id) return; const b = lwBusy; lwBusy = null; clearTimeout(b.t); b.res(d.error ? [] : (d.lines || [])); };
+    // (the thread itself could not be made to work: then, and only then, the page shown is read here)
+    LW.onerror = () => { lwBroken = true; const b = lwBusy; lwBusy = null; if (b) { clearTimeout(b.t); b.res(null); } try { LW.terminate(); } catch {} LW = null; };
+  } catch { lwBroken = true; LW = null; }
+  return LW;
+}
+// read one page in the thread: its lines, or null (gave up: the music can still be chosen with a loop)
+async function readInThread(page) {
+  const [pw, ph] = PK.doc.sizes[page];
+  const sc = Math.min(3, Math.max(1, 1700 / pw));
+  const c = document.createElement('canvas');
+  await PK.doc.render(page, c, pw * sc, ph * sc);
+  if (!reader()) { c.width = c.height = 0; return null; }
+  const bmp = await createImageBitmap(c).catch(() => null); c.width = c.height = 0;
+  if (!bmp) return null;
+  return new Promise((res) => {
     const id = ++lwSeq;
-    // (a page that takes too long: given up, the music can still be chosen by drawing a loop)
-    const t = setTimeout(() => { lwWait.delete(id); dropReader(); lwBroken = true; res(null); }, 9000);   // (a thread that does not answer: read here instead, from now on)
-    lwWait.set(id, { res, t });
-    try { LW.postMessage({ id, page }, [page]); } catch { clearTimeout(t); lwWait.delete(id); lwBroken = true; res(null); }
-  }), () => null);
+    // (a page that takes very long: let go, the thread made anew; nothing moves to the screen's thread)
+    const t = setTimeout(() => { if (lwBusy && lwBusy.id === id) { lwBusy = null; try { LW.terminate(); } catch {} LW = null; res(null); } }, 30000);
+    lwBusy = { id, page, res, t };
+    try { LW.postMessage({ id, page: bmp }, [bmp]); } catch { clearTimeout(t); lwBusy = null; res(null); }
+  });
+}
+async function keepLines(page, lines) {
+  PK.linesCache.set(pageKey(page), lines);
+  const k = keepKey(); if (!k || !lines) return;
+  try { const cur = (await getSetting(k, null)) || {}; cur[origOf(page)] = lines; await setSetting(k, cur); } catch {}
+}
+async function keptLines(page) {
+  const mem = PK.linesCache.get(pageKey(page)); if (mem) return mem;
+  const k = keepKey(); if (!k) return null;
+  try { if (!PK.kept) PK.kept = (await getSetting(k, null)) || {}; const l = PK.kept[origOf(page)]; if (l) { PK.linesCache.set(pageKey(page), l); return l; } } catch {}
+  return null;
+}
+// what to read, most wanted first: the page shown, then the next, the one before, the one after next
+function wantAround(page) {
+  const n = PK.doc.pages, list = [page, page + 1, page - 1, page + 2].filter((p) => p >= 0 && p < n);
+  RQ.want = list;
+  // (the thread busy with a page far from here: let go, the page shown comes first)
+  if (lwBusy && !list.includes(lwBusy.page)) { const b = lwBusy; lwBusy = null; clearTimeout(b.t); b.res('dropped'); try { LW.terminate(); } catch {} LW = null; }
+  pump();
+}
+async function pump() {
+  if (RQ.running || !PK.doc) return;
+  RQ.running = true;
+  try {
+    while (PK.doc && RQ.want.length) {
+      const page = RQ.want[0];
+      // (the pages at a glance are open: reading ahead waits, the small pages come first)
+      if (RQ.paused && page !== PK.page) break;
+      if (await keptLines(page)) { RQ.want.shift(); if (page === PK.page) linesReady(page); continue; }
+      // (pages ahead: only once the screen is idle, and never while one is being turned)
+      if (page !== PK.page) await idle();
+      if (!PK.doc || RQ.want[0] !== page) continue;
+      if (page === PK.page) $('#pkFinding').hidden = false;
+      let lines = null;
+      try {
+        if (lwBroken) {
+          // (no thread at all on this device: the page shown only, read here once it is shown)
+          if (page === PK.page) { const [pw, ph] = PK.doc.sizes[page]; const sc = Math.min(3, Math.max(1, 1700 / pw)); const c = document.createElement('canvas'); await PK.doc.render(page, c, pw * sc, ph * sc); await idle(); if (PK.page === page) lines = linesOf(await analyse(c)); c.width = c.height = 0; }
+        } else lines = await readInThread(page);
+      } catch (err) { console.warn(err); lines = null; }
+      if (lines === 'dropped') continue;
+      if (RQ.want[0] === page) RQ.want.shift();
+      if (lines) await keepLines(page, lines);
+      if (page === PK.page) { if (lines) linesReady(page); else { PK.lines = []; linesReady(page, true); } }
+    }
+  } finally { RQ.running = false; }
+}
+function linesReady(page, failed) {
+  if (PK.page !== page || !PK.doc) return;
+  if (!failed) PK.lines = PK.linesCache.get(pageKey(page)) || [];
+  $('#pkFinding').hidden = true;
+  if (PK.lines && !PK.lines.length) $('#pkHint').textContent = 'Draw a loop around the music you want.';
+  $('#pkAll').hidden = !(PK.lines && PK.lines.length);
+  drawSel(); drawTray();
 }
 // the main thread reads only in small steps of time it can spare (never frozen for seconds)
-const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 300 }) : setTimeout(r, 30)));
+const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 600 }) : setTimeout(r, 60)));
 async function findLines() {
-  const key = PK.doc.id + ':' + PK.page + ':' + (PK.source.scoreId || PK.source.file || '');
   const page = PK.page;
-  const done = () => {
-    if (PK.page !== page) return;
-    $('#pkFinding').hidden = true;
-    if (PK.lines && !PK.lines.length) $('#pkHint').textContent = 'Draw a loop around the music you want.';
-    $('#pkAll').hidden = !(PK.lines && PK.lines.length);
-    drawSel(); drawTray();
-  };
-  if (PK.linesCache.has(key)) { PK.lines = PK.linesCache.get(key); done(); return; }
+  const have = await keptLines(page);
+  if (PK.page !== page) return;
+  if (have) { PK.lines = have; linesReady(page); wantAround(page); return; }
   $('#pkFinding').hidden = false;
   // (a moment first: turning through the pages quickly reads none of the pages passed by)
   await new Promise((r) => setTimeout(r, 350));
   if (PK.page !== page || !PK.doc) return;
-  let lines = null;
-  try {
-    const [pw, ph] = PK.doc.sizes[page];
-    const sc = Math.min(3, Math.max(1, 1700 / pw));
-    const c = document.createElement('canvas');
-    await PK.doc.render(page, c, pw * sc, ph * sc);
-    if (PK.page !== page || !PK.doc) { c.width = c.height = 0; return; }
-    // read in a thread of its own (the page stays free to turn); here only if that cannot be had
-    lines = await linesElsewhere(c);
-    if (lines === 'dropped') { c.width = c.height = 0; return; }
-    // (no thread for it: read here, the page only, once it is the one shown)
-    if (lines === null && PK.page === page) {
-      await idle();
-      if (PK.page === page) { const A = await analyse(c); lines = linesOf(A); }
-    }
-    c.width = c.height = 0;
-  } catch (err) { console.error(err); lines = []; }
-  // (too slow: not kept, the page is read again next time it is turned to)
-  if (lines === null || lines === 'slow') { if (PK.page === page) { PK.lines = []; done(); } return; }
-  PK.linesCache.set(key, lines);
-  if (PK.page !== page || !PK.doc) return;
-  PK.lines = lines;
-  done();
+  wantAround(page);
 }
 // remember this page's choice, and whether there is anything to use
 function savePick() {
@@ -321,6 +365,42 @@ function drawSel() {
     g.strokeRect(b.x0 * W, b.y0 * H, (b.x1 - b.x0) * W, (b.y1 - b.y0) * H);
   }
 }
+// ---------- all the pages at a glance: tap "Page 3 of 12", then the page wanted ----------
+function closeGrid() {
+  const g = $('#pkGrid'); if (!g) return;
+  if (g._io) g._io.disconnect();
+  RQ.paused = false; if (PK.doc) setTimeout(() => { if (PK.doc && !$('#pkGrid')) wantAround(PK.page); }, 300);
+  for (const c of g.querySelectorAll('canvas')) { c.width = c.height = 0; }
+  g.remove();
+}
+function openGrid() {
+  if (!PK.doc || $('#pkGrid')) { closeGrid(); return; }
+  RQ.paused = true;
+  const g = el('div', 'pk-grid'); g.id = 'pkGrid'; g.setAttribute('role', 'dialog'); g.setAttribute('aria-label', 'All the pages');
+  const head = el('div', 'pk-grid-head'); head.append(el('strong', '', 'Go to a page')); const x = el('button', 'btn small', 'Close'); x.addEventListener('click', closeGrid); head.append(x);
+  const list = el('div', 'pk-grid-list');
+  g.append(head, list);
+  // (each page drawn small only when it comes into view, one at a time)
+  const queue = []; let busy = 0;
+  const next = async () => {
+    // (one at a time: two drawings of the same document at once spoil each other)
+    while (busy < 1 && queue.length && PK.doc && $('#pkGrid')) {
+      const { i, c } = queue.shift(); busy++;
+      (async () => { try { const [pw, ph] = PK.doc.sizes[i]; const W = 150 * Math.min(2, devicePixelRatio || 1); await PK.doc.render(i, c, W, W * ph / pw); } catch {} busy--; next(); })();
+    }
+  };
+  const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting && !e.target._drawn) { e.target._drawn = true; queue.push({ i: +e.target.dataset.i, c: e.target.querySelector('canvas') }); io.unobserve(e.target); } queue.sort((a, b) => Math.abs(a.i - PK.page) - Math.abs(b.i - PK.page)); next(); }, { root: list, rootMargin: '200px' });
+  g._io = io;
+  for (let i = 0; i < PK.doc.pages; i++) {
+    const b = el('button', 'pk-grid-page' + (i === PK.page ? ' on' : '') + (PK.picks.has(i) ? ' picked' : '')); b.dataset.i = i;
+    const [pw, ph] = PK.doc.sizes[i]; const c = el('canvas'); c.style.aspectRatio = `${pw} / ${ph}`;
+    b.append(c, el('span', 'num', String(i + 1)));
+    b.addEventListener('click', () => { closeGrid(); if (i !== PK.page) { savePick(); PK.page = i; showPage(); } });
+    list.append(b); io.observe(b);
+  }
+  $('#picker').append(g);
+  requestAnimationFrame(() => { const on = list.querySelector('.on'); if (on) on.scrollIntoView({ block: 'center' }); });
+}
 async function cropOut() {
   const b = PK.box;
   const [pw, ph] = PK.doc.sizes[PK.page];
@@ -339,6 +419,8 @@ async function cropOut() {
   if (!$('#picker')) return;
   $('#pkCancel').addEventListener('click', () => { if (!$('#pkStage').hidden && PK.opts && PK.opts.canGoBack !== false && !PK.direct) { showLibrary(); return; } finish(null); });
   $('#pkPrev').addEventListener('click', () => { if (PK.page > 0) { PK.page--; showPage(); } });
+  $('#pkPageNo').addEventListener('click', openGrid);
+  $('#pkPageNo').setAttribute('role', 'button'); $('#pkPageNo').title = 'All the pages';
   $('#pkNext').addEventListener('click', () => { if (PK.page < PK.doc.pages - 1) { PK.page++; showPage(); } });
   $('#pkDone').addEventListener('click', async () => {
     savePick();
