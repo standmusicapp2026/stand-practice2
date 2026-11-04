@@ -43,6 +43,12 @@ class Net:
             for b in self.devs:
                 if a.name >= b.name or not (a.on and b.on): continue
                 k = self.key(a, b)
+                # (a device not linked nearby: each side is told once, as the app does)
+                if getattr(self, 'nearby', False):
+                    for x, y in ((a, b), (b, a)):
+                        if y.id not in x.linked and not x.pairMode and y.id not in getattr(x, 'announced', set()):
+                            x.announced = getattr(x, 'announced', set()) | {y.id}
+                            await self.event(x, 'nearby', {'d': y.id, 'kind': y.kind})
                 if k not in self.conn and a.allowed(b.id) and b.allowed(a.id):
                     self.conn.add(k); a.peerDev[b.name] = b.id; b.peerDev[a.name] = a.id
                     self.log.append(f'connect {a.name}-{b.name}')
@@ -300,4 +306,4 @@ async def main():
         print('errors', errs[:4]); ok(not errs, 'no page errors')
         print('PASS' if all(res) else 'FAIL', 'linking once with a code')
         await b.close()
-asyncio.run(main())
+if __name__ == '__main__': asyncio.run(main())
