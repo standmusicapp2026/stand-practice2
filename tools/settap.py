@@ -8,7 +8,9 @@ from playwright.async_api import async_playwright
 PORT = os.environ.get('PORT', '8765')
 SKIP = re.compile(r'Delete everything|Erase|Reset all|Remove all', re.I)
 NAT = '''window.__nat = []; window.standCaps = { native: true, face: true, tap: true, scan: true, video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, peer: 4, notify: 1 };
-  window.webkit = { messageHandlers: new Proxy({}, { get: (t, k) => t[k] || (t[k] = { postMessage(m) { window.__nat.push(String(k)); } }) }) };'''
+  // (the app answers as the real one does: asked for the list of linked devices, it sends it)
+  window.webkit = { messageHandlers: new Proxy({}, { get: (t, k) => t[k] || (t[k] = { postMessage(m) { window.__nat.push(String(k));
+    if (k === 'standPeer' && m && m.op === 'pairList') setTimeout(() => window.standPairEvent && window.standPairEvent('list', { list: [{ d: 'dev1', kind: /iPhone/.test(navigator.userAgent) ? 'iPad' : 'iPhone', at: 1793000000000 }], me: 'x' }), 15); } }) }) };'''
 async def run(p, phone, panel):
     b = await getattr(p, os.environ.get('BR', 'chromium')).launch()
     kw = dict(viewport={'width': 393, 'height': 852}, is_mobile=True, has_touch=True, user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)') if phone else dict(viewport={'width': 1180, 'height': 820}, has_touch=True)
@@ -25,7 +27,10 @@ async def run(p, phone, panel):
         await pg.wait_for_function("document.querySelectorAll('#grid .card:not(.folder)').length >= 1", timeout=60000)
         await J("document.querySelector('#grid .card:not(.folder)').click(); await sleep(2500); document.querySelector('.tour-skip')?.click(); await sleep(300);")
     async def tap(x, y):
-        await pg.mouse.click(x, y); await pg.wait_for_timeout(120)
+        # a finger (touch events, as on the iPad and iPhone), or the mouse with MOUSE=1
+        if os.environ.get('MOUSE'): await pg.mouse.click(x, y)
+        else: await pg.touchscreen.tap(x, y)
+        await pg.wait_for_timeout(120)
     async def open_panel():
         if await J("return !document.querySelector('#panel-' + a).hidden", panel): return True
         # (opening it is not what is tested here: a script click)
