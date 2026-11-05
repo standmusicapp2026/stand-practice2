@@ -56,6 +56,8 @@ export function getCtx() {
       if (wantSound && c0.state !== 'running') c0.resume().catch(() => {});
     });
   }
+  // (asked for: it will sound now, so it does not rest; see "battery" below)
+  lastSound = performance.now(); if (restingCtx === ctx) restingCtx = null;
   if (ctx.state !== 'running') ctx.resume().catch(() => {});
   return ctx;
 }
@@ -262,6 +264,58 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 }
 
+// ---------- battery: the sound system rests when nothing has sounded for a while ----------
+// A sound system left running keeps the iPad's and iPhone's sound hardware working all the time,
+// even silent (after the tuner or the metronome was used once, for the whole session). So, when
+// nothing plays or listens for 30 s it is paused; anything that makes a sound wakes it at once
+// (getCtx, a sound started, a video or recording played through it, a touch).
+// Never paused while: the metronome, drone or scales want sound, the microphone is open, a
+// recording holds it, a sound started has not ended (a sound never stopped keeps it awake), or a
+// video or recording connected to it is playing.
+const IDLE_MS = 30000;
+const playing = new WeakMap();      // sound system -> sounds started and not ended
+const mediaEls = new Set();         // videos and recordings played through it
+let lastSound = typeof performance !== 'undefined' ? performance.now() : 0, restingCtx = null;
+function rouse() {
+  lastSound = performance.now();
+  if (restingCtx && restingCtx === ctx) { restingCtx = null; alog('awake again'); }
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+}
+function soundBusy() {
+  if (wantSound || micUsers > 0 || holding || micPending) return true;
+  if (ctx && (playing.get(ctx) || 0) > 0) return true;
+  for (const m of mediaEls) { if (!m.isConnected && m.paused) { mediaEls.delete(m); continue; } if (!m.paused && !m.ended) return true; }
+  return false;
+}
+if (typeof window !== 'undefined' && window.AudioScheduledSourceNode && window.AudioContext) {
+  const P = window.AudioScheduledSourceNode.prototype, start0 = P.start;
+  P.start = function (...a) {
+    const c = this.context;
+    // (only the live sound system: sounds made offline, for a file, are not counted)
+    if (c && c === ctx) {
+      playing.set(c, (playing.get(c) || 0) + 1);
+      let done = false;
+      this.addEventListener('ended', () => { if (done) return; done = true; playing.set(c, Math.max(0, (playing.get(c) || 0) - 1)); lastSound = performance.now(); });
+      rouse();
+    }
+    return start0.apply(this, a);
+  };
+  const AC = window.AudioContext.prototype, mes0 = AC.createMediaElementSource;
+  if (mes0) AC.createMediaElementSource = function (m) {
+    const n = mes0.call(this, m);
+    try { if (!mediaEls.has(m)) { mediaEls.add(m); m.addEventListener('play', rouse); m.addEventListener('playing', rouse); } } catch {}
+    return n;
+  };
+  setInterval(() => {
+    if (!ctx || ctx.state !== 'running' || document.hidden) return;
+    if (soundBusy()) { lastSound = performance.now(); return; }
+    if (performance.now() - lastSound < IDLE_MS) return;
+    restingCtx = ctx; alog('resting (nothing played for 30 s)');
+    ctx.suspend().catch(() => {});
+  }, 5000);
+  document.addEventListener('pointerdown', () => { if (restingCtx) rouse(); }, true);
+}
+
 // Call from a user gesture; iOS needs a sound to start inside a tap.
 export function unlock() {
   const c = getCtx();
@@ -335,3 +389,7 @@ export function micErrorText(e) {
   if (e && e.name === 'NotFoundError') return 'No microphone was found.';
   return 'The microphone could not start. Try again.';
 }
+// (something sounds or listens now: the screen is kept on for it)
+export const soundActive = () => soundBusy();
+// (tests: the sound system's state, without waking it)
+export const _soundState = () => (ctx ? ctx.state : '-');

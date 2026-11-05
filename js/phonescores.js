@@ -933,8 +933,13 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const v = b ? await createImageBitmap(b).catch(() => null) : null;
     if (PP.st !== S) { try { v && v.close(); } catch {} return null; }
     S.bmp.set(key, v);
-    // (only the few lines around are kept)
-    while (S.bmp.size > 10) { const k0 = S.bmp.keys().next().value; const o = S.bmp.get(k0); S.bmp.delete(k0); try { o && o.close(); } catch {} }
+    // (only the few lines around are kept; never one the screen being drawn now needs: let go while
+    // it was being drawn, a picture came out empty and the lines on the screen stayed as they were)
+    for (const k0 of [...S.bmp.keys()]) {
+      if (S.bmp.size <= 10) break;
+      if (k0 === key || (PP.pin && PP.pin.has(k0))) continue;
+      const o = S.bmp.get(k0); S.bmp.delete(k0); try { o && o.close(); } catch {}
+    }
     return v;
   }
   // how many lines at once: two or three (kept)
@@ -942,8 +947,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   const lineOf = (at) => (at && PP.st ? (PP.st.pages.get(at.p) || [])[at.k] : null);
   // All the lines on the screen at one size (the size the widest takes across), each in its own
   // place, its staves in the middle of it; what reaches beyond its place is not drawn there.
-  async function drawLines(cv, ats, still = () => true) {
+  async function drawLines(cv, ats, still = () => true, retry = false) {
     const dpr = Math.min(3, devicePixelRatio || 1), W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr);
+    // (the pictures this screen needs are held until the next screen is asked for)
+    if (still()) PP.pin = new Set(ats.flatMap((at) => (at ? [at.p + ':' + at.k + ':img', at.p + ':' + at.k + ':ink'] : [])));
     const imgs = await Promise.all(ats.map((at) => (at ? bitmapOf(at, 'img') : null)));
     const inks = await Promise.all(ats.map((at) => (at && PS.ink ? bitmapOf(at, 'ink') : null)));
     // (a newer screen asked for meanwhile: this one is never drawn over it)
@@ -960,6 +967,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     Ls.forEach((L, q) => { if (!L || !imgs[q]) return; const pw = L.pw || L.w; const staffH = L.st !== undefined && L.sb !== undefined ? L.sb - L.st : L.h * 0.45; const need = (staffH / pw) * kPage; if (need > Hs * 0.78) kPage *= (Hs * 0.78) / need; });
     const x0 = (W - (maxX - minX) * kPage) / 2;
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    const lost = [];
     Ls.forEach((L, q) => {
       const img = imgs[q]; if (!L || !img) return;
       const pw = L.pw || L.w, k = kPage / pw;
@@ -967,10 +975,17 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       const mid = L.st !== undefined && L.sb !== undefined ? (L.st + L.sb) / 2 : L.h / 2;
       const top = q * Hs, dy = top + Hs / 2 - mid * k;
       g.save(); g.beginPath(); g.rect(0, top, W, Hs); g.clip();
-      g.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh);
-      if (inks[q]) g.drawImage(inks[q], dx, dy, dw, dh);
+      // (a picture let go meanwhile is not drawn, and is made again for the next drawing; the other
+      // lines are still drawn)
+      try { g.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh); } catch { lost.push(ats[q]); }
+      try { if (inks[q]) g.drawImage(inks[q], dx, dy, dw, dh); } catch {}
       g.restore();
     });
+    // (one was let go after all: those pictures made again, and the screen drawn once more)
+    if (lost.length && !retry) {
+      for (const at of lost) for (const w of ['img', 'ink']) { const k = at.p + ':' + at.k + ':' + w; const o = PP.st && PP.st.bmp.get(k); if (PP.st) PP.st.bmp.delete(k); try { o && o.close(); } catch {} }
+      return drawLines(cv, ats, still, true);
+    }
   }
   let drawTok = 0;
   async function ppDraw() {

@@ -14,6 +14,16 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
+<script>
+// Opening without a flash: the light or dark look chosen in Settings is put on before anything is
+// drawn, and the home screen is shown once it is laid out (never later than 2.5 s, whatever happens).
+(function () {
+  var r = document.documentElement;
+  try { var l = JSON.parse(localStorage.getItem('standLook') || '{}'); if (l.t === 'light' || l.t === 'dark') r.dataset.theme = l.t; if (l.a === 'black') r.dataset.accent = 'black'; } catch (e) {}
+  r.classList.add('booting');
+  setTimeout(function () { r.classList.remove('booting'); }, 2500);
+})();
+</script>
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/compose.css">
 <link rel="stylesheet" href="css/studio.css">
@@ -1376,6 +1386,10 @@
       <div class="sub-head"><div><h3>Open a file</h3><p class="hint">MusicXML from Sibelius, Dorico, MuseScore or Finale (.musicxml, .mxl, .xml).</p></div></div>
       <label class="btn" for="cnImport"><svg><use href="#i-download"/></svg><span>Open MusicXML</span></label>
       <input type="file" id="cnImport" accept=".musicxml,.mxl,.xml,application/xml,text/xml,application/vnd.recordare.musicxml,application/vnd.recordare.musicxml+xml" hidden>
+    </section>
+    <section class="sub-card">
+      <div class="sub-head"><div><h3>Try an example</h3><p class="hint">Holst, Jupiter: the big tune from The Planets, for orchestra. Play it, change it, make it your own.</p></div></div>
+      <button class="btn" id="cnExample"><svg><use href="#i-play"/></svg><span>Open Jupiter (Holst)</span></button>
     </section>
     <div class="ctl-head"><span>Your scores</span></div>
     <ul class="mini-list cn-list" id="cnList"></ul>

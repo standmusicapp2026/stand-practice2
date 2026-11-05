@@ -431,16 +431,21 @@ function alignFrames(evs, frames) {
   best.how = 'harmony';
   return best;
 }
-async function autoSync(o) {
+async function autoSync(o, { from = 0 } = {}) {
   if (!ST.pcm) { D.toast('This recording has no sound to follow. Use Tap along.'); return; }
-  const L = o.layout;
+  // "Follow from here": the bars before this one stay where they are (set by hand, or right); the
+  // playing is followed again from this bar's start to the end
+  const full = o.layout;
+  from = o.times && from > 0 && from < full.bars.length ? from : 0;
+  const L = from ? { ...full, bars: full.bars.slice(from), notes: full.notes.filter((n) => n.bar >= from).map((n) => ({ ...n, bar: n.bar - from })), events: (full.events || []).filter((e) => e.bar >= from).map((e) => ({ ...e, bar: e.bar - from })) } : full;
+  const A = from ? clamp(o.times[from] - 0.3, ST.P.trim.a, ST.P.trim.b - 1) : ST.P.trim.a, B = ST.P.trim.b;
   if (L.notes.length < 3) { D.toast('Not enough notes were found in the score to follow. Use Tap along.', 4000); return; }
   busy('Following your playing…', 'Listening to the recording.', 0);
   let cancelled = false; ST.busyCancel = () => { cancelled = true; };
   try {
     // two ways of listening: note by note (one line at a time) and chord by chord (the piano,
     // double stops, an ensemble). Both are tried; the one that fits the page best wins.
-    const frames = await pitchTrack(ST.pcm, ST.sr, ST.P.trim.a, ST.P.trim.b, (f) => busy('Following your playing…', 'Listening to the recording.', f * 0.45));
+    const frames = await pitchTrack(ST.pcm, ST.sr, A, B, (f) => busy('Following your playing…', 'Listening to the recording.', f * 0.45));
     if (cancelled) return;
     const played = notesFrom(frames);
     let best = null;
@@ -460,7 +465,7 @@ async function autoSync(o) {
     }
     if (L.events && L.events.length >= 3 && (!best || best.good < 0.8 || L.events.some((e) => e.pcs.length > 1))) {
       busy('Following your playing…', 'Listening for chords.', 0.5);
-      const ons = await onsetsOf(ST.pcm, ST.sr, ST.P.trim.a, ST.P.trim.b, (f) => busy('Following your playing…', 'Listening for chords.', 0.5 + f * 0.35));
+      const ons = await onsetsOf(ST.pcm, ST.sr, A, B, (f) => busy('Following your playing…', 'Listening for chords.', 0.5 + f * 0.35));
       if (cancelled) return;
       const ch = alignChords(L.events, ons);
       // a page with chords is better followed chord by chord, unless that clearly fails
@@ -471,7 +476,7 @@ async function autoSync(o) {
     // neither fits well (a piano or an orchestra behind the soloist): follow the harmony heard
     if (L.events && L.events.length >= 3 && (!best || best.good < 0.55)) {
       busy('Following your playing…', 'Listening to the harmony.', 0.85);
-      const fr = await chromaFrames(ST.pcm, ST.sr, ST.P.trim.a, ST.P.trim.b, (f) => busy('Following your playing…', 'Listening to the harmony.', 0.85 + f * 0.05));
+      const fr = await chromaFrames(ST.pcm, ST.sr, A, B, (f) => busy('Following your playing…', 'Listening to the harmony.', 0.85 + f * 0.05));
       if (cancelled) return;
       const hm = alignFrames(L.events, fr);
       try { window.__studioHarmony = hm ? { good: hm.good, shift: hm.shift, events: L.events.length } : { none: true, events: L.events.length }; } catch {}
@@ -517,12 +522,15 @@ async function autoSync(o) {
     const lastPlayed = Math.max(...best.evs.map((e) => e.t || 0)) + 0.6;
     const pace = (times[nb - 1] - times[0]) / Math.max(1, nb - 1);
     times[nb] = Math.min(ST.P.trim.b, Math.max(times[nb - 1] + pace * 0.5, Math.min(lastPlayed, times[nb - 1] + pace * 1.5)));
+    // (from a bar: that bar starts where it was put, the ones before are kept)
+    if (from) times[0] = o.times[from];
     for (let k = 1; k <= nb; k++) if (times[k] < times[k - 1] + 0.12) times[k] = times[k - 1] + 0.12;
-    o.times = times.map((t) => clamp(t, ST.P.trim.a, ST.P.trim.b));
+    const newTimes = times.map((t) => clamp(t, A, B));
+    const allTimes = from ? [...o.times.slice(0, from), ...newTimes] : newTimes;
     // inside each bar: where each heard note is, as a share of the bar's width and of its time,
     // so the line moves note by note with the playing (and still fits if bars are moved by hand)
-    o.knots = byBar.map((ns, k) => {
-      const T0 = o.times[k], T1 = o.times[k + 1], b = L.bars[k];
+    const newKnots = byBar.map((ns, k) => {
+      const T0 = newTimes[k], T1 = newTimes[k + 1], b = L.bars[k];
       const out = []; let lx = 0, lt = 0;
       for (const n of ns.filter((q) => q.t !== null).sort((p, q) => p.x - q.x)) {
         const fx = (n.x - b.x0) / Math.max(1, b.x1 - b.x0), ft = (n.t - T0) / Math.max(0.01, T1 - T0);
@@ -530,6 +538,9 @@ async function autoSync(o) {
       }
       return out;
     });
+    o.times = allTimes;
+    // (the bars kept keep their own; one that had none gets none: the line then moves evenly in it)
+    o.knots = from ? [...Array.from({ length: from }, (_, k) => (o.knots && o.knots[k]) || []), ...newKnots] : newKnots;
     o.synced = 'auto'; o.syncInfo = { good: best.good, clef: best.clef, shift: best.shift, how: best.how, alt: best.alt };
     busy(null);
     saveSoon(); renderSide(); renderTimeline(); frame();
@@ -539,12 +550,14 @@ async function autoSync(o) {
 // Tap along: a tap on each bar's first beat. A tap lands a little off the beat it means (the finger,
 // and the sound reaching the ear a moment after the picture's clock), so each tap is then drawn to
 // the note that starts nearest to it in the recording, when one starts clearly there.
-function startTap(o) {
+function startTap(o, from = 0) {
   pause();
-  ST.tapping = { o, k: 0, times: [] };
-  const t0 = Math.max(ST.P.trim.a, (o.times ? o.times[0] : ST.P.trim.a) - 2);
+  // (from a bar: the bars before it are kept; the recording starts a little before that bar)
+  from = o.times && from > 0 && from < o.layout.bars.length ? from : 0;
+  ST.tapping = { o, k: from, from, times: from ? o.times.slice(0, from) : [] };
+  const t0 = Math.max(ST.P.trim.a, (o.times ? o.times[from] : ST.P.trim.a) - 2);
   ST.media.currentTime = t0;
-  $('#stTap').hidden = false; $('#stTapInfo').textContent = 'Tap on the first beat of bar 1';
+  $('#stTap').hidden = false; $('#stTapInfo').textContent = `Tap on the first beat of bar ${from + 1}`;
   // (the notes' starts, found while you tap)
   if (ST.pcm && !(ST.onsets && ST.onsets.a === ST.P.trim.a && ST.onsets.b === ST.P.trim.b)) {
     const a = ST.P.trim.a, b = ST.P.trim.b;
@@ -591,19 +604,27 @@ async function finishTap() {
   const T = ST.tapping; if (!T) return; ST.tapping = null;
   $('#stTap').hidden = true;
   pause();
-  const n = T.o.layout.bars.length;
-  if (T.times.length >= 2) {
+  const n = T.o.layout.bars.length, from = T.from || 0;
+  if (T.times.length - from >= (from ? 1 : 2)) {
     let raw = T.times.slice(0, n + 1);
     if (ST.onsets && (ST.onsets.list || ST.onsets.job)) {
       if (!ST.onsets.list) busy('Lining up your taps…', 'Listening for the notes.', 0.5);
       const list = ST.onsets.list || await ST.onsets.job; busy(null);
-      raw = snapTaps(raw, list, ST.sr);
+      // (only the new taps: the bars kept stay exactly where they were)
+      raw = [...raw.slice(0, from), ...snapTaps(raw.slice(from), list, ST.sr)];
+      for (let i = Math.max(1, from); i < raw.length; i++) if (raw[i] <= raw[i - 1] + 0.05) raw[i] = raw[i - 1] + 0.05;
     }
     const times = raw;
-    const pace = (times[times.length - 1] - times[0]) / (times.length - 1);
+    const old = T.o.times || [];
+    // (stopped before the end: the bars after keep their times when they still come after the last
+    // tap; else they go on at the pace of the taps)
+    const pace = (times[times.length - 1] - times[0]) / Math.max(1, times.length - 1);
+    const lastTap = times[times.length - 1];
+    if (from && old.length === n + 1 && times.length < n + 1 && old[times.length] > lastTap + 0.12) times.push(...old.slice(times.length));
     while (times.length < n + 1) times.push(Math.min(ST.P.trim.b, times[times.length - 1] + pace));
     T.o.times = times; T.o.synced = 'tap';
-    saveSoon(); D.toast('Bars set from your taps.', 2200);
+    if (T.o.knots) T.o.knots = T.o.knots.map((kn, k) => (k < from || (from && k >= T.times.length && old[k] === times[k]) ? kn : []));
+    saveSoon(); D.toast(from ? `Bars from ${from + 1} set from your taps.` : 'Bars set from your taps.', 2200);
   }
   renderSide(); renderTimeline(); frame();
 }
@@ -892,7 +913,7 @@ function renderTimeline() {
       const d = el('div', 'st-bar' + (k === b ? ' cur' : ''), String(k + 1));
       d.style.left = tx(o.times[k]) + 'px'; d.style.width = Math.max(2, tx(o.times[k + 1]) - tx(o.times[k]) - 1) + 'px';
       const edge = el('span', 'edge'); edge.dataset.k = k; d.append(edge);
-      d.addEventListener('pointerdown', (e) => { if (e.target === edge) return; ST.sel = { id: o.id }; renderSide(); seek(o.times[k] + 0.01); });
+      d.addEventListener('pointerdown', (e) => { if (e.target === edge) return; ST.sel = { id: o.id }; seek(o.times[k] + 0.01); renderSide(); });
       sl.append(d);
     });
     // the end of the last bar
@@ -982,7 +1003,7 @@ function wireTimeline() {
       renderTimeline(); seek(o.t0 + 0.05);
     }
   });
-  const end = () => { if (drag && drag.kind !== 'seek') saveSoon(); drag = null; };
+  const end = () => { if (drag && drag.kind !== 'seek') saveSoon(); const was = drag && drag.kind; drag = null; if ((was === 'bar' || was === 'seek') && ST.sel && ST.P.overlays.find((x) => x.id === ST.sel.id && x.kind === 'score')) renderSide(); };
   tracks.addEventListener('pointerup', end); tracks.addEventListener('pointercancel', end);
 }
 // Drag the score or an image on the picture to place it; pinch or the slider to size it.
@@ -1062,7 +1083,17 @@ function renderSide() {
     auto.addEventListener('click', () => autoSync(o));
     const tapB = el('button', 'btn small', 'Tap along'); tapB.addEventListener('click', () => startTap(o));
     row.append(auto, tapB); sync.append(row);
-    sync.append(el('p', 'hint', 'Drag the start of a bar on the timeline to move it.'));
+    // from the bar where the picture is now (put right by hand first, by dragging its start): the
+    // bars before it stay as they are
+    const here = o.times ? barAt(o, ST.media ? ST.media.currentTime + 0.02 : 0).b : -1;
+    if (here > 0 && here < o.layout.bars.length) {
+      const row2 = el('div', 'row-even');
+      const fromB = el('button', 'btn small'); fromB.append(el('span', '', `Follow from bar ${here + 1}`)); fromB.disabled = !ST.pcm;
+      fromB.addEventListener('click', () => autoSync(o, { from: here }));
+      const tapFrom = el('button', 'btn small', `Tap from bar ${here + 1}`); tapFrom.addEventListener('click', () => startTap(o, here));
+      row2.append(fromB, tapFrom); sync.append(row2);
+    }
+    sync.append(el('p', 'hint', 'Drag the start of a bar on the timeline to move it. Then “Follow from bar…” follows your playing again from there; the bars before stay as they are.'));
     side.append(sync);
     const del = el('button', 'btn danger-text', 'Remove the score'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); ST.sel = null; saveSoon(); renderSide(); renderTimeline(); frame(); });
     side.append(del);
@@ -1348,5 +1379,7 @@ export async function _addScoreFrom(canvas) {
 }
 export const _frame = () => frame();
 // (for the tests: following the playing, and one frame of the export drawn at a time)
-export const _autoSync = (o) => autoSync(o);
+export const _autoSync = (o, opt) => autoSync(o, opt);
+export const _tapFrom = (o, k) => startTap(o, k);
+export const _finishTap = () => finishTap();
 export function _drawAt(canvas, t) { const [W, H] = outSize(); if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; } drawFrame(canvas.getContext('2d'), W, H, t, true); }

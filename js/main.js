@@ -1,6 +1,6 @@
 import { pixDropFile } from './pixcache.js';
 import { db, getSetting, setSetting, uid } from './db.js';
-import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession, freshSound } from './audio.js';
+import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession, freshSound, soundActive } from './audio.js';
 import { Metronome, makeTapper, tempoMarking, meterInfo } from './metronome.js';
 import { Tuner, Drone, DRONE_VOICES, DRONE_CHORDS, naturalHarmonics, playHarmonics, stopHarmonics, playRefTone } from './tuner.js';
 import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, stringTargets, etFreq, midiName } from './temperament.js';
@@ -8667,6 +8667,8 @@ function applyAppearance() {
   const root = document.documentElement;
   if (S.theme === 'light' || S.theme === 'dark') root.dataset.theme = S.theme; else delete root.dataset.theme;
   if (S.accent === 'black') root.dataset.accent = 'black'; else delete root.dataset.accent;
+  // (kept where the page can read it before it draws anything, so Stand opens in its own look)
+  try { localStorage.setItem('standLook', JSON.stringify({ t: S.theme || '', a: S.accent || '' })); } catch {}
   $$('#themeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === (S.theme || 'auto')));
   $$('#accentSeg button').forEach((b) => b.classList.toggle('on', b.dataset.accent === (S.accent || 'blue')));
   drawRamp(); drawTrace(); drawHarmonics();
@@ -8735,6 +8737,34 @@ window.standTapEvent = (ev) => {
   if (tapTest.on) { $('#tapLast').textContent = 'Tap heard'; return; }
   if (!$('#score').hidden && S.tapStand && !V.inking) turn(1);
 };
+
+// ---------- battery: the screen sleeps by itself only when nothing is going on ----------
+// The screen is the biggest use of the battery. It stays on while a score, Compose, Studio, a tool or
+// a window is open, while anything sounds or listens, records or counts down. Only on the home screen,
+// with nothing going on and no touch for 3 minutes, may iOS lock it as set in the iPad's or
+// iPhone's own settings. (Without the app's part, it stays on all the time, as before.)
+const AWAKE = { on: null, touch: Date.now() };
+const BUSY_VIEWS = '#score:not([hidden]), #compose:not([hidden]), #studio:not([hidden]), #picker:not([hidden]), #phonecam:not([hidden]), #phView:not([hidden]), #cam:not([hidden]), #vfloat:not([hidden]), #eyeCal:not([hidden]), #runPill:not([hidden]), #miniTuner:not([hidden]), #review:not([hidden]), #newScore:not([hidden]), #newNotebook:not([hidden]), #welcome:not([hidden]), #recCount:not([hidden]), .panel:not([hidden])';
+function screenWanted() {
+  try {
+    if (Date.now() - AWAKE.touch < 180000) return true;
+    if (document.querySelector(BUSY_VIEWS)) return true;
+    if (soundActive() || recState || P.pomo.running) return true;
+    if ((window.__phonePlay && window.__phonePlay.active) || (window.__phoneViewer && window.__phoneViewer.active())) return true;
+  } catch { return true; }
+  return false;
+}
+function sendAwake() {
+  if (!NATIVE || !NATIVE.standAwake || document.hidden) return;
+  const on = screenWanted();
+  if (on === AWAKE.on) return;
+  AWAKE.on = on;
+  try { NATIVE.standAwake.postMessage({ on }); } catch {}
+}
+document.addEventListener('pointerdown', () => { AWAKE.touch = Date.now(); if (AWAKE.on === false) sendAwake(); }, true);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { AWAKE.touch = Date.now(); AWAKE.on = null; sendAwake(); } });
+setInterval(sendAwake, 15000);
+window.__screenWanted = screenWanted;
 
 window.__sendFace = () => sendFace();
 function sendFace() {
@@ -9786,6 +9816,8 @@ function showWelcome() {
   if (PHONE && !S.phoneToured && !window.__noTour) setTimeout(() => startTour({ phone: true, onDone: () => { S.phoneToured = true; saveSettings(); } }), 700);
   renderGoal(); syncWinkUI(); syncTapUI(); initPracticeSync();
   setHomeTab(scores.length ? (S.hometab || 'mine') : 'mine');
+  // the home screen is laid out: shown (on the next frame, drawn whole)
+  requestAnimationFrame(() => document.documentElement.classList.remove('booting'));
   // started again by the app after the page stopped (memory): back to the score and page
   if (/[?&]recover=1/.test(location.search)) { try { history.replaceState(null, '', location.pathname); } catch {} setTimeout(() => reopenPlace().catch(() => {}), 300); }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}

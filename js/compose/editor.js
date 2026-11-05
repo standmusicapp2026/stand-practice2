@@ -2211,6 +2211,18 @@ function wirePanels() {
       D.toast(`Opened ${score.parts.length} ${score.parts.length === 1 ? 'part' : 'parts'}, ${score.measures.length} bars.`);
     } catch (err) { console.error(err); D.toast(err.message || 'That file could not be read.', 4000); }
   });
+  // an example to start from: Holst's Jupiter tune for orchestra (a copy of its own each time, kept
+  // with your scores like any other)
+  $('#cnExample')?.addEventListener('click', async () => {
+    try {
+      const r = await fetch('examples/holst-jupiter.json'); if (!r.ok) throw new Error('missing');
+      const score = await r.json(); score.created = Date.now();
+      const fileId = uid(), id = uid();
+      await db.put('files', { id: fileId, kind: 'comp', data: score });
+      await db.put('scores', { id, fileId, kind: 'comp', title: score.title, composer: score.composer, pages: 1, added: Date.now(), opened: Date.now(), lastPage: 0, seconds: 0, thumb: null });
+      D.hidePanel(); await openComposition(id); saveSoon(true);
+    } catch (err) { console.error(err); D.toast('The example could not be opened just now.', 3500); }
+  });
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-panel]'); if (!b) return;
     const p = b.dataset.panel;
