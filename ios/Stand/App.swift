@@ -160,7 +160,11 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.bounces = false
         webView.isOpaque = false
-        webView.backgroundColor = .systemBackground
+        // the colour of the launch screen and of Stand's own background (light and dark): no white flash
+        // between the launch screen and the first picture of the page
+        let launchBG = UIColor(named: "LaunchBackground") ?? .systemBackground
+        webView.backgroundColor = launchBG
+        webView.scrollView.backgroundColor = launchBG
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }   // (only in test builds)
         #endif

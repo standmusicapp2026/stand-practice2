@@ -243,7 +243,7 @@ final class StandNativeExtras: NSObject {
         browser = br
         adv.startAdvertisingPeer()
         br.startBrowsingForPeers()
-        searching = true
+        searching = true; looking = true
         scheduleRest(after: 120)
     }
 
@@ -261,10 +261,11 @@ final class StandNativeExtras: NSObject {
     }
 
     private func stopPeer() {
-        restTimer?.invalidate(); restTimer = nil; searching = false
-        advertiser?.stopAdvertisingPeer(); advertiser = nil
-        browser?.stopBrowsingForPeers(); browser = nil
-        session?.disconnect(); session = nil
+        restTimer?.invalidate(); restTimer = nil; searching = false; looking = false
+        // (no more calls from them once let go: one arriving for a link being taken down could crash)
+        advertiser?.delegate = nil; advertiser?.stopAdvertisingPeer(); advertiser = nil
+        browser?.delegate = nil; browser?.stopBrowsingForPeers(); browser = nil
+        session?.delegate = nil; session?.disconnect(); session = nil
         invited.removeAll(); seen.removeAll()
         verified.removeAll(); myNonce.removeAll(); pairing = nil
         reportPeers()
@@ -440,13 +441,18 @@ final class StandNativeExtras: NSObject {
             guard !self.seen.isEmpty else { return }   // (none in sight: found again by itself when it comes)
             StandLog.write("link: asking again")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                guard let br = self.browser, let s = self.session, s.connectedPeers.isEmpty, UIApplication.shared.applicationState == .active else { return }
+                guard self.looking, let br = self.browser, let s = self.session, s.connectedPeers.isEmpty, UIApplication.shared.applicationState == .active else { return }
                 for (peer, info) in self.seen { self.invited.removeValue(forKey: peer); self.found(br, peer, info) }
             }
         }
     }
     // (the looking now goes on while Stand is open; it stops only when Stand goes to the background)
     private var searching = false
+    // (looking for the other device right now: never started twice, never asked to invite while stopped.
+    // iOS calls "became active" also after Control Center, a notification or Face ID, without the app
+    // having been in the background: starting the looking again while it was running crashed the
+    // app on the iPhone, inside iOS's own network code)
+    private var looking = false
     private var restTimer: Timer?
     private func scheduleRest(after secs: TimeInterval) { }
 
@@ -459,6 +465,8 @@ final class StandNativeExtras: NSObject {
     }
 
     @objc private func appBackground() {
+        guard looking else { return }
+        looking = false
         advertiser?.stopAdvertisingPeer()
         browser?.stopBrowsingForPeers()
         seen.removeAll()   // (found again when the looking starts again)
@@ -468,7 +476,8 @@ final class StandNativeExtras: NSObject {
         // (back from the background, where the looking was stopped: started again, after a pause)
         // (a moment only: back in Stand, the linked device is found again at once)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            guard self.session != nil, UIApplication.shared.applicationState == .active else { return }
+            guard self.session != nil, !self.looking, UIApplication.shared.applicationState == .active else { return }
+            self.looking = true
             self.advertiser?.startAdvertisingPeer(); self.browser?.startBrowsingForPeers(); self.searching = true
         }
     }
@@ -632,7 +641,7 @@ extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
         if token > theirs {
             // (2 s: long enough for the other one's own invitation to arrive first, short enough not to be felt)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                guard let self = self, let s2 = self.session, s2 === s, !s2.connectedPeers.contains(peerID) else { return }
+                guard let self = self, self.looking, browser === self.browser, let s2 = self.session, s2 === s, !s2.connectedPeers.contains(peerID) else { return }
                 if Date().timeIntervalSince(self.lastInvitation) < 4 { return }
                 if let at = self.invited[peerID], Date().timeIntervalSince(at) < 9 { return }
                 self.invited[peerID] = Date()
@@ -641,6 +650,7 @@ extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
             return
         }
         DispatchQueue.main.async {
+            guard self.looking, browser === self.browser, s === self.session else { return }
             if let at = self.invited[peerID], Date().timeIntervalSince(at) < 9 { return }
             guard !s.connectedPeers.contains(peerID) else { return }
             self.invited[peerID] = Date()
