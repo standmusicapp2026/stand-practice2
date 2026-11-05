@@ -144,7 +144,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake"] {
             config.userContentController.add(self, name: name)
         }
         let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
@@ -376,6 +376,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             files.busy(body)
         case "standDiag":
             files.diag(body)
+        case "standAwake":
+            // (battery: the page says when nothing is going on, and the screen may then lock as iOS is set)
+            UIApplication.shared.isIdleTimerDisabled = (body["on"] as? Bool) ?? true
         case "standScan":
             guard PageScanner.available else { return }
             face.stop()   // the scanner needs the camera
@@ -701,6 +704,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     private var handUntil: TimeInterval = 0
     private var handBusy = false
     private var frameCount = 0
+    private var lastHandCheck: CFTimeInterval = 0
     private lazy var handRequest: VNDetectHumanHandPoseRequest = {
         let r = VNDetectHumanHandPoseRequest(); r.maximumHandCount = 2; return r
     }()
@@ -715,6 +719,10 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = false
         config.maximumNumberOfTrackedFaces = 1
+        // (battery: 30 pictures a second, not 60; a wink lasts several of them either way)
+        if let f = ARFaceTrackingConfiguration.supportedVideoFormats.filter({ $0.framesPerSecond >= 30 }).min(by: { $0.framesPerSecond < $1.framesPerSecond }) {
+            config.videoFormat = f
+        }
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
         running = true
     }
@@ -731,7 +739,9 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     // About ten times a second: is a hand over the eyes? (Vision on the camera picture, off the face queue.)
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         frameCount += 1
-        guard frameCount % 3 == 0, !handBusy,
+        // (battery: the hand is looked for about eight times a second, whatever the camera's speed)
+        let tHand = CACurrentMediaTime()
+        guard tHand - lastHandCheck >= 0.12, !handBusy,
               let face = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first, face.isTracked else { return }
         // where the eyes are in the camera picture (0...1, Vision's way: origin at the bottom left)
         let size = frame.camera.imageResolution
@@ -743,7 +753,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         let l = project(face.leftEyeTransform), r = project(face.rightEyeTransform)
         let d = max(0.04, hypot(l.x - r.x, l.y - r.y))
         let eyes = CGRect(x: min(l.x, r.x) - d * 0.7, y: min(l.y, r.y) - d * 0.7, width: abs(l.x - r.x) + d * 1.4, height: abs(l.y - r.y) + d * 1.4)
-        handBusy = true
+        handBusy = true; lastHandCheck = tHand
         let buffer = frame.capturedImage
         handQueue.async { [weak self] in
             guard let self = self else { return }

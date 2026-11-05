@@ -435,7 +435,7 @@ final class StandNativeExtras: NSObject {
     private var lastRestart = Date.distantPast
     private func restartDiscovery() {
         DispatchQueue.main.async {
-            self.invited = self.invited.filter { Date().timeIntervalSince($0.value) < 10 }
+            self.invited = self.invited.filter { Date().timeIntervalSince($0.value) < 22 }
             guard Date().timeIntervalSince(self.lastRestart) > 6 else { return }
             self.lastRestart = Date()
             guard !self.seen.isEmpty else { return }   // (none in sight: found again by itself when it comes)
@@ -448,6 +448,8 @@ final class StandNativeExtras: NSObject {
     }
     // (the looking now goes on while Stand is open; it stops only when Stand goes to the background)
     private var searching = false
+    // (an invitation is given 20 s, and not made again meanwhile: the encrypted handshake can take
+    // over 8 s, and cutting it at 8 s and starting again made linking take a minute or more)
     // (looking for the other device right now: never started twice, never asked to invite while stopped.
     // iOS calls "became active" also after Control Center, a notification or Face ID, without the app
     // having been in the background: starting the looking again while it was running crashed the
@@ -643,18 +645,18 @@ extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 guard let self = self, self.looking, browser === self.browser, let s2 = self.session, s2 === s, !s2.connectedPeers.contains(peerID) else { return }
                 if Date().timeIntervalSince(self.lastInvitation) < 4 { return }
-                if let at = self.invited[peerID], Date().timeIntervalSince(at) < 9 { return }
+                if let at = self.invited[peerID], Date().timeIntervalSince(at) < 22 { return }
                 self.invited[peerID] = Date()
-                browser.invitePeer(peerID, to: s2, withContext: ("stand2|" + self.deviceId).data(using: .utf8), timeout: 8)
+                browser.invitePeer(peerID, to: s2, withContext: ("stand2|" + self.deviceId).data(using: .utf8), timeout: 20)
             }
             return
         }
         DispatchQueue.main.async {
             guard self.looking, browser === self.browser, s === self.session else { return }
-            if let at = self.invited[peerID], Date().timeIntervalSince(at) < 9 { return }
+            if let at = self.invited[peerID], Date().timeIntervalSince(at) < 22 { return }
             guard !s.connectedPeers.contains(peerID) else { return }
             self.invited[peerID] = Date()
-            browser.invitePeer(peerID, to: s, withContext: ("stand2|" + self.deviceId).data(using: .utf8), timeout: 8)
+            browser.invitePeer(peerID, to: s, withContext: ("stand2|" + self.deviceId).data(using: .utf8), timeout: 20)
         }
     }
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
