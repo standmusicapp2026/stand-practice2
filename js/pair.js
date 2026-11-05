@@ -79,12 +79,19 @@ export function openPair() {
   return open;
 }
 
-// Settings › Linked devices: the list, each with Forget, and Link
-export async function drawLinked(card) {
+// Settings › Linked devices: the list, each with Forget, and Link. Given the list (as it just came
+// from the app), it is drawn with it and not asked for again: asking makes the app answer with the
+// list, and drawing again on each answer asked again, for ever, the card redrawn many times a
+// second while Settings were open (the iPad then took no tap on any button there). Drawn only when
+// something in it changed.
+export async function drawLinked(card, given) {
   if (!card) return;
   card.hidden = !PAIR();
   if (!PAIR()) return;
-  const list = await pairList();
+  const list = Array.isArray(given) ? given : await pairList();
+  const sig = JSON.stringify(list.map((x) => [x.d, x.kind, x.at, !!x.stale]));
+  if (card.dataset.drawn === sig) return;
+  card.dataset.drawn = sig;
   const ul = card.querySelector('.pair-list'); ul.textContent = '';
   const fmt = (t) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   for (const x of list) {
@@ -94,7 +101,7 @@ export async function drawLinked(card) {
     const forget = el('button', 'btn small ghost', 'Forget');
     forget.addEventListener('click', async () => {
       if (!await ask('Forget this ' + x.kind + '?', { ok: 'Forget', danger: true, sub: 'The two will no longer connect until you link them again with a code.' })) return;
-      pairForget(x.d); setTimeout(() => drawLinked(card), 400);
+      pairForget(x.d); delete card.dataset.drawn; setTimeout(() => drawLinked(card), 400);
     });
     li.append(name, forget); ul.append(li);
   }

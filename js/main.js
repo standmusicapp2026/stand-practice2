@@ -6009,7 +6009,7 @@ function syncPracticeHost() {
 $('#shareIphone').addEventListener('change', (e) => { S.shareIphone = e.target.checked; saveSettings(); syncPracticeHost(); });
 // Linked devices (the apps): linked once with a code, then always
 $('#pairNew').addEventListener('click', async () => { await openPair(); drawLinked($('#pairCard')); });
-pairWatch((t) => { if (t === 'list' && !$('#pairCard').hidden) drawLinked($('#pairCard')); });
+pairWatch((t, d) => { if (t === 'list' && !$('#pairCard').hidden) drawLinked($('#pairCard'), (d && d.list) || []); });   // (with the list that came: never asked again from here)
 // (the link is looked for as soon as Stand opens: a linked iPad or iPhone nearby is found while you
 // are still choosing what to do, not only once something asks for it)
 if (PAIR()) setTimeout(() => { pairList().catch(() => {}); }, 150);
