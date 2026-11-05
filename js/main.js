@@ -243,6 +243,9 @@ function showPanel(name, tab) {
 }
 function hidePanel() {
   if (!openPanel) return;
+  // (a panel's tour, started a moment after it opened, goes with it: it was left on the screen over
+  // whatever came next)
+  { const tb = sectionTour.busy; if (tb && (tb === openPanel || (openPanel === 'tuner' && (tb === 'harmonics' || tb === 'drone')))) { const sk = document.querySelector('.tour-skip'); if (sk) sk.click(); } }
   // (a field still being typed in gives its change first: a title typed, then the panel closed or
   // the score left at once, is kept — hiding a field does not always tell it it was left)
   try { const ae = document.activeElement; if (ae && ae.closest && ae.closest('#panel-' + openPanel) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) ae.blur(); } catch {}
@@ -1230,6 +1233,7 @@ async function reopenPlace() {
 // iOS short of memory: what can be drawn again later goes now (pages away from the one on screen,
 // the score kept for the iPhone when it is not being sent)
 window.standMemoryLow = () => {
+  try { window.__phsMemoryLow && window.__phsMemoryLow(); } catch {}   // (on the iPhone: its own scores let go too)
   // (the iPhone's questions wait a while: drawing pages for it is what fills the memory)
   window.__phoneHoldUntil = Date.now() + 30000;
   try { nlog('memory low: pages let go' + (PH.doc ? ', the score for the iPhone ' + (Date.now() - PH.t > 5000 ? 'closed' : 'kept') : '')); } catch {}
@@ -1288,6 +1292,8 @@ async function openScore(id, opts = {}) {
   if (base.paper) setInking(true);
   else chromeTimer = setTimeout(() => showChrome(false), 2500);
 }
+// (the version the app itself says, when it says it)
+try { const v = window.standCaps && window.standCaps.version; if (v) $('#appVersion').textContent = 'Stand ' + v; } catch {}
 function updateScrub() { $('#pageRange').max = V.doc.pages; $('#pageScrub').hidden = V.doc.pages < 3; }
 const step0 = (fn) => { try { fn(); } catch (e) { console.warn(e); } };
 async function closeScore() {

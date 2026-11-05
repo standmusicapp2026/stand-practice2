@@ -28,11 +28,15 @@ private struct LinkedDevice: Codable { var key: String; var kind: String; var at
 // The link's secrets in the Keychain, for this device only: never in an iCloud or computer backup,
 // never moved to a new iPad (a device restored from a backup is linked again with a code).
 private enum StandKeychain {
-    static func get(_ account: String) -> Data? {
+    static func get(_ account: String) -> Data? { read(account).data }
+    // (the status too: "not there" is not the same as "could not be read just now", which happens
+    // before the iPhone is first unlocked after a restart; then nothing may be made anew or written over)
+    static func read(_ account: String) -> (data: Data?, missing: Bool) {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "stand.link",
                                 kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var out: CFTypeRef?
-        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
+        let st = SecItemCopyMatching(q as CFDictionary, &out)
+        return (st == errSecSuccess ? out as? Data : nil, st == errSecItemNotFound)
     }
     @discardableResult static func set(_ account: String, _ data: Data) -> Bool {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "stand.link", kSecAttrAccount as String: account]
@@ -62,9 +66,12 @@ final class StandNativeExtras: NSObject {
 
     // linking (all of it touched on the main thread only)
     private let kind = UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad"
+    private var keychainUnreadable = false
     private lazy var deviceId: String = {
-        if let data = StandKeychain.get("device"), let s = String(data: data, encoding: .utf8), !s.isEmpty { return s }
+        let r = StandKeychain.read("device")
+        if let data = r.data, let s = String(data: data, encoding: .utf8), !s.isEmpty { return s }
         let s = UUID().uuidString
+        if !r.missing { keychainUnreadable = true; return s }   // (for now only: the real one comes back once readable)
         StandKeychain.set("device", Data(s.utf8))
         UserDefaults.standard.removeObject(forKey: "standDeviceID")   // (an earlier test build kept it there)
         return s
@@ -73,11 +80,14 @@ final class StandNativeExtras: NSObject {
         // (an earlier test build kept them in the settings: moved to the Keychain, once)
         let d = UserDefaults.standard
         if let old = d.data(forKey: "standLinked") { d.removeObject(forKey: "standLinked"); StandKeychain.set("linked", old) }
-        guard let data = StandKeychain.get("linked"),
+        let r = StandKeychain.read("linked")
+        if r.data == nil && !r.missing { keychainUnreadable = true }
+        guard let data = r.data,
               let m = try? JSONDecoder().decode([String: LinkedDevice].self, from: data) else { return [:] }
         return m
     }()
     private func saveLinked() {
+        if keychainUnreadable { StandLog.write("linked devices not saved: the Keychain could not be read"); return }   // (never written over with an empty list)
         if let data = try? JSONEncoder().encode(linked) { StandKeychain.set("linked", data) }
     }
     private var peerDev = [MCPeerID: String]()      // which device each peer is (from what it announces)

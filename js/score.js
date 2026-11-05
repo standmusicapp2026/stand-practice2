@@ -233,7 +233,7 @@ async function openDocumentOne(file, known) {
     const done = (i, page) => {
       drawing.set(i, (drawing.get(i) || 1) - 1);
       const at = live.indexOf(i); if (at >= 0) live.splice(at, 1); live.push(i);
-      while (live.length > (globalThis.__pdfLive ?? (heavy ? 1 : 4))) {
+      while (live.length > (globalThis.__pdfLive ?? (heavy ? 1 : ON_PHONE ? 2 : 4))) {   // (the iPhone has less memory: two pages kept)
         const old = live.shift();
         if (drawing.get(old) > 0) { live.push(old); break; }
         // (the document may have been closed meanwhile: then there is nothing to tidy)
@@ -534,6 +534,7 @@ export function findSplit(curCanvas, nextCanvas) {
 // ---------- page order (deleted pages are hidden, never destroyed) ----------
 // A page can also be cut into pieces (cuts: heights 0..1 where it is cut); each piece shows as
 // its own page. Markings stay with the original page, so nothing is lost.
+const ON_PHONE = typeof navigator !== 'undefined' && /iPhone|iPod/.test(navigator.userAgent || '');
 export function mapDoc(doc, map, cuts, glue) {
   const order = (map || [...Array(doc.pages).keys()]).filter((i) => i >= 0 && i < doc.pages);
   const pieces = [];

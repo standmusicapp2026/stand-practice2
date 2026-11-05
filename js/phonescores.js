@@ -243,7 +243,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       const st = copy.struct || {};
       const data = src.data instanceof Blob ? await src.data.arrayBuffer() : src.data;
       const base = await openDocument({ id: verKey(copy.id.slice(9), copy.stamp) + 'src', kind: 'pdf', data, ...(st.rot ? { rot: st.rot } : {}) }, st.sizes || null);
-      return { base, doc: mapDoc(base, st.pageMap || null, st.cuts || null, st.glue || null) };
+      const doc = mapDoc(base, st.pageMap || null, st.cuts || null, st.glue || null);
+      // (what the problem report needs to explain a score that closes Stand)
+      try { nlog('iPhone: opening a score (' + doc.pages + ' pages, ' + (data.byteLength / 1048576).toFixed(1) + ' MB' + (st.glue && Object.keys(st.glue).length ? ', lines moved up on ' + Object.keys(st.glue).length : '') + (st.cuts && Object.keys(st.cuts).length ? ', ' + Object.keys(st.cuts).length + ' pages cut' : '') + ')'); } catch {}
+      return { base, doc };
     })();
     p.catch(() => { if (PDOC.p === p) { PDOC.key = null; PDOC.p = null; } });
     PDOC.timer = setInterval(() => { if (Date.now() - PDOC.t > 40000 && !JQ.running) pdfClose(); }, 10000);
@@ -321,7 +324,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       const { doc } = await pdfDoc(copy);
       if (!(i >= 0 && i < doc.pages)) return [];
       const box = pieceOf(doc, i);   // (only the lines of its part of the page)
-      const [pw, ph] = doc.sizes[i], W = 2400, H = Math.round((W * ph) / pw);
+      // (2400 wide, but never more than about 8.5 million pixels: a page made taller by lines moved
+      // up onto it, drawn 2400 wide, took most of the iPhone's memory and iOS closed Stand)
+      const [pw, ph] = doc.sizes[i], W = Math.min(2400, Math.round(Math.sqrt((8.5e6 * pw) / ph))), H = Math.round((W * ph) / pw);
+      prepLog('Play lines of page ' + (i + 1) + ' ' + W + 'x' + H);
       const c = document.createElement('canvas');
       try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return null; }
       const T1 = performance.now();
@@ -330,7 +336,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       let found = null;
       if (!PP.threadBroken) { try { found = await linesInThread(await createImageBitmap(c0)); } catch {} }
       if (found === null) {
-        PP.threadBroken = true;
+        // (only a thread that cannot work at all moves the reading here for good; one slow page does not)
+        if (!PP.slowOnce) PP.threadBroken = true; PP.slowOnce = false;
         try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0, false, false, { stavesOnly: true })); } catch { found = []; }
       }
       c0.width = c0.height = 0;
@@ -371,10 +378,37 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // a score that came as a file: every page and its lines made ready in the background, so the
   // score opens and Play goes on at once (the first pages first)
   const PREP = new Set();
+  // A page being made ready is noted first: if iOS closes Stand while drawing it, the next time that
+  // page is left out of the preparation (drawn only when it is shown), so the same page cannot close
+  // Stand again and again; and the problem report says which page it was.
+  const prepBad = () => { try { return JSON.parse(localStorage.getItem('standPrepBad') || '[]'); } catch { return []; } };
+  try {
+    const was = localStorage.getItem('standPrepAt');
+    if (was) { localStorage.setItem('standPrepBad', JSON.stringify([...prepBad(), was].slice(-40))); localStorage.removeItem('standPrepAt'); nlog('iPhone: Stand stopped while preparing ' + was + ' (left out of the preparation from now on)'); }
+  } catch {}
+  // (leaving Stand, or iOS putting it away, is not a page that closed it)
+  addEventListener('pagehide', () => { try { localStorage.removeItem('standPrepAt'); } catch {} });
+  let prepLogAt = 0;
+  function prepLog(text) { const now = Date.now(); if (now - prepLogAt > 4000) { prepLogAt = now; nlog('iPhone: drawing ' + text); } }
+  // iOS says memory is short: the preparation waits a minute, Play's pictures go, the PDF closes if idle
+  window.__phsMemoryLow = () => {
+    PP.memLowUntil = Date.now() + 60000;
+    const S = PP.st; if (S && S.bmp) { for (const v of S.bmp.values()) try { v && v.close(); } catch {} S.bmp.clear(); }
+    if (!JQ.running) pdfClose();
+    nlog('iPhone: memory low, the preparation waits and pictures are let go');
+  };
   function prepareSoon(copy) {
     const k = copy.id + ':' + copy.stamp; if (PREP.has(k)) return; PREP.add(k);
     (async () => {
-      for (let i = 0; i < copy.n; i++) { await pdfPage(copy, i, 5).catch(() => {}); await pdfPlay(copy, i, 5).catch(() => {}); }
+      const bad = prepBad();
+      for (let i = 0; i < copy.n; i++) {
+        const mk = copy.id.slice(9) + ':' + copy.stamp + ':' + i;
+        if (bad.includes(mk)) continue;
+        while (Date.now() < (PP.memLowUntil || 0)) await new Promise((r) => setTimeout(r, 2000));
+        try { localStorage.setItem('standPrepAt', mk); } catch {}
+        await pdfPage(copy, i, 5).catch(() => {}); await pdfPlay(copy, i, 5).catch(() => {});
+        try { localStorage.removeItem('standPrepAt'); } catch {}
+      }
       nlog('iPhone: a score is ready to play (' + copy.n + ' pages)');
     })().finally(() => PREP.delete(k));
   }
@@ -740,7 +774,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
         LW2.onerror = () => { for (const w of lwWait2.values()) { clearTimeout(w.t); w.res(null); } lwWait2.clear(); try { LW2.terminate(); } catch {} LW2 = null; };
       }
       const id = ++lwSeq2;
-      const t = setTimeout(() => { lwWait2.delete(id); try { LW2.terminate(); } catch {} LW2 = null; res(null); }, 15000);
+      const t = setTimeout(() => { lwWait2.delete(id); try { LW2.terminate(); } catch {} LW2 = null; PP.slowOnce = true; res(null); }, 15000);
       lwWait2.set(id, { res, t });
       LW2.postMessage({ id, page: bmp, light: true }, [bmp]);
     } catch { res(null); }
@@ -753,7 +787,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (!PP.threadBroken) { try { found = await linesInThread(await createImageBitmap(p.img)); } catch {} }
     // (no thread for it on this iPhone: read here, as Capture does; a moment, once per page)
     if (found === null) {
-      PP.threadBroken = true;
+      if (!PP.slowOnce) PP.threadBroken = true; PP.slowOnce = false;
       try {
         const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]);
         const bmp = await createImageBitmap(p.img); const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
@@ -900,7 +934,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (PP.st !== S) { try { v && v.close(); } catch {} return null; }
     S.bmp.set(key, v);
     // (only the few lines around are kept)
-    while (S.bmp.size > 18) { const k0 = S.bmp.keys().next().value; const o = S.bmp.get(k0); S.bmp.delete(k0); try { o && o.close(); } catch {} }
+    while (S.bmp.size > 10) { const k0 = S.bmp.keys().next().value; const o = S.bmp.get(k0); S.bmp.delete(k0); try { o && o.close(); } catch {} }
     return v;
   }
   // how many lines at once: two or three (kept)

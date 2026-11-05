@@ -11,7 +11,7 @@ import { analyse, staffEvents } from './omr.js';
 import { makeImpulse, ROOMS, computePeaks, peakOf, encodeWav } from './recorder.js';
 import { videoThumb } from './video.js';
 import { CLEFS, keyAlter, midiOf } from './compose/model.js';
-import { onsetsOf, template, cosine } from './listen.js';
+import { onsetsOf, template, cosine, chromaOf, fftMag } from './listen.js';
 import { Grader, LOOKS, lookParams, isNeutral, autoLook } from './grade.js';
 const grader = new Grader();
 
@@ -376,6 +376,61 @@ function alignChords(evs, ons) {
   best.how = 'chords';
   return best;
 }
+// The harmony heard, every tenth of a second: with a piano or an orchestra behind the soloist, the
+// loudest pitch is often not the soloist's, and attacks blur; what still holds is which notes sound.
+async function chromaFrames(pcm, sr, a, b, onProgress) {
+  const N = 4096, hop = Math.round(sr * 0.1);
+  const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+  const i0 = Math.max(0, Math.floor(a * sr)), i1 = Math.min(pcm.length - N, Math.floor(Math.min(b, pcm.length / sr) * sr));
+  const out = []; let k = 0;
+  for (let i = i0; i < i1; i += hop) {
+    const re = new Float64Array(N), im = new Float64Array(N);
+    let ms = 0; for (let j = 0; j < N; j++) { const v = pcm[i + j]; re[j] = v * win[j]; ms += v * v; }
+    out.push({ t: (i + N / 2) / sr, c: chromaOf(fftMag(re, im), sr, N), rms: Math.sqrt(ms / N) });
+    if (++k % 100 === 0) { onProgress && onProgress((i - i0) / Math.max(1, i1 - i0)); await new Promise((r) => setTimeout(r, 0)); }
+  }
+  // a little smoothing over time (a note rings on; the bow and the hammers add noise)
+  return out.map((f, j) => { const c = new Float32Array(12); for (let q = Math.max(0, j - 1); q <= Math.min(out.length - 1, j + 1); q++) for (let x = 0; x < 12; x++) c[x] += out[q].c[x]; return { t: f.t, c, rms: f.rms }; });
+}
+// The notes on the page against the harmony heard, frame by frame (dynamic time warping over the
+// whole passage): each note of the page lasts as many frames as it takes; the soloist may come in
+// after the piano or the orchestra has begun, and may end before the recording does.
+function alignFrames(evs, frames) {
+  const n = evs.length, m = frames.length;
+  if (n < 3 || m < n / 4) return null;
+  const loud = Math.max(...frames.map((f) => f.rms), 1e-6);
+  // (leaving out a moment of the recording costs as much as a note that does not fit: otherwise the
+  // shortest path wins, and the whole page is squeezed into a few seconds)
+  const SKIP = 0.45;
+  let best = null;
+  for (const sh of [0, 10, 2, 9, 3, 7, 5]) {
+    // each note with a little of the one before (it rings on into the next)
+    const tp = evs.map((e, i) => { const t = template(e.pcs.map((p) => (p + sh) % 12)); if (i) { const q = template(evs[i - 1].pcs.map((p) => (p + sh) % 12)); for (let x = 0; x < 12; x++) t[x] += q[x] * 0.35; } return t; });
+    const cost = (i, j) => (frames[j].rms < loud * 0.02 ? 0.7 : 1 - cosine(frames[j].c, tp[i]));
+    const W = m + 1, Dm = new Float64Array((n + 1) * W).fill(1e9), B = new Uint8Array((n + 1) * W);
+    for (let j = 0; j <= m; j++) { Dm[j] = j * SKIP; B[j] = 3; }        // the soloist may come in later
+    for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+      const c = cost(i - 1, j - 1), k = i * W + j;
+      const a = Dm[(i - 1) * W + j - 1] + c, st = Dm[i * W + j - 1] + c, up = Dm[(i - 1) * W + j] + c + 0.6;
+      if (a <= st && a <= up) { Dm[k] = a; B[k] = 1; } else if (st <= up) { Dm[k] = st; B[k] = 3; } else { Dm[k] = up; B[k] = 2; }
+    }
+    let bc = 1e9, bj = m; for (let j = 1; j <= m; j++) { const v = Dm[n * W + j] + (m - j) * SKIP; if (v < bc) { bc = v; bj = j; } }
+    // back along the path: where each note begins, and how well its frames fit
+    const start = new Array(n).fill(-1), fitSum = new Float64Array(n), fitN = new Uint32Array(n);
+    let i = n, j = bj;
+    while (i > 0 && j > 0) {
+      const b = B[i * W + j];
+      fitSum[i - 1] += 1 - cost(i - 1, j - 1); fitN[i - 1]++; start[i - 1] = j - 1;
+      if (b === 1) { i--; j--; } else if (b === 3) j--; else i--;
+    }
+    let good = 0; for (let q = 0; q < n; q++) if (fitN[q] && fitSum[q] / fitN[q] > 0.6) good++;
+    const r = { good: good / n, cost: bc / Math.max(1, n), shift: sh, start };
+    if (!best || r.good - (sh ? 0.06 : 0) > best.good - (best.shift ? 0.06 : 0)) best = r;
+  }
+  best.evs = evs.map((e, q) => ({ bar: e.bar, x: e.x, t: best.start[q] >= 0 ? frames[best.start[q]].t : null }));
+  best.how = 'harmony';
+  return best;
+}
 async function autoSync(o) {
   if (!ST.pcm) { D.toast('This recording has no sound to follow. Use Tap along.'); return; }
   const L = o.layout;
@@ -412,6 +467,15 @@ async function autoSync(o) {
       const chordy = L.events.filter((e) => e.pcs.length > 1).length > L.events.length * 0.2;
       if (ch) ch.alt = best ? best.good : null;
       if (ch && (!best || (chordy ? ch.good > 0.45 || ch.good > best.good : ch.good > best.good + 0.05))) best = ch;
+    }
+    // neither fits well (a piano or an orchestra behind the soloist): follow the harmony heard
+    if (L.events && L.events.length >= 3 && (!best || best.good < 0.55)) {
+      busy('Following your playing…', 'Listening to the harmony.', 0.85);
+      const fr = await chromaFrames(ST.pcm, ST.sr, ST.P.trim.a, ST.P.trim.b, (f) => busy('Following your playing…', 'Listening to the harmony.', 0.85 + f * 0.05));
+      if (cancelled) return;
+      const hm = alignFrames(L.events, fr);
+      try { window.__studioHarmony = hm ? { good: hm.good, shift: hm.shift, events: L.events.length } : { none: true, events: L.events.length }; } catch {}
+      if (hm && (!best || hm.good > best.good + 0.1)) { hm.alt = best ? best.good : null; best = hm; }
     }
     if (!best) { busy(null); D.toast('Not enough clear notes were heard. Use Tap along.', 4500); return; }
     busy('Following your playing…', 'Lining them up with the score.', 0.9);
@@ -1283,3 +1347,6 @@ export async function _addScoreFrom(canvas) {
   return o;
 }
 export const _frame = () => frame();
+// (for the tests: following the playing, and one frame of the export drawn at a time)
+export const _autoSync = (o) => autoSync(o);
+export function _drawAt(canvas, t) { const [W, H] = outSize(); if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; } drawFrame(canvas.getContext('2d'), W, H, t, true); }

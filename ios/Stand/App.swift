@@ -147,7 +147,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -161,7 +161,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         webView.scrollView.bounces = false
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
-        if #available(iOS 16.4, *) { webView.isInspectable = true }
+        #if DEBUG
+        if #available(iOS 16.4, *) { webView.isInspectable = true }   // (only in test builds)
+        #endif
         view = webView
 
         face.onEvent = { [weak self] event in self?.send("standFaceEvent", event) }
@@ -193,15 +195,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Ask for the microphone and camera before the page starts, so the tuner,
-        // recorder and video recorder work on the first tap.
-        AVAudioSession.sharedInstance().requestRecordPermission { _ in
-            AVCaptureDevice.requestAccess(for: .video) { _ in
-                DispatchQueue.main.async {
-                    self.webView.load(URLRequest(url: URL(string: "stand://app/index.html")!))
-                }
-            }
-        }
+        // The page starts at once. The microphone and the camera are asked for the first time a tool
+        // needs them (the tuner, a recording, the wink), not at the start: Apple asks for that, and the
+        // question then says what it is for.
+        webView.load(URLRequest(url: URL(string: "stand://app/index.html")!))
         cleanIncoming()
     }
 
@@ -407,12 +404,26 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        let mic = AVAudioSession.sharedInstance().recordPermission == .granted
-        let cam = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+        // (asked once, by iOS itself, the first time; then the answer stands: no second question
+        // from the web page)
+        let askMic: (@escaping (Bool) -> Void) -> Void = { done in
+            switch AVAudioSession.sharedInstance().recordPermission {
+            case .granted: done(true)
+            case .denied: done(false)
+            default: AVAudioSession.sharedInstance().requestRecordPermission { ok in DispatchQueue.main.async { done(ok) } }
+            }
+        }
+        let askCam: (@escaping (Bool) -> Void) -> Void = { done in
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized: done(true)
+            case .notDetermined: AVCaptureDevice.requestAccess(for: .video) { ok in DispatchQueue.main.async { done(ok) } }
+            default: done(false)
+            }
+        }
         switch type {
-        case .microphone: decisionHandler(mic ? .grant : .prompt)
-        case .camera: decisionHandler(cam ? .grant : .prompt)
-        default: decisionHandler(mic && cam ? .grant : .prompt)
+        case .microphone: askMic { decisionHandler($0 ? .grant : .deny) }
+        case .camera: askCam { decisionHandler($0 ? .grant : .deny) }
+        default: askMic { m in askCam { c in decisionHandler(m && c ? .grant : .deny) } }
         }
     }
 
@@ -437,11 +448,17 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     // Reload if the web content process is ever terminated in the background.
     // (the page opens again where you were: the score and the page it was on)
+    // (twice within two minutes: what was open is what stops it, so the page opens on the home screen
+    // instead of going back to it, and cannot stop again and again)
+    private var stops: [Double] = []
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         let state = UIApplication.shared.applicationState == .active ? "in use" : "in the background"
-        StandLog.write("the page stopped (\(state)), opened again")
+        let now = Date().timeIntervalSince1970
+        stops = stops.filter { now - $0 < 120 } + [now]
+        let again = stops.count >= 2
+        StandLog.write("the page stopped (\(state)), opened again" + (again ? " on the home screen (stopped twice in two minutes)" : ""))
         pageReady = false
-        webView.load(URLRequest(url: URL(string: "stand://app/index.html?recover=1")!))
+        webView.load(URLRequest(url: URL(string: again ? "stand://app/index.html" : "stand://app/index.html?recover=1")!))
     }
 
     // iOS is short of memory: the page lets go of what it can draw again later
@@ -758,9 +775,10 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         }
         let rawL = Float(face.blendShapes[.eyeBlinkLeft]?.floatValue ?? 0)
         let rawR = Float(face.blendShapes[.eyeBlinkRight]?.floatValue ?? 0)
-        smoothL = smoothL == nil ? rawL : smoothL! * 0.3 + rawL * 0.7
-        smoothR = smoothR == nil ? rawR : smoothR! * 0.3 + rawR * 0.7
-        let left = smoothL!, right = smoothR!
+        // (local values, never `!`: stop() on the main thread may clear these between two lines here)
+        let left = smoothL.map { $0 * 0.3 + rawL * 0.7 } ?? rawL
+        let right = smoothR.map { $0 * 0.3 + rawR * 0.7 } ?? rawR
+        smoothL = left; smoothR = right
         let now = CACurrentMediaTime()
         let handOver = now < handUntil
         // (the eyes' direction is not trusted from the moment an eye starts to close for a wink)
@@ -821,14 +839,14 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         if !now_ok {
             // (a frame or two out of range — a jitter of the tracking — changes nothing; a quarter of a
             // second away does)
-            if awaySince == nil { awaySince = now }
-            if now - awaySince! < 0.25, let since = lookSince { return now - since >= 0.5 }
+            let away = awaySince ?? now; awaySince = away
+            if now - away < 0.25, let since = lookSince { return now - since >= 0.5 }
             lookSince = nil; return false
         }
         awaySince = nil
-        if lookSince == nil { lookSince = now }
+        let since = lookSince ?? now; lookSince = since
         // (back on the music for a moment first: the face turning back is not a wink)
-        return now - lookSince! >= 0.5
+        return now - since >= 0.5
     }
     func session(_ session: ARSession, didFailWithError error: Error) {
         running = false
@@ -948,7 +966,8 @@ final class NativeVideo: NSObject, AVCaptureFileOutputRecordingDelegate {
 
     func record() {
         queue.async {
-            guard self.session.isRunning, !self.output.isRecording else {
+            // (no active picture connection: startRecording would throw and close Stand)
+            guard self.session.isRunning, !self.output.isRecording, self.output.connection(with: .video)?.isActive == true else {
                 self.emit(["type": "error", "reason": "record", "message": "The camera is not ready."]); return
             }
             let url = incomingDir.appendingPathComponent("rec-" + UUID().uuidString + ".mov")
