@@ -274,21 +274,38 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     JQ.running = false;
   }
   const canvasBlob = (c, type, q) => new Promise((r) => c.toBlob(r, type, q));
+  // A page that is only part of a page (what is left after lines were moved up onto the page before,
+  // or a piece of a cut page): only that part shows, as on the iPad, never the whole page again.
+  const pieceOf = (doc, i) => { try { const b = doc.piece && doc.piece(i); return b && b.h > 0 && b.h < 1 ? b : null; } catch { return null; } };
+  const mayHaveParts = (copy) => { const st = copy.struct || {}; return !!((st.cuts && Object.keys(st.cuts).length) || (st.glue && Object.keys(st.glue).length)); };
+  const cropRows = (src, b) => {
+    const sy = Math.round(b.y * src.height), sh = Math.max(1, Math.min(src.height - sy, Math.round(b.h * src.height)));
+    const o = document.createElement('canvas'); o.width = src.width; o.height = sh;
+    o.getContext('2d').drawImage(src, 0, sy, src.width, sh, 0, 0, src.width, sh);
+    return o;
+  };
   // a page of a PDF copy, drawn here at the iPhone's size and kept (the next time it opens at once)
   function pdfPage(copy, i, pri = 1) {
     const id = copy.id.slice(9);
     return job(pri, 'pg:' + copy.id + ':' + copy.stamp + ':' + i, async () => {
       const kept = await db.get('files', pageKey(id, i, copy.stamp)).catch(() => null);
-      if (kept && kept.img) return kept;
+      // (a score with parts of pages, kept by an earlier version of the app as whole pages: drawn again)
+      if (kept && kept.img && (kept.pv === 2 || !mayHaveParts(copy))) return kept;
       const { doc } = await pdfDoc(copy);
       if (!(i >= 0 && i < doc.pages)) return null;
-      const [pw, ph] = doc.sizes[i], W = 1242, H = Math.round((W * ph) / pw);
-      const c = document.createElement('canvas');
-      try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return null; }
+      const box = pieceOf(doc, i);
+      const [pw, ph] = doc.sizes[i], W = 1242, H0 = Math.round((W * ph) / pw);
+      let c = document.createElement('canvas');
+      try { await doc.render(i, c, W, H0); } catch { c.width = c.height = 0; return null; }
+      if (box) { const whole = c; c = cropRows(whole, box); whole.width = whole.height = 0; }
+      const H = c.height;
       const img = await canvasBlob(c, 'image/jpeg', 0.86); c.width = c.height = 0;
       if (!img) return null;
       const ik = (copy.ink || []).includes(i) ? await db.get('files', inkKey(id, copy.stamp, i)).catch(() => null) : null;
-      const rec = { id: pageKey(id, i, copy.stamp), kind: 'ipadpage', stamp: copy.stamp, w: W, h: H, img, ink: (ik && ik.ink) || null };
+      let ink = (ik && ik.ink) || null;
+      // (the markings come as the whole page: the same part of them)
+      if (ink && box) { try { const bm = await createImageBitmap(ink); const kc = document.createElement('canvas'); kc.width = bm.width; kc.height = bm.height; kc.getContext('2d').drawImage(bm, 0, 0); try { bm.close(); } catch {} const part = cropRows(kc, box); kc.width = kc.height = 0; ink = await canvasBlob(part, 'image/png'); part.width = part.height = 0; } catch { ink = null; } }
+      const rec = { id: pageKey(id, i, copy.stamp), kind: 'ipadpage', stamp: copy.stamp, w: W, h: H, img, ink, pv: 2 };
       await db.put('files', rec).catch(() => {});
       return rec;
     });
@@ -299,10 +316,11 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const id = copy.id.slice(9);
     return job(pri, 'pl:' + copy.id + ':' + copy.stamp + ':' + i, async () => {
       const kept = await db.get('files', playKey(copy, i)).catch(() => null);
-      if (kept && kept.kind === 'pdfplay' && Array.isArray(kept.lines)) return kept.lines;
+      if (kept && kept.kind === 'pdfplay' && Array.isArray(kept.lines) && (kept.pv === 2 || !mayHaveParts(copy))) return kept.lines;
       const T0 = performance.now();
       const { doc } = await pdfDoc(copy);
       if (!(i >= 0 && i < doc.pages)) return [];
+      const box = pieceOf(doc, i);   // (only the lines of its part of the page)
       const [pw, ph] = doc.sizes[i], W = 2400, H = Math.round((W * ph) / pw);
       const c = document.createElement('canvas');
       try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return null; }
@@ -325,6 +343,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       const edges = Ls.length ? cleanEdges(pg, W, H, Ls) : [];
       for (let li = 0; li < Ls.length; li++) {
         const L = Ls[li], E = edges[li];
+        if (box) { const m = (E.a + E.b) / 2 / H; if (m < box.y || m > box.y + box.h) continue; }
         const sx = E.sx, sy = E.a, sw = E.sw, sh = Math.max(1, E.b - E.a);
         const lc = document.createElement('canvas'); lc.width = Math.round(sw); lc.height = Math.round(sh);
         const lg = lc.getContext('2d', { alpha: false, willReadFrequently: true }); lg.drawImage(c, sx, sy, sw, sh, 0, 0, lc.width, lc.height);
@@ -344,7 +363,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       }
       c.width = c.height = 0;
       try { inkB && inkB.close(); } catch {}
-      await db.put('files', { id: playKey(copy, i), kind: 'pdfplay', lines: out }).catch(() => {});
+      await db.put('files', { id: playKey(copy, i), kind: 'pdfplay', lines: out, pv: 2 }).catch(() => {});
       (window.__ppT = window.__ppT || []).push([i, Math.round(T1 - T0), Math.round(T2 - T1), Math.round(performance.now() - T2)]);
       return out;
     });

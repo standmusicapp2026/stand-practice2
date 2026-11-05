@@ -275,7 +275,8 @@ let swallowClick = false;
 document.addEventListener('pointerdown', (e) => {
   swallowClick = false;
   if (!openPanel) return;
-  if (e.target.closest('.panel, .topbar, .dock, .tiles, .inkbar, .toast, .cam, .picker, .cp-pal, .cp-sel, .cp-zoom, .studio, .tour')) return;
+  // (a question or a window shown over the panel — Link, Forget, Delete… — is part of it: its taps count)
+  if (e.target.closest('.panel, .topbar, .dock, .tiles, .inkbar, .toast, .cam, .picker, .cp-pal, .cp-sel, .cp-zoom, .studio, .tour, .ask-back, .ptool')) return;
   e.stopPropagation(); swallowClick = true; hidePanel();
 }, { capture: true });
 document.addEventListener('pointerup', (e) => { if (swallowClick) e.stopPropagation(); }, { capture: true });
@@ -5877,8 +5878,10 @@ function linesForPhone(id, i) {
     if (items.length) { await preloadAssets(items); await preloadMasks(items); k2 = document.createElement('canvas'); k2.width = W; k2.height = H; const g = k2.getContext('2d'); for (const it of items) drawItem(g, it, W, H, false); }
     const out = [];
     const edges = cleanEdges(c.getContext('2d', { willReadFrequently: true }), W, H, lines);
+    const part = phonePart(doc, i);   // (a part of a page: only its lines)
     for (let li = 0; li < edges.length; li++) {
       const E = edges[li], Ln = lines[li];
+      if (part) { const m = (E.a + E.b) / 2 / H; if (m < part.y || m > part.y + part.h) continue; }
       const sx = E.sx, sy = E.a, sw = E.sw, sh = Math.max(1, E.b - E.a);
       const lc = document.createElement('canvas'); lc.width = sw; lc.height = sh;
       const lg = lc.getContext('2d', { alpha: false, willReadFrequently: true }); lg.drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -5904,6 +5907,14 @@ function linesForPhone(id, i) {
   });
 }
 const BLANK_ONCE = new Set();
+// a page that is only part of a page (lines moved up onto the page before, a cut page): its box
+const phonePart = (doc, i) => { try { if (doc.composite && doc.composite(i)) return null; const b = doc.piece && doc.piece(i); return b && b.h > 0 && b.h < 1 ? b : null; } catch { return null; } };
+const cropPart = (src, b) => {
+  const sy = Math.round(b.y * src.height), sh = Math.max(1, Math.min(src.height - sy, Math.round(b.h * src.height)));
+  const o = document.createElement('canvas'); o.width = src.width; o.height = sh;
+  o.getContext('2d').drawImage(src, 0, sy, src.width, sh, 0, 0, src.width, sh);
+  return o;
+};
 function pageForPhone(id, i) {
   // one page at a time, in turn (two questions at once never draw two pages together)
   return phoneJob(async () => {
@@ -5915,9 +5926,12 @@ function pageForPhone(id, i) {
     if (!(i >= 0 && i < doc.pages)) throw new Error('none');
     const [pw, ph] = doc.sizes[i], W = 1170, H = Math.round((W * ph) / pw);
     if (i === 0) nlog('iPad: sending a score to the iPhone (' + doc.pages + ' pages)');
-    const c = document.createElement('canvas');
+    let c = document.createElement('canvas');
     // (a page that could not be drawn is an error, never a white page kept on the iPhone)
     try { await doc.render(i, c, W, H); } catch (e) { c.width = c.height = 0; throw new Error('draw'); }
+    // (a part of a page — what is left after lines were moved up, a piece of a cut page — only that part)
+    const part = phonePart(doc, i);
+    if (part) { const whole = c; c = cropPart(whole, part); whole.width = whole.height = 0; }
     // (a page that came out white or black, the iPad short of memory: asked again later, never sent)
     // (drawn white twice: the page really is empty, and it is sent)
     const bk = id + ':' + i;
@@ -5930,12 +5944,13 @@ function pageForPhone(id, i) {
     const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
     if (items.length) {
       await preloadAssets(items); await preloadMasks(items);
-      const k = document.createElement('canvas'); k.width = W; k.height = H; const g = k.getContext('2d');
+      let k = document.createElement('canvas'); k.width = W; k.height = H; const g = k.getContext('2d');
       for (const it of items) drawItem(g, it, W, H, false);
+      if (part) { const whole = k; k = cropPart(whole, part); whole.width = whole.height = 0; }
       ink = await canvasData(k, 'image/png'); k.width = k.height = 0;
     }
     P.t = Date.now();
-    return { v: 2, id, i, w: W, h: H, img, ink };
+    return { v: 2, id, i, w: W, h: part ? Math.max(1, Math.round(part.h * H)) : H, img, ink };
   });
 }
 async function scoresForPhone() {
