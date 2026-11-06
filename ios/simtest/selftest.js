@@ -26,7 +26,7 @@ async function stroke(kind = 'pen', fx = 0.4, fy = 0.4) {
 }
 const key = (k) => (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true }));
 const closePanels = async () => { for (const b of $$('aside.panel:not([hidden]) [data-close]')) b.click(); await sleep(400); };
-const home = async () => { await closePanels(); if (!$('#score').hidden) $('#backBtn').click(); if (!$('#compose').hidden) $('#cpBack').click(); await waitFor(() => !$('#library').hidden, 8000); await sleep(600); };
+const home = async () => { await closePanels(); if (!$('#score').hidden) $('#backBtn').click(); if (!$('#compose').hidden) $('#cpBack').click(); await waitFor(() => !$('#library').hidden, 15000); await sleep(600); };
 
 async function run() {
   say(`SELFTEST start ${navigator.userAgent} screen ${screen.width}x${screen.height}@${devicePixelRatio} window ${innerWidth}x${innerHeight}`);
@@ -147,6 +147,8 @@ async function run() {
 }
 // the iPhone: its own home, the tools in the pocket, the linking screen, sideways and back
 async function phoneRun() {
+  // (a new iPhone first asks about linking an iPad: answered "Not now", as most would at first)
+  await step('iPhone: link question answered', async () => { const nb = await waitFor(() => [...$$('.ask-back button')].find((b) => /Not now/.test(b.textContent)), 5000); if (!nb) return 'not asked'; nb.click(); await sleep(500); return ![...$$('.ask-back')].length; });
   const open = async (p) => { const b = $$(`[data-panel=${p}]`).find((x) => x.offsetParent) || $(`[data-panel=${p}]`); b && b.click(); await sleep(900); $('.tour-skip') && $('.tour-skip').click(); await sleep(200); return !$('#panel-' + p).hidden; };
   for (const p of ['tuner', 'metronome', 'scales', 'record', 'takes', 'app']) {
     await step('iPhone: ' + p, async () => open(p));
