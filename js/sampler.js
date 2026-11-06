@@ -276,7 +276,7 @@ export class Sampler {
       // moment later; the section grows from a few desks to a full one and its sound evens out
       let alt = null;
       if (/^(violins|violas|cellos|basses)$/.test(sid) && (kind === 'sus' || kind === 'trem') && (globalThis.__ens2 ?? 1) && !this.plain) {
-        let am = null; for (const m of list) if (m !== best && Math.abs(m - midi) <= 4 && (am === null || Math.abs(m - midi) < Math.abs(am - midi))) am = m;
+        let am = null; for (const m of (I.n[set] || list)) if (m !== best && Math.abs(m - midi) <= 4 && (am === null || Math.abs(m - midi) < Math.abs(am - midi))) am = m;
         if (am !== null) alt = this.load(set, am, L.includes('p') && vel < 0.52 ? 'p' : L.includes('f') ? 'f' : L[0], kind).catch(() => null);
       }
       const altS = alt ? await alt : null;
@@ -342,7 +342,7 @@ export class Sampler {
     for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
     return this.load(sid, best);
   }
-  load(sid, m, layer = null, kind = null, take = 1) {
+  load(sid, m, layer = null, kind = null, take = 1, other = true) {
     const key = sid + ':' + m + (layer ? ':' + layer : '') + (take > 1 ? ':r' + take : '');
     // (the concert grand's recordings are long and in stereo: kept within a limit, the ones not used
     // for longest let go first, never one used in the last half minute)
@@ -364,6 +364,9 @@ export class Sampler {
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
         .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings || /^p_/.test(sid) ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, oneLayer: /_solo$/.test(sid) && sid !== 'vl_solo' && sid !== 'vc_solo3', tc: ((((await loadIndex()).T || {})[sid] || {})[m + (layer ? '_' + layer : '')] ?? (((await loadIndex()).T || {})[sid] || {})[m]) || 0, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, pc: (((await loadIndex()).PC || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, pcT: (await loadIndex()).PCT || null, atkT: (await loadIndex()).AT || null }));
       p.catch(() => this.buffers.delete(key));
+      // (a set recorded at one strength only in part of its range — the basses' pizzicato soft only up
+      // to A♭2, a violin's top notes — : the other recording of that note, never silence)
+      if ((layer === 'p' || layer === 'f') && other) { const p2 = p.catch(() => this.load(sid, m, layer === 'p' ? 'f' : 'p', kind, take, false)); this.buffers.set(key, p2); return p2; }
       if (sid === 'grand2') p.then((x) => { const e = this.lru && this.lru.get(key); if (e && x && x.buf) e.bytes = x.buf.length * x.buf.numberOfChannels * 4; }, () => {});
       this.buffers.set(key, p);
     }

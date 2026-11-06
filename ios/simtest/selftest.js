@@ -47,12 +47,14 @@ async function run() {
     const buf = await (await fetch('_selftest/vector8.pdf')).arrayBuffer();
     const f = new File([buf], 'Cello Suite selftest.pdf', { type: 'application/pdf' });
     const dt = new DataTransfer(); dt.items.add(f);
+    // (the sample score may already be in the library: wait for one more card, this one)
+    const n0 = $$('#grid .card:not(.folder)').length;
     const inp = $('#importInput'); inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true }));
-    return !!(await waitFor(() => $$('#grid .card:not(.folder)').length >= 1, 30000));
+    return !!(await waitFor(() => $$('#grid .card:not(.folder)').length >= n0 + 1, 30000));
   });
   await shot('02-library');
   await step('open the score', async () => {
-    $('#grid .card:not(.folder)').click();
+    const cards = $$('#grid .card:not(.folder)'); (cards.find((c) => /selftest|Cello Suite No\. 1\b/i.test(c.textContent)) || cards[0]).click();
     return !!(await waitFor(() => $$('#stage canvas.art').length && $$('#stage canvas.art').every((c) => c.width > 10), 20000));
   });
   await shot('03-score');
