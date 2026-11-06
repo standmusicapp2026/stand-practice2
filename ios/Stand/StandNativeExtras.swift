@@ -212,8 +212,12 @@ final class StandNativeExtras: NSObject {
             }
         }
         if let p = progress {
+            // (told to the page at most every 1 % and 0.1 s: every tiny step woke the page thousands of times)
+            var lastF = -1.0, lastT = 0.0
             progressObservers[id] = p.observe(\.fractionCompleted, options: [.new]) { [weak self] p, _ in
-                let f = p.fractionCompleted
+                let f = p.fractionCompleted, t = CACurrentMediaTime()
+                if f < 1 && (f - lastF < 0.01 || t - lastT < 0.1) { return }
+                lastF = f; lastT = t
                 self?.js("window.standPeerProgress && window.standPeerProgress(\(self?.jsValue(id) ?? "null"), \(f), 'out')")
             }
         }
@@ -561,8 +565,12 @@ extension StandNativeExtras: MCSessionDelegate {
         let meta = (try? JSONSerialization.jsonObject(with: Data(resourceName.utf8))) as? [String: Any] ?? [:]
         let id = (meta["id"] as? String) ?? ""
         DispatchQueue.main.async {
+            var lastF = -1.0, lastT = 0.0
             self.progressObservers["in-" + id] = progress.observe(\.fractionCompleted, options: [.new]) { [weak self] p, _ in
-                self?.js("window.standPeerProgress && window.standPeerProgress(\(self?.jsValue(id) ?? "null"), \(p.fractionCompleted), 'in')")
+                let f = p.fractionCompleted, t = CACurrentMediaTime()
+                if f < 1 && (f - lastF < 0.01 || t - lastT < 0.1) { return }
+                lastF = f; lastT = t
+                self?.js("window.standPeerProgress && window.standPeerProgress(\(self?.jsValue(id) ?? "null"), \(f), 'in')")
             }
         }
     }
