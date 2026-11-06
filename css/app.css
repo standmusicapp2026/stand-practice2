@@ -632,7 +632,7 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 #refA.on, #refB.on { background: var(--accent); color: var(--accent-ink); }
 .mini-list a.go { color: var(--ink); text-decoration: none; }
 
-.toast { position: fixed; z-index: 60; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 74px); background: var(--ink); color: var(--bg); padding: 11px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; }
+.toast { position: fixed; z-index: 60; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 74px); background: var(--ink); color: var(--bg); padding: 11px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; pointer-events: none; }
 
 @media (max-width: 760px) {
   .tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }

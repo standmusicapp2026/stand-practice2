@@ -146,11 +146,14 @@ async function readInThread(page) {
   });
 }
 async function keepLines(page, lines) {
+  // (the picker closed while the page was being read: nothing to keep it for)
+  if (!PK.doc) return;
   PK.linesCache.set(pageKey(page), lines);
   const k = keepKey(); if (!k || !lines) return;
   try { const cur = (await getSetting(k, null)) || {}; cur[origOf(page)] = lines; await setSetting(k, cur); } catch {}
 }
 async function keptLines(page) {
+  if (!PK.doc) return null;
   const mem = PK.linesCache.get(pageKey(page)); if (mem) return mem;
   const k = keepKey(); if (!k) return null;
   try { if (!PK.kept) PK.kept = (await getSetting(k, null)) || {}; const l = PK.kept[origOf(page)]; if (l) { PK.linesCache.set(pageKey(page), l); return l; } } catch {}
@@ -166,7 +169,7 @@ function wantAround(page) {
 }
 async function pump() {
   if (RQ.running || !PK.doc) return;
-  RQ.running = true;
+  RQ.running = true; let again = false;
   try {
     while (PK.doc && RQ.want.length) {
       const page = RQ.want[0];
@@ -177,7 +180,7 @@ async function pump() {
       if (page !== PK.page) await idle();
       if (!PK.doc || RQ.want[0] !== page) continue;
       if (page === PK.page) $('#pkFinding').hidden = false;
-      let lines = null;
+      let lines = null; const doc0 = PK.doc;
       try {
         if (lwBroken) {
           // (no thread at all on this device: the page shown only, read here once it is shown)
@@ -185,11 +188,13 @@ async function pump() {
         } else lines = await readInThread(page);
       } catch (err) { console.warn(err); lines = null; }
       if (lines === 'dropped') continue;
+      // (closed, or another score opened, while this page was read: its lines belong to neither)
+      if (!PK.doc || PK.doc !== doc0) { again = !!PK.doc; break; }
       if (RQ.want[0] === page) RQ.want.shift();
       if (lines) await keepLines(page, lines);
       if (page === PK.page) { if (lines) linesReady(page); else { PK.lines = []; linesReady(page, true); } }
     }
-  } finally { RQ.running = false; }
+  } finally { RQ.running = false; if (again) setTimeout(pump, 0); }
 }
 function linesReady(page, failed) {
   if (PK.page !== page || !PK.doc) return;
