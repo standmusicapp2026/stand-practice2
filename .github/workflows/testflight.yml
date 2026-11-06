@@ -1,12 +1,14 @@
 name: Send to TestFlight
 
 # Builds Stand signed for the App Store and uploads it to TestFlight.
-# Run it by hand (Actions -> Send to TestFlight -> Run workflow).
+# It runs when the testflight branch is pushed (or by hand once it is on the default branch).
 # The only secret is ASC_KEY_P8 (the App Store Connect API key file);
 # the IDs below are not secret.
 
 on:
   workflow_dispatch:
+  push:
+    branches: [testflight]
 
 permissions:
   contents: read
