@@ -62,6 +62,9 @@ final class StandDiagnostics: NSObject, MXMetricManagerSubscriber {
 
 final class StandFiles {
     private var open: [String: (FileHandle, URL, URL)] = [:]   // id → (handle, temporary file, final place)
+    // files written to be shared (a long video): id → the app to send it to ("" for the share sheet)
+    private var sharing: [String: String] = [:]
+    var share: ((URL, String) -> Void)?
     private var busyTask: UIBackgroundTaskIdentifier = .invalid
     private var busyWhy: Set<String> = []
     var send: ((String, [String: Any]) -> Void)?
@@ -90,7 +93,11 @@ final class StandFiles {
         let id = body["id"] as? String ?? ""
         switch body["op"] as? String {
         case "begin":
-            let dest = folderURL(body["folder"] as? String ?? "").appendingPathComponent(clean(body["name"] as? String ?? "file"))
+            // (to be shared: written piece by piece into a temporary folder, never whole in memory)
+            let toShare = body["share"] as? Bool ?? false
+            let shareDir = FileManager.default.temporaryDirectory.appendingPathComponent("share", isDirectory: true)
+            if toShare { try? FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true); sharing[id] = body["to"] as? String ?? "" }
+            let dest = (toShare ? shareDir : folderURL(body["folder"] as? String ?? "")).appendingPathComponent(clean(body["name"] as? String ?? "file"))
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("save-" + UUID().uuidString)
             FileManager.default.createFile(atPath: tmp.path, contents: nil)
             guard let h = try? FileHandle(forWritingTo: tmp) else { send?("standSaved", ["id": id, "ok": false, "error": "open"]); return }
@@ -114,13 +121,19 @@ final class StandFiles {
                 // (the old file is swapped for the new one in one step: never a moment with neither)
                 if FileManager.default.fileExists(atPath: dest.path) { _ = try FileManager.default.replaceItemAt(dest, withItemAt: tmp) }
                 else { try FileManager.default.moveItem(at: tmp, to: dest) }
+                if let to = sharing.removeValue(forKey: id) {
+                    send?("standSaved", ["id": id, "ok": true, "path": ""])
+                    DispatchQueue.main.async { [weak self] in self?.share?(dest, to) }
+                    return
+                }
                 let rel = String(dest.path.dropFirst(documentsDir.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 send?("standSaved", ["id": id, "ok": true, "path": rel])
             } catch {
-                try? FileManager.default.removeItem(at: tmp)
+                try? FileManager.default.removeItem(at: tmp); sharing.removeValue(forKey: id)
                 send?("standSaved", ["id": id, "ok": false, "error": error.localizedDescription])
             }
         case "cancel":
+            sharing.removeValue(forKey: id)
             if let e = open.removeValue(forKey: id) { try? e.0.close(); try? FileManager.default.removeItem(at: e.1) }
         case "remove":
             // one file the app itself wrote earlier (a score copy that was renamed or moved)

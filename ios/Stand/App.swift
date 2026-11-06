@@ -147,7 +147,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -174,6 +174,11 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         tapper.onEvent = { [weak self] event in self?.send("standTapEvent", event) }
         video.onEvent = { [weak self] event in self?.send("standVideoEvent", event) }
         files.send = { [weak self] fn, payload in self?.send(fn, payload) }
+        // a big file (a long video) written in pieces, then shared as the small ones are
+        files.share = { [weak self] url, to in
+            guard let self = self else { return }
+            if !to.isEmpty { self.shareTo(to, url) } else { self.presentShareSheet(url) }
+        }
         // Apple Pencil double-tap (and squeeze on Pencil Pro) switches to the eraser and back.
         let pencil = UIPencilInteraction()
         pencil.delegate = self

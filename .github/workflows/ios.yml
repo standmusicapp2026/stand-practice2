@@ -6,16 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: 'Mac to build on (when the Intel ones are not to be had: macos-15)'
-        default: 'macos-15-intel'
+        description: 'Mac to build on (macos-26: Xcode 26 and the iOS 26 SDK, which the App Store asks for)'
+        default: 'macos-26'
 
 permissions:
   contents: write
 
 jobs:
   ipa:
-    # (the Intel Macs: the Apple-chip ones are often too busy and the build waited for hours)
-    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
+    # (Xcode 26 with the iOS 26 SDK: the App Store takes only apps built with it)
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     steps:
       - uses: actions/checkout@v4
 
