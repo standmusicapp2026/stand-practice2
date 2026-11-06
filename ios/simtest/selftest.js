@@ -34,6 +34,15 @@ async function run() {
   await sleep(1500);
   await step('start', async () => { $('#welGo') && $('#welGo').click(); await sleep(600); $('.tour-skip') && $('.tour-skip').click(); await sleep(400); return !!window.__standUp; });
   await shot('01-home');
+  if (document.body.classList.contains('phone')) return phoneRun();
+  // the sample score from the empty library (the first thing a new musician may tap)
+  await step('sample score', async () => {
+    const b = $('#sampleBtn'); if (!b || !b.offsetParent) return 'no empty library here';
+    b.click();
+    return !!(await waitFor(() => !$('#score').hidden && $$('#stage canvas.art').length && $$('#stage canvas.art').every((c) => c.width > 10), 30000));
+  });
+  await shot('01b-sample');
+  await home();
   await step('import a PDF', async () => {
     const buf = await (await fetch('_selftest/vector8.pdf')).arrayBuffer();
     const f = new File([buf], 'Cello Suite selftest.pdf', { type: 'application/pdf' });
@@ -106,6 +115,13 @@ async function run() {
   });
   await shot('10-compose');
   await step('back home 3', async () => { await home(); return !$('#library').hidden; });
+  await step('Compose example (Holst, orchestra)', async () => {
+    $('[data-panel=compose]').click(); await sleep(800); $('.tour-skip') && $('.tour-skip').click();
+    $('#cnExample').click();
+    return !!(await waitFor(() => !$('#compose').hidden && $$('#compose canvas').length > 0, 20000));
+  });
+  await shot('10b-jupiter');
+  await step('back home 4', async () => { await home(); return !$('#library').hidden; });
   await step('settings', async () => { $('[data-panel=app]').click(); await sleep(800); return !$('#panel-app').hidden; });
   await shot('11-settings');
   // linking a device: the card in Settings, and the linking screen (looking; nothing nearby here)
@@ -126,6 +142,20 @@ async function run() {
   });
   await shot('13-after-turns');
   await home();
+  for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);
+  say(`SELFTEST DONE ok=${R.ok} fail=${R.fail} errors=${(window.__standErrors || []).length}`);
+}
+// the iPhone: its own home, the tools in the pocket, the linking screen, sideways and back
+async function phoneRun() {
+  const open = async (p) => { const b = $$(`[data-panel=${p}]`).find((x) => x.offsetParent) || $(`[data-panel=${p}]`); b && b.click(); await sleep(900); $('.tour-skip') && $('.tour-skip').click(); await sleep(200); return !$('#panel-' + p).hidden; };
+  for (const p of ['tuner', 'metronome', 'scales', 'record', 'takes', 'app']) {
+    await step('iPhone: ' + p, async () => open(p));
+    await shot('p-' + p);
+    await closePanels();
+  }
+  await step('iPhone: metronome plays', async () => { await open('metronome'); $('#metroToggle').click(); await sleep(2500); $('#metroToggle').click(); await sleep(300); await closePanels(); return true; });
+  await step('iPhone: linking screen', async () => { await open('app'); const c = $('#pairCard'); c && c.scrollIntoView(); await sleep(400); const n = $('#pairNew'); if (!n) return 'no button'; n.click(); await sleep(1500); const ok = !!$('.pair'); const x = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); x && x.click(); await sleep(400); await closePanels(); return ok; });
+  await shot('p-end');
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);
   say(`SELFTEST DONE ok=${R.ok} fail=${R.fail} errors=${(window.__standErrors || []).length}`);
 }

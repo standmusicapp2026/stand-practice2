@@ -23,11 +23,12 @@ echo "runtimes: $RUNTIMES" | tee -a "$SUMMARY"
 
 # the devices wanted (the first of each group that this machine has)
 WANT=(
-  "iPad mini (6th generation)|iPad mini (A17 Pro)|iPad mini"
-  "iPad (10th generation)|iPad (A16)|iPad (9th generation)"
-  "iPad Pro 13-inch (M4)|iPad Pro (12.9-inch) (6th generation)|iPad Pro (12.9-inch)"
-  "iPhone SE (3rd generation)|iPhone 16e|iPhone SE"
-  "iPhone 16 Pro Max|iPhone 15 Pro Max|iPhone 14 Pro Max"
+  "iPad mini (A17 Pro)|iPad mini (6th generation)|iPad mini"
+  "iPad (A16)|iPad (10th generation)|iPad (9th generation)"
+  "iPad Pro 13-inch (M5)|iPad Pro 13-inch (M4)|iPad Pro (12.9-inch) (6th generation)"
+  "iPhone 16e|iPhone SE (3rd generation)|iPhone SE"
+  "iPhone 17|iPhone 16|iPhone 15"
+  "iPhone 17 Pro Max|iPhone 16 Pro Max|iPhone 15 Pro Max"
 )
 TYPES=$(xcrun simctl list devicetypes -j)
 typeid() { echo "$TYPES" | python3 -c "
@@ -43,7 +44,7 @@ while IFS= read -r RT; do
   RID="${RT%%|*}"; RV="${RT##*|}"; RROOT=$(echo "$RT" | cut -d'|' -f2); i=$((i+1))
   for W in "${WANT[@]}"; do
     # on the older runtime only one iPad and one iPhone (time is counted)
-    if [ $i -gt 1 ] && [[ "$W" != iPad\ \(10th* && "$W" != iPhone\ SE* ]]; then continue; fi
+    if [ $i -gt 1 ] && [[ "$W" != iPad\ \(A16* && "$W" != iPhone\ 16e* ]]; then continue; fi
     T=$(typeid "$W"); [ -z "$T" ] && { echo "no device type for $W" | tee -a "$SUMMARY"; continue; }
     TID="${T%%|*}"; TNAME="${T##*|}"
     TAG=$(echo "$TNAME-iOS$RV" | tr ' ()' '_--' | tr -s '_-')

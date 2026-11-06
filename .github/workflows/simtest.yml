@@ -6,10 +6,15 @@ on:
   push:
     branches: [simtest]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Mac to run on'
+        default: 'macos-26'
 
 jobs:
   simtest:
-    runs-on: macos-15-intel
+    # (Xcode 26 and the iOS 26 simulators, on an Apple-chip Mac)
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +24,7 @@ jobs:
           mkdir -p ios/Stand/www
           cp -R index.html manifest.webmanifest css js vendor icons ios/Stand/www/
           if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
+          if [ -d examples ]; then cp -R examples ios/Stand/www/; fi
           cp ios/simtest/selftest.js ios/Stand/www/js/selftest.js
           mkdir -p ios/Stand/www/_selftest && cp ios/simtest/vector8.pdf ios/Stand/www/_selftest/
 
@@ -32,7 +38,7 @@ jobs:
         run: |
           set -o pipefail
           cd ios
-          xcodebuild -project Stand.xcodeproj -target Stand -configuration Debug -sdk iphonesimulator -arch x86_64 \
+          xcodebuild -project Stand.xcodeproj -target Stand -configuration Debug -sdk iphonesimulator -arch $(uname -m) \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" ONLY_ACTIVE_ARCH=NO \
             build | tail -n 30
           ls build/Debug-iphonesimulator/
