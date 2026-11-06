@@ -242,10 +242,13 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       if (!src || !src.data) throw new Error('nosrc');
       const st = copy.struct || {};
       const data = src.data instanceof Blob ? await src.data.arrayBuffer() : src.data;
-      const base = await openDocument({ id: verKey(copy.id.slice(9), copy.stamp) + 'src', kind: 'pdf', data, ...(st.rot ? { rot: st.rot } : {}) }, st.sizes || null);
+      const fileObj = { id: verKey(copy.id.slice(9), copy.stamp) + 'src', kind: 'pdf', data, ...(st.rot ? { rot: st.rot } : {}) };
+      const base = await openDocument(fileObj, st.sizes || null);
+      // (the PDF reader has its own copy now: this one is let go, not kept as long as the score is open)
+      const mb = data.byteLength / 1048576; fileObj.data = null;
       const doc = mapDoc(base, st.pageMap || null, st.cuts || null, st.glue || null);
       // (what the problem report needs to explain a score that closes Stand)
-      try { nlog('iPhone: opening a score (' + doc.pages + ' pages, ' + (data.byteLength / 1048576).toFixed(1) + ' MB' + (st.glue && Object.keys(st.glue).length ? ', lines moved up on ' + Object.keys(st.glue).length : '') + (st.cuts && Object.keys(st.cuts).length ? ', ' + Object.keys(st.cuts).length + ' pages cut' : '') + ')'); } catch {}
+      try { nlog('iPhone: opening a score (' + doc.pages + ' pages, ' + mb.toFixed(1) + ' MB' + (st.glue && Object.keys(st.glue).length ? ', lines moved up on ' + Object.keys(st.glue).length : '') + (st.cuts && Object.keys(st.cuts).length ? ', ' + Object.keys(st.cuts).length + ' pages cut' : '') + ')'); } catch {}
       return { base, doc };
     })();
     p.catch(() => { if (PDOC.p === p) { PDOC.key = null; PDOC.p = null; } });

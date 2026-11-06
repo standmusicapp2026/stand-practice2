@@ -1074,6 +1074,17 @@ function readStaff(s, ctx, header) {
     if (nb.length) hd.stem = { ...alt, alt: st };
   }
   if (TR) for (const hd of heads) if (Math.abs(hd.cx - TR.x) < sp * 0.8) TR.log.push(['stemA', hd.stem && [Math.round(hd.stem.x), Math.round(hd.stem.end), hd.stem.up, hd.stem.alt && Math.round(hd.stem.alt.end)]]);
+  // Old engravings have beams far thicker than today's (about 0.8 of a staff space, not 0.5), and two
+  // of them close together read as one run of ink as long as three thin ones. The beams of this staff
+  // are measured first; when they are thick, each run is counted by their own thickness.
+  beamUnit = null;
+  if (!globalThis.__noBeamUnit) {
+    beamProbe = [];
+    for (const hd of heads) if (hd.stem) beamsOf(C, w, h, hd.stem, sp);
+    const singles = beamProbe.filter((v) => v >= 0.3 && v <= 1.25).sort((a, b2) => a - b2);
+    beamProbe = null;
+    if (singles.length >= 8) { const m = singles[singles.length >> 1]; if (m > 0.66) beamUnit = m; }
+  }
   for (const hd of heads) {
     hd.beams = hd.stem ? beamsOf(C, w, h, hd.stem, sp) : 0;
     hd.dots = dotOf(C, w, h, hd, s, sp, labC, ctx.rawC);
@@ -1945,6 +1956,8 @@ function stemOf(C, w, h, hd, rx, sp, gapK = 0.24) {
   if (best) best.alt = best === bestU ? bestD : bestU;
   return best;
 }
+// how thick a beam is on this staff, in staff spaces, when beams are thick (null: as usual)
+let beamUnit = null, beamProbe = null;
 function beamsOf(C, w, h, stem0, sp) {
   const dir = stem0.up ? 1 : -1;     // from the end of the stem back toward the head
   // a stem in the middle of a beamed group may seem to end at the first beam it meets: its real
@@ -1961,7 +1974,14 @@ function beamsOf(C, w, h, stem0, sp) {
   const runs = (x, merge) => {
     if (x < 0 || x >= w) return 0;
     let y = Math.round(stem.end - dir * sp * 0.35), n = 0, inRun = false, len = 0, firstAt = null, gapAfter = 0;
-    const count = (L) => (L < sp * 0.2 ? 0 : !merge || L <= sp * 0.95 ? 1 : L <= sp * 1.7 ? 2 : 3);
+    const count = (L) => {
+      if (merge && beamProbe) beamProbe.push(L / sp);
+      if (L < sp * 0.2) return 0;
+      if (!merge) return 1;
+      // (thick beams, as in old engravings: how many beams a run of ink is, by this page's own beam)
+      if (beamUnit) { const g = 0.18; return Math.max(1, Math.min(3, Math.round((L / sp + g) / (beamUnit + g)))); }
+      return L <= sp * 0.95 ? 1 : L <= sp * 1.7 ? 2 : 3;
+    };
     for (let k = 0; k < sp * 3; k++, y += dir) {
       if (y < 0 || y >= h) break;
       const d = C[y * w + x] || C[y * w + x + 1];
@@ -2627,6 +2647,29 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     const st = read[idx];
     if (si > 0) { const before = read[systems[si - 1][Math.min(k, systems[si - 1].length - 1)]]; if (!st.clef) st.clef = before.clef; if (!st.time) st.time = before.time; }
   }));
+  // a line whose start was misread (a small or blurred picture): the clef AND the key both unlike
+  // the lines around it, which agree with each other, is that misreading; it takes theirs. (A real
+  // change of clef at the start of a line keeps the key; a real change of key keeps the clef; and a
+  // key unlike the lines before and after, which agree, is a misread key.)
+  if (!globalThis.__noStartFix && systems.length >= 3) {
+    const nParts = Math.max(...systems.map((sy) => sy.length));
+    for (let k = 0; k < nParts; k++) {
+      const col = systems.map((sy) => (sy.length === nParts ? read[sy[k]] : null));
+      for (let si = 0; si < col.length; si++) {
+        const st = col[si]; if (!st) continue;
+        const nb = [col[si - 1], col[si + 1], col[si - 2], col[si + 2]].filter(Boolean);
+        const agree = (x, y) => x.clef === y.clef && (x.key || 0) === (y.key || 0);
+        // (the lines around: two next to it that agree, or three of the four nearest)
+        let a2 = null;
+        for (const x of nb) { const n = nb.filter((y) => agree(x, y)).length; if (n >= 3 || (n >= 2 && nb.length <= 3)) { a2 = x; break; } }
+        if (!a2 && nb[0] && nb[1] && agree(nb[0], nb[1])) a2 = nb[0];
+        if (!a2) continue;
+        const clefOff = st.clef !== a2.clef, keyOff = (st.key || 0) !== (a2.key || 0);
+        if (clefOff && keyOff) { st.clef = a2.clef; st.key = a2.key || 0; if (st.head) { st.head.clef = st.clef; st.head.key = st.key; } st.startFixed = true; }
+        else if (keyOff && !clefOff && si > 0 && si < col.length - 1 && col[si - 1] && col[si + 1] && agree(col[si - 1], col[si + 1])) { st.key = a2.key || 0; if (st.head) st.head.key = st.key; st.startFixed = true; }
+      }
+    }
+  }
   // back to the coordinates of the picture we were given
   const back = (x, y) => {
     let X = x, Y = y;
@@ -2979,7 +3022,9 @@ function chooseTime(st, bars) {
     const tot = (WHOLE * t[0]) / t[1];
     if (!inner.length) return 0;
     let n = 0;
-    for (const b of inner) { const f = fitBar(b, tot, { tupletsOnly: true }); const s2 = f.reduce((a, it) => a + (it.full ? tot : ticksOf(it.t, it.dots) * (it.tup ? it.tup.m / it.tup.n : 1)), 0); if (Math.abs(s2 - tot) < 1) n++; }
+    // (a bar that adds up only by taking groups of three as triplets with no number seen counts
+    // half: twelve quavers beamed in threes are 12/8, not 4/4 in triplets, nor 9/8 or 5/4 with some)
+    for (const b of inner) { const f = fitBar(b, tot, { tupletsOnly: true }); const s2 = f.reduce((a, it) => a + (it.full ? tot : ticksOf(it.t, it.dots) * (it.tup ? it.tup.m / it.tup.n : 1)), 0); if (Math.abs(s2 - tot) < 1) n += f.some((it, k) => it.tup && !(b[k] && b[k].tupG)) ? 0.5 : 1; }
     return n / inner.length;
   };
   const cands = [[4, 4], [3, 4], [2, 4], [6, 8], [2, 2], [3, 8], [9, 8], [12, 8], [5, 4], [6, 4], [3, 2]];

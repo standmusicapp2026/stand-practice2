@@ -833,6 +833,18 @@ async function addImages(blobs, name) {
   await db.put('files', file); await db.put('scores', score);
   return score;
 }
+// A score to try Stand with at once: Bach's third cello suite (Mutopia Project, placed in the public
+// domain by its typesetter), added like any other score, and opened.
+$('#sampleBtn')?.addEventListener('click', async () => {
+  const b = $('#sampleBtn'); b.disabled = true;
+  try {
+    const r = await fetch('examples/bach-cello-suite-3.pdf'); if (!r.ok) throw new Error('missing');
+    const sc = await addPdf(await r.arrayBuffer(), 'Bach - Cello Suite No. 3', { title: 'Cello Suite No. 3 in C major, BWV 1009', composer: 'Johann Sebastian Bach' });
+    sc.source = 'Mutopia Project (public domain)'; await db.put('scores', sc);
+    await refreshLibrary(); await openScore(sc.id);
+  } catch (e) { console.warn(e); toast('The sample score could not be opened just now.', 3500); }
+  finally { b.disabled = false; }
+});
 $('#scanBtn').addEventListener('click', () => {
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standScan && (window.standCaps || {}).scan) window.webkit.messageHandlers.standScan.postMessage({});
   else $('#scanInput').click();
@@ -7604,7 +7616,13 @@ $('#takeImportFile').addEventListener('change', async (e) => {
   toast('Bringing in the video…', 60000);
   try {
     const blob = f.slice(0, f.size, f.type || 'video/mp4');
-    const audio = await decodeVideoAudio(blob);
+    // (its sound is read for Studio to follow, unless the video is so big or long that reading all of
+    // it at once could take the memory iOS gives Stand: then it comes in without, Tap along still works)
+    const durOf = () => new Promise((res) => { const v = document.createElement('video'); v.preload = 'metadata'; const u = URL.createObjectURL(blob); const end = (d) => { URL.revokeObjectURL(u); res(d); }; v.onloadedmetadata = () => end(v.duration || 0); v.onerror = () => end(0); setTimeout(() => end(0), 8000); v.src = u; });
+    const secs = await durOf();
+    const tooBig = blob.size > (PHONE ? 80e6 : 150e6) || secs > (PHONE ? 6 * 60 : 10 * 60);
+    if (tooBig) nlog(`video import: ${Math.round(blob.size / 1e6)} MB, ${Math.round(secs)} s: sound not read (memory)`);
+    const audio = tooBig ? null : await decodeVideoAudio(blob);
     const thumb = await videoThumb(blob);
     const take = { id: uid(), kind: 'video', mime: blob.type || 'video/mp4', scoreId: null, page: 0, name: f.name.replace(/\.[^.]+$/, '') || 'Video', created: Date.now(), mirror: false, thumb, fav: false, source: 'Imported' };
     await db.put('files', { id: 'video:' + take.id, data: blob });
@@ -8019,6 +8037,12 @@ const nativeShare = window.webkit && window.webkit.messageHandlers && window.web
 // (to: one app to send it straight to, in the iPad app: 'instagram', 'tiktok', 'youtube', 'facebook', 'whatsapp')
 window.standShared = (r) => { if (r && r.how === 'app' && r.to !== 'whatsapp') toast('The video is in Photos too: choose it there if it is not already chosen.', 4500); };
 async function shareBlob(blob, name, to) {
+  // (a big file, a long video above all: written to the app in pieces and shared from there, never
+  // turned into one huge text in memory, which could make iOS close Stand)
+  if (nativeShare && blob.size > 8e6 && +((window.standCaps || {}).files) >= 4 && NSAVE()) {
+    $('#toast').hidden = true;
+    try { await saveInStandFolder(blob, '', name, { share: true, to: to || '' }); return; } catch (e) { console.warn(e); }
+  }
   if (nativeShare) {
     const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
     $('#toast').hidden = true;
@@ -8937,11 +8961,11 @@ window.standSaved = (r) => { const w = r && saveWait.get(r.id); if (w) { saveWai
 const chunkWait = new Map();
 window.standSavedChunk = (r) => { const w = r && chunkWait.get(r.id); if (w) { chunkWait.delete(r.id); w(); } };
 const b64Of = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); });
-async function saveInStandFolder(blob, folder, name) {
+async function saveInStandFolder(blob, folder, name, how = {}) {
   const H = NSAVE(); if (!H) throw new Error('no folder');
   const id = uid();
   const done = new Promise((res) => saveWait.set(id, res));
-  H.postMessage({ op: 'begin', id, folder, name });
+  H.postMessage({ op: 'begin', id, folder, name, ...(how.share ? { share: true, to: how.to || '' } : {}) });
   const PIECE = 2 * 1024 * 1024;
   let acks = +((window.standCaps || {}).files) >= 2;
   try {
@@ -10187,6 +10211,7 @@ async function problemReport() {
   return L.join('\n');
 }
 window.__standReport = problemReport;
+window.__shareBlob = (b, n, to) => shareBlob(b, n, to);   // (tests)
 $('#sendReport').addEventListener('click', async () => {
   const b = $('#sendReport'); b.disabled = true;
   try {

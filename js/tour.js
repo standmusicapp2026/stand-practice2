@@ -2,17 +2,12 @@
 // anywhere goes on; "Skip" ends it. It can be seen again from Settings.
 
 const DESK_STEPS = [
-  { title: 'Welcome to your stand', text: 'Here is a quick look around. Tap anywhere to go on.', at: null },
-  { title: 'Your music', text: 'Import a PDF or photo, or scan a page with the camera. Stand finds the page, straightens it and makes the paper white.', at: '.head-actions' },
-  { title: 'Find any piece', text: 'Search the free IMSLP library by composer and title, and pick the best edition for your instrument.', at: '#homeTabs' },
-  { title: 'Practice tools', text: 'Tuner, drone, metronome, scales, recording and more, one tap away. Choose which ones show in Settings.', at: '.tiles' },
-  { title: 'Sets', text: 'A set is a programme: pieces, or just some pages of them, one after another, for a lesson or a concert.', at: '#homeTabs' },
-  { title: 'Folders', text: 'Hold a score to select it (and more), then move them into a folder. Import several PDFs at once: Stand reads each title and composer.', at: null },
-  { title: 'Compose', text: 'Write music on real staff paper, for one instrument or many, hear it, and export it. A photo or PDF of printed music can be read in, too.', at: '.tile[data-tile="compose"]' },
-  { title: 'Notebooks', text: 'Engraved staff paper with a cover of your own, to write with the Apple Pencil.', at: '#newNotebookBtn' },
+  { title: 'Welcome to your stand', text: 'A quick look around, in five steps. Tap anywhere to go on.', at: null },
+  { title: 'Your music', text: 'Import a PDF or photo, or scan a page with the camera: Stand finds the page, straightens it and makes the paper white. Notebooks give you staff paper for the Apple Pencil.', at: '.head-actions' },
+  { title: 'Find any piece', text: 'Search the free IMSLP library by composer and title. Sets put pieces, or just some pages, in order for a lesson or a concert.', at: '#homeTabs' },
+  { title: 'Practice tools', text: 'Tuner, drone, metronome, scales, recording, Compose and more, one tap away. Each shows you around the first time you open it.', at: '.tiles' },
   { title: 'On a score', text: 'Tap the right edge for the next page (or swipe, use a pedal, wink, or let Stand listen and turn for you). The Pencil writes at once. Perform hides everything but the music.', at: null, icon: 'score' },
-  { title: 'Your iPhone too', text: 'Stand on the iPhone shows your practice from the iPad, has the tools in your pocket, and can film you for the iPad.', at: null },
-  { title: 'Keep it safe', text: 'Settings › Backup puts everything in iCloud Drive as tidy folders: your scores as PDFs, your recordings, and the rest for Stand to bring back.', at: '[data-panel="app"]' },
+  { title: 'Your iPhone, and your backups', text: 'Stand on the iPhone shows your practice, has the tools in your pocket and can film you for the iPad. Settings › Backup keeps everything safe in iCloud Drive.', at: '[data-panel="app"]' },
 ];
 
 // on the iPhone, where there are no scores

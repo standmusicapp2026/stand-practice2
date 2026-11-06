@@ -258,6 +258,7 @@
         <div class="empty-actions">
           <button class="btn primary" data-goto="find"><svg><use href="#i-search"/></svg><span>Find a piece</span></button>
           <label class="btn" for="importInput"><svg><use href="#i-plus"/></svg><span>Import a file</span></label>
+          <button class="btn" id="sampleBtn"><svg><use href="#i-play"/></svg><span>Try a sample score</span></button>
         </div>
         <p class="hint">New iPad, or Stand was reinstalled? <button class="linkish" data-panel="backup">Bring back a backup</button></p>
       </section>
@@ -1138,6 +1139,22 @@
       <div class="sub-head"><div><h3>Something went wrong?</h3><p class="hint">Sends what Stand noted about this iPad and what went wrong lately (no scores, no recordings, nothing you wrote). Add a line about what you were doing.</p></div></div>
       <button class="btn" id="sendReport"><svg><use href="#i-share"/></svg><span>Send a problem report</span></button>
     </section>
+    <details class="set-more credits" id="credits">
+      <summary>Acknowledgements</summary>
+      <p class="hint">Stand is made with the work of others, used under their licences:</p>
+      <ul class="credit-list">
+        <li><b>Salamander Grand Piano V3</b> by Alexander Holm (Yamaha C5), CC BY 3.0.</li>
+        <li><b>VSCO 2 Community Edition</b> by Versilian Studios: solo strings, winds and brass, CC0.</li>
+        <li><b>MusyngKite</b> sound set by Benjamin Gleitz (from FluidR3 by Frank Wen), CC BY-SA 3.0.</li>
+        <li><b>pdf.js</b> by Mozilla, Apache License 2.0; its CMaps by Adobe (BSD) and Liberation fonts (SIL OFL).</li>
+        <li><b>pdf-lib</b> by Andrew Dillon, MIT License.</li>
+        <li><b>perfect-freehand</b> by Steve Ruiz, MIT License.</li>
+        <li><b>MediaPipe</b> Tasks Vision and Face Landmarker by Google, Apache License 2.0. Used on the device only.</li>
+        <li><b>Bravura</b> music font by Steinberg Media Technologies, SIL Open Font License 1.1.</li>
+        <li>Scores found through <b>IMSLP</b> (Petrucci Music Library); each score's own licence is shown there.</li>
+      </ul>
+      <p class="hint">The full licence texts come with Stand and are at creativecommons.org, apache.org/licenses, opensource.org/licenses/MIT and openfontlicense.org.</p>
+    </details>
     <button class="btn ghost" id="tourAgain">Show the tour again</button>
     <p class="hint center"><span id="appVersion">Stand 2.12</span> · everything stays on your device</p>
   </div>
@@ -1691,6 +1708,11 @@
     <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
     <h1>Welcome to Stand</h1>
     <p class="hint">Your scores, your markings and your practice, on one stand. Two quick choices and you are ready.</p>
+    <ul class="wel-wow">
+      <li><svg><use href="#i-eye"/></svg><span><b>Turn the page with a wink</b> of your right eye, hands on your instrument.</span></li>
+      <li><svg><use href="#i-ear"/></svg><span><b>Stand listens</b> and turns the page as you reach the end of it.</span></li>
+      <li><svg><use href="#i-drone"/></svg><span><b>A drone that follows the music</b>, and a tuner that learns your intonation.</span></li>
+    </ul>
     <label class="field"><span>What do you play?</span><select id="welInst"></select></label>
     <div class="ctl-head"><span>Tools on your home screen</span></div>
     <div class="chips tool-chips" id="welTools"></div>
