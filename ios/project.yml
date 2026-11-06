@@ -8,6 +8,7 @@ targets:
   Stand:
     type: application
     platform: iOS
+    scheme: {}
     sources:
       - path: Stand
         excludes:
