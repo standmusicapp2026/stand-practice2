@@ -20,9 +20,16 @@ env:
 
 jobs:
   testflight:
-    runs-on: macos-26
+    # (the Intel Macs when the Apple-silicon ones are all busy: the newest Xcode 26 on it is chosen)
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
+
+      - name: Choose Xcode 26
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$X" ]; then echo "No Xcode 26 on this Mac"; ls /Applications | grep -i xcode; exit 1; fi
+          sudo xcode-select -s "$X/Contents/Developer"; xcodebuild -version
 
       - name: Bundle the web app
         run: |
