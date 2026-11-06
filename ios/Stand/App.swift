@@ -92,6 +92,9 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         let rel: String
         if path.hasPrefix("/__incoming/") {
             base = incomingDir; rel = String(path.dropFirst("/__incoming/".count))
+        } else if path.hasPrefix("/__picked/"), let picked = standPickedFolder {
+            // a folder chosen to bring scores from another app (StandFolderImport.swift)
+            base = picked; rel = String(path.dropFirst("/__picked/".count))
         } else if path.hasPrefix("/__docs/") {
             // the backup kept in Files › Stand › Backup, read back to bring the library back (only there)
             base = documentsDir.appendingPathComponent("Backup", isDirectory: true); rel = String(path.dropFirst("/__docs/".count))
@@ -144,10 +147,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -374,6 +377,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 self?.send("standRecognized", ["id": id, "text": text])
             }
         case "standAudio":
+            if body["rest"] as? Bool == true { StandAudioKeeper.shared.rest(); return }
             standSetSpeakerOverride(body["speaker"] as? Bool ?? false)
         case "standSave":
             files.save(body)
@@ -381,6 +385,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             files.busy(body)
         case "standDiag":
             files.diag(body)
+        case "standPickFolder":
+            StandFolderImport.shared.pick(from: self) { [weak self] list in self?.send("standFolder", list) }
         case "standAwake":
             // (battery: the page says when nothing is going on, and the screen may then lock as iOS is set)
             UIApplication.shared.isIdleTimerDisabled = (body["on"] as? Bool) ?? true
@@ -883,6 +889,7 @@ func standPreferBuiltInMicrophone() {
     let session = AVAudioSession.sharedInstance()
     guard let inputs = session.availableInputs,
           let builtIn = inputs.first(where: { $0.portType == .builtInMic }) else { return }
+    if session.preferredInput?.uid == builtIn.uid { return }   // (already: asking again can make a gap in the sound)
     try? session.setPreferredInput(builtIn)
 }
 var standSpeakerWanted = false
@@ -912,10 +919,13 @@ func standApplyRoute() {
                 try? session.overrideOutputAudioPort(.speaker)
             }
         }
-    } else {
+    } else if session.category == .playAndRecord && standSpeakerForced {
+        // (only when the speaker had been forced: setting "none" again and again can make a gap)
         try? session.overrideOutputAudioPort(.none)
     }
+    standSpeakerForced = standSpeakerWanted && session.category == .playAndRecord
 }
+var standSpeakerForced = true   // (at the start it is not known: "none" is said once)
 
 // MARK: - Video recording
 // Records camera and microphone natively (H.264 + AAC), so it works on every iPad, while the

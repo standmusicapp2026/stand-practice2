@@ -3,7 +3,8 @@ import { db, getSetting, setSetting, uid } from './db.js';
 import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession, freshSound, soundActive } from './audio.js';
 import { Metronome, makeTapper, tempoMarking, meterInfo } from './metronome.js';
 import { Tuner, Drone, DRONE_VOICES, DRONE_CHORDS, naturalHarmonics, playHarmonics, stopHarmonics, playRefTone } from './tuner.js';
-import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, stringTargets, etFreq, midiName } from './temperament.js';
+import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, INSTRUMENT_GROUPS, stringTargets, etFreq, midiName } from './temperament.js';
+import { isZip, zipEntries, zipRead } from './zipread.js';
 import { ScalePlayer, SCALE_TYPES } from './scales.js';
 import { Recorder, Player, computePeaks, peakOf, ROOMS } from './recorder.js';
 import { VideoRecorder, decodeVideoAudio, videoThumb, devShape } from './video.js';
@@ -64,7 +65,7 @@ document.addEventListener('pointerdown', () => { if (!unlocked) { unlocked = tru
 const S = {
   ref: 442, twoUp: true, onePage: false, landscapeLock: false, turnScore: false, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
   room: 'studio', wet: 0.18, autoLevel: true, sort: 'recent', flash: false,
-  instrument: 'cello', system: 'equal', key: 0, pureFifths: true,
+  instrument: 'other', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
 async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {});
@@ -808,7 +809,7 @@ async function readTopOfPage(doc) {
 }
 // Add a PDF to the library; title and composer come from IMSLP (when downloaded through Stand)
 // or are read from the first page.
-async function addPdf(data, name, meta) {
+async function addPdf(data, name, meta, opt = {}) {
   const file = { id: uid(), kind: 'pdf', data };
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc);
@@ -816,19 +817,21 @@ async function addPdf(data, name, meta) {
   const info = await readScoreInfo(doc, name, await loadComposers(), meta && meta.title ? {} : { ocr: readTopOfPage });
   const composer = (meta && meta.composer) || info.composer || '';
   const title = (meta && meta.title) || info.title || titleFromName(name, composer);
-  const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: FOLD.current || undefined };
+  const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
+  if (opt.from) { score.importedFrom = opt.from; if (opt.app) score.source = opt.app; }
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
   return score;
 }
-async function addImages(blobs, name) {
+async function addImages(blobs, name, opt = {}) {
   const file = { id: uid(), kind: 'images', data: blobs };
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc);
   // (the title and composer printed at the top of the first page, read as on a PDF; else the name)
   let info = { title: '', composer: '' };
   try { info = await readScoreInfo(doc, name, await loadComposers(), { ocr: readTopOfPage }); } catch (e) { console.warn(e); }
-  const score = { id: uid(), fileId: file.id, title: info.title || niceTitle(name), composer: info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: FOLD.current || undefined };
+  const score = { id: uid(), fileId: file.id, title: info.title || niceTitle(name), composer: info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
+  if (opt.from) score.importedFrom = opt.from;
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
   return score;
@@ -905,6 +908,116 @@ $('#importInput').addEventListener('change', async (e) => {
   if (other.length) setTimeout(() => toast(`${other.length === 1 ? other[0].name + ' is' : other.length + ' files are'} not a PDF or a picture, so ${other.length === 1 ? 'it was' : 'they were'} left out.`, 4000), pdfs.length ? 3500 : 0);
   if (imgs.length) openReview(imgs, imgs[0].name);
 });
+// =====================================================================
+// Bring your scores from another app (forScore, MobileSheets, piaScore, Newzik, a folder of PDFs)
+// =====================================================================
+// A folder chosen in Files, an archive (.4sb, .zip) or many PDFs: every score comes in with its
+// name, and the folders it was in become folders here (one level: the folder nearest the file).
+// Each file is read, added and let go before the next, so thousands of scores never sit in memory
+// together. A score brought in before (same place, same size) is not brought twice.
+const BR = { busy: false };
+const BR_PLAIN = /^(documents?|scores?|pdfs?|files?|library|inbox|backups?|archives?|forscore|mobilesheets|piascore|newzik|sheet ?music|music|noten|partituras?|__macosx)$/i;
+function brFolderName(rel) {
+  const parts = String(rel).split('/').filter(Boolean); parts.pop();
+  for (let i = parts.length - 1; i >= 0; i--) if (!BR_PLAIN.test(parts[i]) && !parts[i].startsWith('.')) return parts[i].slice(0, 40);
+  return '';
+}
+function brFolderId(name) {
+  if (!name) return '';
+  let f = FOLD.list.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (!f) { f = { id: uid(), name, created: Date.now() }; FOLD.list.push(f); saveFolders(); }
+  return f.id;
+}
+// items: [{ rel, size, read: () => Promise<Blob> }]
+async function bringItems(items, app) {
+  if (BR.busy) { toast('Still bringing the last ones in…', 2500); return; }
+  BR.busy = true; hidePanel(); setHomeTab('mine');
+  const have = new Set((await db.all('scores')).map((x) => x.importedFrom).filter(Boolean));
+  const isPdf = (r) => /\.pdf$/i.test(r), isImg = (r) => /\.(jpe?g|png|heic|heif|tiff?)$/i.test(r);
+  const todo = items.filter((it) => (isPdf(it.rel) || isImg(it.rel)) && !/(^|\/)(__MACOSX|\.)/.test(it.rel));
+  let added = 0, same = 0, failed = [], full = false, done = 0;
+  const prevFolder = FOLD.current;
+  try {
+    for (const it of todo) {
+      done++;
+      const sig = (app || '') + ':' + it.rel + ':' + (it.size || 0);
+      if (have.has(sig)) { same++; continue; }
+      const name = it.rel.split('/').pop();
+      toast(`Bringing in ${done} of ${todo.length}: ${niceTitle(name)}…`, 120000);
+      try {
+        const blob = await it.read();
+        const folder = brFolderId(brFolderName(it.rel));
+        if (isPdf(it.rel)) await addPdf(await blob.arrayBuffer(), name, null, { folder, from: sig, app });
+        else await addImages([blob.type ? blob : new Blob([blob], { type: 'image/jpeg' })], name, { folder, from: sig });
+        added++; have.add(sig);
+        if (added % 5 === 1) await refreshLibrary();
+      } catch (e) {
+        console.warn('bring', it.rel, e); failed.push(name);
+        if (e && /Quota|space|disk/i.test((e.name || '') + ' ' + (e.message || ''))) { full = true; break; }
+      }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+  } finally { BR.busy = false; FOLD.current = prevFolder; await refreshLibrary(); }
+  const parts = [];
+  parts.push(added ? `${added} score${added === 1 ? '' : 's'} brought in` : 'Nothing new to bring in');
+  if (same) parts.push(`${same} already here`);
+  if (full) parts.push('the iPad is full: free some space and choose it again to bring the rest');
+  else if (failed.length) parts.push(`${failed.length} could not be opened (${failed.slice(0, 2).join(', ')}${failed.length > 2 ? '…' : ''})`);
+  if (!todo.length) parts.splice(0, parts.length, 'There are no PDFs or pictures of scores in there.');
+  toast(parts.join(' · ') + '.', 7000);
+}
+// a .zip or forScore archive: its PDFs (and any .zip inside it, one level down)
+async function bringArchive(file) {
+  try {
+    if (!(await isZip(file))) {
+      toast('Stand cannot open this kind of archive. Choose the folder of scores instead (in Files), or the PDFs themselves.', 7000);
+      return;
+    }
+    toast('Opening ' + file.name + '…', 120000);
+    const app = /\.4sb$/i.test(file.name) ? 'forScore' : '';
+    const items = [];
+    for (const e of await zipEntries(file)) {
+      if (/\.zip$/i.test(e.name) && e.size < 2e9) {
+        const inner = await zipRead(file, e);
+        for (const e2 of await zipEntries(inner).catch(() => [])) items.push({ rel: e.name.replace(/\.zip$/i, '') + '/' + e2.name, size: e2.size, read: () => zipRead(inner, e2) });
+      } else items.push({ rel: e.name, size: e.size, read: () => zipRead(file, e) });
+    }
+    await bringItems(items, app);
+  } catch (e) { console.error(e); toast('That archive could not be opened (' + (e.message || 'damaged') + ').', 6000); }
+}
+// the folder chosen in Files (the iPad app lists it; its files are read from where they are)
+window.standFolder = async (msg) => {
+  if (!msg || msg.cancelled) return;
+  const files = msg.files || [];
+  const enc = (rel) => rel.split('/').map(encodeURIComponent).join('/');
+  const items = [];
+  for (const f of files) {
+    if (/\.(zip|4sb)$/i.test(f.rel)) {
+      // (an archive inside the folder: opened in turn)
+      items.push({ rel: f.rel, size: f.size, archive: true });
+      continue;
+    }
+    items.push({ rel: f.rel, size: f.size, read: async () => { const r = await fetch('/__picked/' + enc(f.rel)); if (!r.ok) throw new Error('missing'); return r.blob(); } });
+  }
+  const plain = items.filter((x) => !x.archive);
+  if (msg.notHere) toast(`${msg.notHere} file${msg.notHere === 1 ? ' is' : 's are'} only in iCloud: they are downloading now; choose the folder again in a minute to bring ${msg.notHere === 1 ? 'it' : 'them'} too.`, 6000);
+  if (plain.length) await bringItems(plain, msg.name || '');
+  for (const a of items.filter((x) => x.archive)) {
+    const r = await fetch('/__picked/' + enc(a.rel)).catch(() => null);
+    if (r && r.ok) await bringArchive(new File([await r.blob()], a.rel.split('/').pop()));
+  }
+  if (!items.length) toast('There are no PDFs or pictures of scores in that folder.', 5000);
+};
+$('#brFolder')?.addEventListener('click', () => {
+  const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standPickFolder;
+  if (h && (window.standCaps || {}).folders) h.postMessage({});
+  else { toast('Choosing a whole folder needs the Stand app. Choose the PDFs instead (in Files, tap Select, then Select All).', 6000); $('#importInput').click(); }
+});
+$('#brArchive')?.addEventListener('click', () => $('#brArchiveInput').click());
+$('#brArchiveInput')?.addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { hidePanel(); await bringArchive(f); } });
+$('#brFiles')?.addEventListener('click', () => { hidePanel(); $('#importInput').click(); });
+$('#bringBtn')?.addEventListener('click', () => showPanel('bring'));
+window.__bring = { bringItems, bringArchive, brFolderName };
 // Files arriving from the iPad app: a PDF caught while browsing IMSLP, or "Open in Stand" from Files.
 window.standIncoming = async (msg) => {
   try {
@@ -926,6 +1039,9 @@ window.standIncoming = async (msg) => {
       setTimeout(() => location.reload(), miss.length ? 8000 : 2500);
       return;
     }
+    // another app's archive (a forScore .4sb, a .zip of scores)
+    { const nm = msg.name || paths[0] || '';
+      if (/\.(zip|4sb)$/i.test(nm) && paths.length === 1) { await bringArchive(new File([blobs[0]], nm.split('/').pop())); return; } }
     // several files at once: the PDFs are added one by one, the pictures go to the scan review
     const names = paths.map((p, i) => (msg.names && msg.names[i]) || (paths.length === 1 ? msg.name : '') || String(p).split('/').pop() || 'Score.pdf');
     const isPdfAt = (i) => /\.pdf$/i.test(names[i]) || blobs[i].type === 'application/pdf';
@@ -955,11 +1071,20 @@ const EXAMPLES = {
 // The instrument's name as the player wrote it when it is "Other".
 const instName = () => (S.instrument === 'other' && S.otherName) || INSTRUMENTS[S.instrument].label;
 const INST_SELECTS = () => [['#instSel', '#instOtherFind'], ['#tunerInst', '#instOtherTuner'], ['#appInst', '#instOtherApp']];
+// The instruments grouped by family (Strings, Woodwinds, Brass…), "Other" last.
+function fillInstrumentOptions(s) {
+  for (const g of INSTRUMENT_GROUPS) {
+    const keys = Object.keys(INSTRUMENTS).filter((k) => INSTRUMENTS[k].group === g).sort((a, b) => INSTRUMENTS[a].label.localeCompare(INSTRUMENTS[b].label));
+    if (!keys.length) continue;
+    const box = g ? el('optgroup') : s; if (g) { box.label = g; s.append(box); }
+    for (const k of keys) { const o = el('option', '', INSTRUMENTS[k].label); o.value = k; box.append(o); }
+  }
+}
 function fillInstrumentSelects() {
   for (const [sel] of INST_SELECTS()) {
     const s = $(sel);
     s.textContent = '';
-    for (const [k, v] of Object.entries(INSTRUMENTS)) { const o = el('option', '', v.label); o.value = k; s.append(o); }
+    fillInstrumentOptions(s);
     s.value = S.instrument;
   }
   syncOtherInputs();
@@ -1754,8 +1879,8 @@ const follow = {
       halfWanted: () => !!(S.halfTurn && V.spread === 1 && !V.inking),
       gaze: () => eyes.onPage(),
       when: () => followAt(),
-      // (only a clarinet — or an instrument of your own — may sound other than written)
-      fixedShift: () => (S.instrument === 'clarinet' || S.instrument === 'other' ? null : 0),
+      // (only a clarinet, horn, trumpet, saxophone… — or an instrument of your own — may sound other than written)
+      fixedShift: () => ((INSTRUMENTS[S.instrument] && INSTRUMENTS[S.instrument].tr) || S.instrument === 'other' ? null : 0),
       // each page read once for good (until the score is changed): opening it again costs nothing
       store: {
         key: (i) => (V.score ? `follow:${V.score.id}:${pagesStamp(V.score)}:${i}` : null),
@@ -6427,7 +6552,7 @@ function updateTunerSetup() {
   { const RANGE = { flute: [60, 98], clarinet: [50, 94], oboe: [58, 93], voice: [40, 84], piano: null, other: null };
     const mid = (m) => S.ref * Math.pow(2, (m - 69) / 12);
     if (targets.length) { const lo = Math.min(...targets.map((t) => t.freq)), hi = Math.max(...targets.map((t) => t.freq)); tuner.setRange(lo * 0.94, hi * Math.pow(2, S.instrument === 'guitar' ? 2 : 3.3)); }
-    else { const r = RANGE[S.instrument]; tuner.setRange(r ? mid(r[0] - 1) : 0, r ? mid(r[1] + 1) : 0); } }
+    else { const r = S.instrument in RANGE ? RANGE[S.instrument] : inst.keys ? null : inst.range; tuner.setRange(r ? mid(r[0] - 1) : 0, r ? mid(r[1] + 1) : 0); } }
   const row = $('#stringRow'); row.textContent = '';
   for (const t of targets) {
     const b = el('button'); b.dataset.label = t.label;
@@ -7054,7 +7179,7 @@ const keyEar = {
       });
       this.ear.sens = S.earSens ?? 0.6;
       // (only the notes your instrument can play: an overtone, higher than any of them, is never taken for a note)
-      this.ear.range = { cello: [36, 84], violin: [55, 100], viola: [48, 91], bass: [28, 67], guitar: [40, 88], flute: [60, 98], clarinet: [50, 94], oboe: [58, 91] }[S.instrument] || [36, 96];
+      this.ear.range = { cello: [36, 84], violin: [55, 100], viola: [48, 91], bass: [28, 67], guitar: [40, 88], flute: [60, 98], clarinet: [50, 94], oboe: [58, 91] }[S.instrument] || (INSTRUMENTS[S.instrument] && INSTRUMENTS[S.instrument].range) || [36, 96];
       this.ear.set(drone.pc, drone.chord === 'minor');
       this.ear.start();
     } else if (!want && this.ear) { this.ear.stop(); this.ear = null; $('#droneHear').textContent = 'Play: when the key clearly changes, the drone moves to it.'; }
@@ -8228,7 +8353,7 @@ async function openNewNotebook() {
     $$('#nbColour button').forEach((b) => b.addEventListener('click', () => { NB.paper = b.dataset.v; $$('#nbColour button').forEach((x) => x.classList.toggle('on', x === b)); nbPreview(); }));
   }
   // the instrument's own clef first
-  if (!NB.touched) NB.tpl = { cello: 'bass', bass: 'bass', viola: 'alto', piano: 'piano', guitar: 'tab', voice: 'treble' }[S.instrument] || 'treble';
+  if (!NB.touched) NB.tpl = { cello: 'bass', bass: 'bass', viola: 'alto', piano: 'piano', guitar: 'tab', voice: 'treble' }[S.instrument] || (INSTRUMENTS[S.instrument] && INSTRUMENTS[S.instrument].clef) || 'treble';
   nbTiles();
   $$('#nbColors button').forEach((x) => x.classList.toggle('on', x.dataset.v === NB.color));
   $$('#nbPapers button').forEach((x) => x.classList.toggle('on', x.dataset.v === NB.tpl));
@@ -9734,7 +9859,7 @@ function toolsFor(inst) {
   const strings = !!(INSTRUMENTS[inst] && INSTRUMENTS[inst].fifths);
   const all = new Set(TOOLS.map(([k]) => k));
   if (!strings) all.delete('harmonics');
-  if (inst === 'piano') { all.delete('drone'); all.delete('tuner'); }
+  if (inst === 'piano' || inst === 'organ') { all.delete('drone'); all.delete('tuner'); }
   return [...all];
 }
 function shownTools() {
@@ -9772,13 +9897,15 @@ $('#tourAgain').addEventListener('click', () => {
 function showWelcome() {
   const w = $('#welcome'); w.hidden = false;
   const sel = $('#welInst'); sel.textContent = '';
-  for (const [k, v] of Object.entries(INSTRUMENTS)) { const o = el('option', '', v.label); o.value = k; sel.append(o); }
-  sel.value = S.instrument;
-  let chosen = toolsFor(S.instrument), touched = false;
+  // (nothing is chosen for you: the list starts on "Choose your instrument")
+  { const o = el('option', '', 'Choose your instrument'); o.value = ''; o.disabled = true; sel.append(o); }
+  fillInstrumentOptions(sel);
+  sel.value = S.welcomed && S.instrument ? S.instrument : '';
+  let chosen = toolsFor(sel.value || 'other'), touched = false;
   const draw = () => toolChips($('#welTools'), () => chosen, (v) => { chosen = v; touched = true; });
-  sel.onchange = () => { if (!touched) chosen = toolsFor(sel.value); draw(); };
+  sel.onchange = () => { if (!touched) chosen = toolsFor(sel.value || 'other'); draw(); };
   draw();
-  const done = () => { setInstrument(sel.value); S.tools = chosen; S.welcomed = true; saveSettings(); applyTools(); w.hidden = true; };
+  const done = () => { setInstrument(sel.value || 'other'); S.tools = chosen; S.welcomed = true; saveSettings(); applyTools(); w.hidden = true; };
   $('#welGo').onclick = () => { done(); if (!S.toured) setTimeout(() => startTour({ onDone: () => { S.toured = true; saveSettings(); } }), 250); };
   $('#welRestore').onclick = () => { done(); showPanel('backup'); $('#bkFiles').hidden = true; renderBackup(); };
 }

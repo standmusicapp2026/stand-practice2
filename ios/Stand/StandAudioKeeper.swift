@@ -26,10 +26,24 @@ final class StandAudioKeeper: NSObject {
 
     private func activate() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .default,
-                                 options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
+        // The kind of sound is only set when it is not one Stand uses already: the page chooses
+        // playback, or play-and-record while the microphone listens, and changing it under a
+        // metronome that is playing made a short gap in the sound when coming back to Stand.
+        if session.category != .playAndRecord && session.category != .playback {
+            try? session.setCategory(.playAndRecord, mode: .default,
+                                     options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
+        }
         try? session.setActive(true)
         standApplyRoute()
+    }
+
+    // Stand is in the background and nothing plays or listens (the page has let its sound rest):
+    // the sound is let go, so iOS no longer shows Stand as playing. Coming back switches it on again.
+    func rest() {
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState != .active else { return }
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     private func tellPage(_ reason: String) {

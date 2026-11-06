@@ -307,13 +307,28 @@ if (typeof window !== 'undefined' && window.AudioScheduledSourceNode && window.A
     return n;
   };
   setInterval(() => {
-    if (!ctx || ctx.state !== 'running' || document.hidden) return;
+    if (!ctx || ctx.state !== 'running') return;
     if (soundBusy()) { lastSound = performance.now(); return; }
+    // (away from Stand, nothing playing: it rests at once, see below)
+    if (document.hidden) { restAway(); return; }
     if (performance.now() - lastSound < IDLE_MS) return;
     restingCtx = ctx; alog('resting (nothing played for 30 s)');
     ctx.suspend().catch(() => {});
   }, 5000);
   document.addEventListener('pointerdown', () => { if (restingCtx) rouse(); }, true);
+  // Stand left (home screen, another app, the screen locked) with nothing playing or listening:
+  // the sound system rests at once and the app lets go of the iPad's sound, so iOS stops showing
+  // Stand as playing. A metronome, drone or recording that is going keeps going; when it stops
+  // while Stand is away, the next check (5 s) lets go then. Coming back wakes it as before.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) setTimeout(restAway, 1200); });
+}
+function restAway() {
+  if (!document.hidden || !ctx || ctx.state !== 'running' || soundBusy()) return;
+  const c = ctx; restingCtx = c; alog('resting (Stand in the background, nothing playing)');
+  c.suspend().then(() => {
+    if (!document.hidden || ctx !== c || c.state !== 'suspended') return;
+    try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standAudio; if (h) h.postMessage({ rest: true }); } catch {}
+  }, () => {});
 }
 
 // Call from a user gesture; iOS needs a sound to start inside a tap.

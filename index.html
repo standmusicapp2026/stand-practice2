@@ -254,11 +254,16 @@
       <section class="empty" id="emptyLib" hidden>
         <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
         <h2>Your stand is empty</h2>
-        <p>Find a piece online or import a PDF or photo of your part. Everything stays on this iPad and works offline.</p>
-        <div class="empty-actions">
-          <button class="btn primary" data-goto="find"><svg><use href="#i-search"/></svg><span>Find a piece</span></button>
-          <label class="btn" for="importInput"><svg><use href="#i-plus"/></svg><span>Import a file</span></label>
-          <button class="btn" id="sampleBtn"><svg><use href="#i-play"/></svg><span>Try a sample score</span></button>
+        <p>Bring your scores, find new ones, or just look around. Everything stays on this iPad and works offline.</p>
+        <div class="start-cards">
+          <button class="start-card main" id="bringBtn"><svg><use href="#i-folder"/></svg><b>Bring your scores</b><span>From forScore or any other app, folders and all</span></button>
+          <button class="start-card" data-goto="find"><svg><use href="#i-search"/></svg><b>Find a piece</b><span>Free scores from the IMSLP library</span></button>
+          <label class="start-card" for="importInput"><svg><use href="#i-plus"/></svg><b>Import a file</b><span>A PDF or a photo of your part</span></label>
+        </div>
+        <div class="start-try">
+          <span class="hint">See what Stand can do</span>
+          <button class="btn small" id="sampleBtn"><svg><use href="#i-play"/></svg><span>Try a sample score</span></button>
+          <button class="btn small" id="hearOrchBtn"><svg><use href="#i-headphones"/></svg><span>Hear an orchestra in Compose</span></button>
         </div>
         <p class="hint">New iPad, or Stand was reinstalled? <button class="linkish" data-panel="backup">Bring back a backup</button></p>
       </section>
@@ -1198,6 +1203,25 @@
   </div>
 </div>
 
+<aside class="panel" id="panel-bring" hidden aria-label="Bring your scores">
+  <div class="panel-head"><h2>Bring your scores</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <p class="hint">From forScore, MobileSheets, piaScore, Newzik or any app: your scores come in with their names, and their folders become folders here. Nothing is changed in the other app.</p>
+    <div class="bring-list">
+      <button class="rec-choice wide-choice" id="brFolder"><svg><use href="#i-folder"/></svg><b>Choose a folder</b><span>The other app’s folder in Files (On My iPad or iCloud Drive), or any folder of PDFs</span></button>
+      <button class="rec-choice wide-choice" id="brArchive"><svg><use href="#i-cloud"/></svg><b>Choose a backup or archive</b><span>A forScore archive (.4sb) or any .zip of scores</span></button>
+      <button class="rec-choice wide-choice" id="brFiles"><svg><use href="#i-pdf"/></svg><b>Choose PDFs</b><span>One or many at once (in Files, tap Select)</span></button>
+    </div>
+    <details class="set-more"><summary>How to get them out of forScore</summary>
+      <p class="hint">In forScore, open the <b>Backup</b> panel and make an <b>Archive</b> (it holds all your scores). Save it in Files, then choose it here with <b>Choose a backup or archive</b>. If your forScore folder shows in Files (On My iPad › forScore), you can also choose that folder.</p>
+    </details>
+    <details class="set-more"><summary>Other apps</summary>
+      <p class="hint">Most score apps can save or share their PDFs to Files (often as a folder, or a .zip of the whole library). Put them in a folder in Files, then choose it here. Markings drawn in the other app come in when the app saved them into its PDFs.</p>
+    </details>
+    <p class="hint" id="brStatus" hidden></p>
+    <input type="file" id="brArchiveInput" accept=".zip,.4sb,application/zip,application/octet-stream" hidden>
+  </div>
+</aside>
 <aside class="panel" id="panel-backup" hidden aria-label="Backup">
   <div class="panel-head"><h2>Backup</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">

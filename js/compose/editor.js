@@ -2031,6 +2031,24 @@ function wireTop() {
   player.onTick = ({ mark }) => { if (mark) showPlayhead(mark); };
   player.onEnd = () => { syncPlay(); C.pages.forEach(clearOver); };
 }
+// The orchestral example (Holst, Jupiter): opened from the Compose panel or from the empty library.
+// The one already in the library is opened again (not a new copy each time), unless it was deleted.
+async function openExample({ play = false } = {}) {
+  try {
+    const have = (await db.all('scores')).find((s) => s.kind === 'comp' && s.example === 'holst');
+    let id = have && (await db.get('files', have.fileId).catch(() => null)) ? have.id : null, made = false;
+    if (!id) {
+      const r = await fetch('examples/holst-jupiter.json'); if (!r.ok) throw new Error('missing');
+      const score = await r.json(); score.created = Date.now();
+      const fileId = uid(); id = uid();
+      await db.put('files', { id: fileId, kind: 'comp', data: score });
+      await db.put('scores', { id, fileId, kind: 'comp', example: 'holst', title: score.title, composer: score.composer, pages: 1, added: Date.now(), opened: Date.now(), lastPage: 0, seconds: 0, thumb: null });
+      made = true;
+    }
+    D.hidePanel(); await openComposition(id); if (made) saveSoon(true);
+    if (play && !player.playing) await togglePlay(0);
+  } catch (err) { console.error(err); D.toast('The example could not be opened just now.', 3500); }
+}
 async function togglePlay(from) {
   if (player.playing || player.loading) { player.stop(); syncPlay(); C.pages.forEach(clearOver); return; }
   unlock();
@@ -2213,16 +2231,9 @@ function wirePanels() {
   });
   // an example to start from: Holst's Jupiter tune for orchestra (a copy of its own each time, kept
   // with your scores like any other)
-  $('#cnExample')?.addEventListener('click', async () => {
-    try {
-      const r = await fetch('examples/holst-jupiter.json'); if (!r.ok) throw new Error('missing');
-      const score = await r.json(); score.created = Date.now();
-      const fileId = uid(), id = uid();
-      await db.put('files', { id: fileId, kind: 'comp', data: score });
-      await db.put('scores', { id, fileId, kind: 'comp', title: score.title, composer: score.composer, pages: 1, added: Date.now(), opened: Date.now(), lastPage: 0, seconds: 0, thumb: null });
-      D.hidePanel(); await openComposition(id); saveSoon(true);
-    } catch (err) { console.error(err); D.toast('The example could not be opened just now.', 3500); }
-  });
+  $('#cnExample')?.addEventListener('click', () => openExample());
+  // "Hear an orchestra in Compose" (the empty library): the example opens and plays at once
+  $('#hearOrchBtn')?.addEventListener('click', () => { unlock(); openExample({ play: true }); });
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-panel]'); if (!b) return;
     const p = b.dataset.panel;
