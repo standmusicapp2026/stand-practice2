@@ -325,6 +325,7 @@ if (typeof window !== 'undefined' && window.AudioScheduledSourceNode && window.A
 function restAway() {
   if (!document.hidden || !ctx || ctx.state !== 'running' || soundBusy()) return;
   const c = ctx; restingCtx = c; alog('resting (Stand in the background, nothing playing)');
+  window.__standRested = (window.__standRested || 0) + 1;
   c.suspend().then(() => {
     if (!document.hidden || ctx !== c || c.state !== 'suspended') return;
     try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standAudio; if (h) h.postMessage({ rest: true }); } catch {}
@@ -408,3 +409,4 @@ export function micErrorText(e) {
 export const soundActive = () => soundBusy();
 // (tests: the sound system's state, without waking it)
 export const _soundState = () => (ctx ? ctx.state : '-');
+export const _soundClock = () => (ctx ? ctx.currentTime : -1);

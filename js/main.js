@@ -1,6 +1,6 @@
 import { pixDropFile } from './pixcache.js';
 import { db, getSetting, setSetting, uid } from './db.js';
-import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession, freshSound, soundActive } from './audio.js';
+import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession, freshSound, soundActive, _soundState, _soundClock } from './audio.js';
 import { Metronome, makeTapper, tempoMarking, meterInfo } from './metronome.js';
 import { Tuner, Drone, DRONE_VOICES, DRONE_CHORDS, naturalHarmonics, playHarmonics, stopHarmonics, playRefTone } from './tuner.js';
 import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, INSTRUMENT_GROUPS, stringTargets, etFreq, midiName } from './temperament.js';
@@ -751,11 +751,22 @@ function niceTitle(name) {
 // composer part comes out, the rest is the title.
 function titleFromName(name, composer) {
   let t = niceTitle(name).replace(/\s*\((?:[^()]*,[^()]*)\)\s*$/, '').replace(/\s+(score|parts?|part|solo part|complete|full score)$/i, '');
+  t = t.replace(/\bPMLP\d+\b/gi, ' ').replace(/^[\s\-–—]+/, '').replace(/\s+/g, ' ').trim();
   if (composer) {
     const last = composer.split(/\s+/).pop();
     const parts = t.split(/\s+[-–—]\s+/);
     if (parts.length > 1) { const i = parts.findIndex((p) => p.toLowerCase().includes(last.toLowerCase()) && p.split(' ').length <= 4); if (i >= 0) { parts.splice(i, 1); t = parts.join(' - '); } }
+    // (IMSLP's names: "String Quartet No.4 Op.18 No.4 Beethoven Ludwig van - Cello",
+    // "Dvorak Cello Concerto Op104 Cello": the composer's names come out of the title)
+    const fold = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const names = composer.split(/\s+/).filter((w) => w.length > 1).map(fold);
+    const words = t.split(' '); let k = 0;
+    const kept = words.filter((w) => { const f = fold(w.replace(/[(),]/g, '')); if (names.includes(f) && k < names.length + 1) { k++; return false; } return true; });
+    if (k && kept.join(' ').replace(/[\s\-–—]/g, '').length > 3) t = kept.join(' ');
   }
+  // "No.4" "Op104" "No1" → "No. 4" "Op. 104" "No. 1"; a part at the end after " - " stays as it is
+  t = t.replace(/\b(No|Op|BWV|K|Hob|D|RV|S|WoO)\.?\s?(\d)/g, (m, a, d) => a + (/^(No|Op)$/.test(a) ? '. ' : ' ') + d)
+    .replace(/\s+[-–—]\s*$/, '').replace(/^[\s\-–—]+/, '').replace(/\s*[-–—]\s+/g, ' – ').replace(/\s+/g, ' ').trim();
   return t || niceTitle(name);
 }
 // Files downloaded from IMSLP through Stand get their real title and composer.
@@ -1017,6 +1028,7 @@ $('#brArchive')?.addEventListener('click', () => $('#brArchiveInput').click());
 $('#brArchiveInput')?.addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { hidePanel(); await bringArchive(f); } });
 $('#brFiles')?.addEventListener('click', () => { hidePanel(); $('#importInput').click(); });
 $('#bringBtn')?.addEventListener('click', () => showPanel('bring'));
+$('#bkBring')?.addEventListener('click', () => showPanel('bring'));
 window.__bring = { bringItems, bringArchive, brFolderName };
 // Files arriving from the iPad app: a PDF caught while browsing IMSLP, or "Open in Stand" from Files.
 window.standIncoming = async (msg) => {
@@ -6880,13 +6892,13 @@ function updateTunerButtons() {
 }
 $('#tunerToggle').addEventListener('click', () => (tuner.active ? stopTuner() : startTuner()));
 // Leaving the app turns the microphone off (the tuner and the drone's ear); coming back turns them
-// on again. If iOS takes the microphone away, they open it again.
+// on again. If iOS takes the microphone away, they open it again. What plays keeps playing.
 const MICPAUSE = { tuner: false, ear: false, metro: null };
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     if (recState) return;                      // a recording keeps going
-    // the metronome pauses too (it would hold the sound of other apps), and comes back where it was
-    if (metro.running) { MICPAUSE.metro = { beat: Math.floor((metro._beatCount || 0) / metro.beats) * metro.beats }; metro.stop(true); }
+    // (the metronome, drone, scales and playback keep playing away from Stand, as music apps do;
+    // only the microphone is let go)
     MICPAUSE.tuner = tuner.active; if (tuner.active) { tuner.stop(); tuner.onReading(null); }
     MICPAUSE.ear = !!keyEar.ear; if (keyEar.ear) keyEar.ear.stop();
   } else {
@@ -10350,6 +10362,8 @@ $('#sendReport').addEventListener('click', async () => {
 });
 
 // (the page started: the notice for a failed start is not needed)
+// (tests: what plays, without waking anything)
+window.__standSound = () => ({ metro: metro.running, beats: metro._beatCount || 0, drone: drone.running, state: _soundState(), clock: _soundClock(), busy: soundActive(), rested: window.__standRested || 0 });
 window.__standUp = true;
 // the simulator test build only: the app runs its own self-test (the file is not in the app sent out)
 if (window.standCaps && window.standCaps.selfTest) import('./selftest.js').catch((e) => nlog('selftest: ' + e.message));

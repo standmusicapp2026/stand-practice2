@@ -28,6 +28,31 @@ const key = (k) => (document.activeElement || document.body).dispatchEvent(new K
 const closePanels = async () => { for (const b of $$('aside.panel:not([hidden]) [data-close]')) b.click(); await sleep(400); };
 const home = async () => { await closePanels(); if (!$('#score').hidden) $('#backBtn').click(); if (!$('#compose').hidden) $('#cpBack').click(); await waitFor(() => !$('#library').hidden, 15000); await sleep(600); };
 
+// Leaving Stand with the metronome on, as a musician does (another app, then back), three times:
+// it keeps playing and nothing breaks. Then leaving with nothing playing: the sound rests (nothing
+// is left showing as playing). The test machine switches apps when it reads "SELFTEST LEAVE n".
+async function bgRun() {
+  const S = () => (window.__standSound ? window.__standSound() : {});
+  const openM = async () => { const b = $$('[data-panel=metronome]').find((x) => x.offsetParent) || $('[data-panel=metronome]'); b && b.click(); await sleep(900); $('.tour-skip') && $('.tour-skip').click(); await sleep(200); };
+  await step('background: metronome on', async () => { await closePanels(); await openM(); if (!S().metro) $('#metroToggle').click(); await sleep(2000); await closePanels(); return S().metro ? `beats ${S().beats}` : false; });
+  for (let n = 1; n <= 3; n++) {
+    const b0 = S().beats, t0 = Date.now();
+    say('SELFTEST LEAVE ' + n);
+    const hid = await waitFor(() => document.hidden, 30000);
+    const back = await waitFor(() => !document.hidden, 90000);
+    await sleep(2000);
+    const s = S(), secs = Math.round((Date.now() - t0) / 1000);
+    await step(`background ${n}: back, the metronome kept playing`, async () => (hid && back && s.metro && s.beats > b0 + 8) ? `${s.beats - b0} beats in ${secs} s, sound ${s.state}` : false);
+  }
+  await step('background: metronome off', async () => { await openM(); if (S().metro) $('#metroToggle').click(); await sleep(800); await closePanels(); return !S().metro; });
+  const r0 = S().rested;
+  say('SELFTEST LEAVE 4');
+  const hid = await waitFor(() => document.hidden, 30000);
+  const back = await waitFor(() => !document.hidden, 90000);
+  await sleep(2000);
+  await step('background 4: nothing playing, the sound rested away, back fine', async () => (hid && back && S().rested > r0) ? `sound ${S().state}` : false);
+  await step('background: the metronome starts again', async () => { await openM(); $('#metroToggle').click(); await sleep(2000); const ok = S().metro && S().state === 'running'; $('#metroToggle').click(); await sleep(400); await closePanels(); return ok; });
+}
 async function run() {
   say(`SELFTEST start ${navigator.userAgent} screen ${screen.width}x${screen.height}@${devicePixelRatio} window ${innerWidth}x${innerHeight}`);
   await waitFor(() => window.__standUp, 20000);
@@ -132,6 +157,26 @@ async function run() {
   await step('linking screen', async () => { $('#pairNew').click(); await sleep(1500); return !!$('.pair') && !$('.pair .pair-find').hidden; });
   await shot('11c-linking');
   await step('linking screen closes', async () => { const c = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); c && c.click(); await sleep(500); return !$('.pair'); });
+  // bringing scores from another app: a whole folder (made by the test machine in Stand's Documents,
+  // as if chosen in Files), its sub-folders becoming folders, IMSLP names made into titles; again: nothing twice
+  await step('bring scores from a folder (another app)', async () => {
+    await home();
+    const { db, getSetting } = await import('/js/db.js');
+    const before = (await db.all('scores')).length;
+    window.webkit.messageHandlers.standPickFolder.postMessage({ testPath: 'BringTest' });
+    let n = before; for (let i = 0; i < 90 && n < before + 3; i++) { await sleep(1000); n = (await db.all('scores')).length; }
+    await sleep(1500);
+    const all = await db.all('scores'), fol = await getSetting('folders', []);
+    const names = fol.map((f) => f.name).filter((x) => /Etudes|Pieces/.test(x));
+    const brought = all.filter((x) => x.importedFrom);
+    window.webkit.messageHandlers.standPickFolder.postMessage({ testPath: 'BringTest' });
+    await sleep(6000);
+    const again = (await db.all('scores')).length;
+    const titles = brought.map((x) => x.title).join(' / ');
+    if (n - before !== 3 || names.length !== 2 || again !== n || /IMSLP|PMLP|_/.test(titles)) throw new Error(`${n - before} scores, folders ${names}, again +${again - n}, titles ${titles}`);
+    return `3 scores in ${names.join(', ')}: ${titles}`;
+  }, 120000);
+  await shot('12b-brought');
   await step('backup panel', async () => { await closePanels(); const b = $('[data-panel=backup]'); if (b) b.click(); await sleep(1200); return true; });
   await shot('12-backup');
   await closePanels();
@@ -144,6 +189,7 @@ async function run() {
   });
   await shot('13-after-turns');
   await home();
+  await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);
   say(`SELFTEST DONE ok=${R.ok} fail=${R.fail} errors=${(window.__standErrors || []).length}`);
 }
@@ -160,6 +206,7 @@ async function phoneRun() {
   await step('iPhone: metronome plays', async () => { await open('metronome'); $('#metroToggle').click(); await sleep(2500); $('#metroToggle').click(); await sleep(300); await closePanels(); return true; });
   await step('iPhone: linking screen', async () => { await open('app'); const c = $('#pairCard'); c && c.scrollIntoView(); await sleep(400); const n = $('#pairNew'); if (!n) return 'no button'; n.click(); await sleep(1500); const ok = !!$('.pair'); const x = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); x && x.click(); await sleep(400); await closePanels(); return ok; });
   await shot('p-end');
+  await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);
   say(`SELFTEST DONE ok=${R.ok} fail=${R.fail} errors=${(window.__standErrors || []).length}`);
 }

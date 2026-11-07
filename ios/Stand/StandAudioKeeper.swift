@@ -37,14 +37,10 @@ final class StandAudioKeeper: NSObject {
         standApplyRoute()
     }
 
-    // Stand is in the background and nothing plays or listens (the page has let its sound rest):
-    // the sound is let go, so iOS no longer shows Stand as playing. Coming back switches it on again.
-    func rest() {
-        DispatchQueue.main.async {
-            guard UIApplication.shared.applicationState != .active else { return }
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        }
-    }
+    // Stand is in the background and nothing plays or listens: the page has let its sound rest, so
+    // nothing more is played and iOS stops showing Stand as playing. The audio session itself is left
+    // as it is (switching it off under WebKit's own sound is not safe).
+    func rest() {}
 
     private func tellPage(_ reason: String) {
         let src = "window.standAudioWake && window.standAudioWake('\(reason)')"

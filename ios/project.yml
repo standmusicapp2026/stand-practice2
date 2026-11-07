@@ -27,6 +27,8 @@ targets:
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIRequiresFullScreen: false
+        # (a metronome, drone, scale or recording that is playing keeps playing when you leave Stand)
+        UIBackgroundModes: [audio]
         UIStatusBarStyle: UIStatusBarStyleDefault
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

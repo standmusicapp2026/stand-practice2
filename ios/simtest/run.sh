@@ -54,6 +54,14 @@ while IFS= read -r RT; do
     xcrun simctl boot "$UDID"; xcrun simctl bootstatus "$UDID" -b > /dev/null 2>&1
     xcrun simctl install "$UDID" "$APP" || { echo "  install failed" | tee -a "$SUMMARY"; xcrun simctl delete "$UDID"; continue; }
     for s in microphone camera photos; do xcrun simctl privacy "$UDID" grant $s $BID > /dev/null 2>&1; done
+    # a folder of scores as another app keeps them (two sub-folders, IMSLP file names), for "Bring your scores"
+    C0=$(xcrun simctl get_app_container "$UDID" $BID data 2>/dev/null); PDF=$(find "$APP" -name 'bach-cello-suite-3.pdf' | head -1)
+    if [ -n "$C0" ] && [ -n "$PDF" ]; then
+      mkdir -p "$C0/Documents/BringTest/Etudes" "$C0/Documents/BringTest/Pieces"
+      cp "$PDF" "$C0/Documents/BringTest/Etudes/IMSLP04304-PMLP05705-Popper_High_School_Op73_No1.pdf"
+      cp "$PDF" "$C0/Documents/BringTest/Etudes/Duport_21_Etudes_No7.pdf"
+      cp "$PDF" "$C0/Documents/BringTest/Pieces/IMSLP925638_-_String_Quartet_No.4_Op.18_No.4_Beethoven_Ludwig_van_-_Cello.pdf"
+    fi
     START=$(date +%s)
     # (the iOS 18 simulators cannot find WebKit's Swift library by themselves: a known simulator
     # fault, WebKit bug 293831 — real iPads are not affected; it is shown the way)
@@ -71,6 +79,12 @@ while IFS= read -r RT; do
           while IFS= read -r L; do
             case "$L" in
               *"page: SHOT "*) NAME="${L##*SHOT }"; (xcrun simctl io "$UDID" screenshot "$D/$NAME.png" > /dev/null 2>&1 &) ;;
+              # leaving Stand for another app (Settings) for 15 s, then back, as a musician does
+              *"page: SELFTEST LEAVE "*) P0=$(pgrep -f "$UDID.*Stand.app/Stand" | head -1)
+                xcrun simctl launch "$UDID" com.apple.Preferences > /dev/null 2>&1; sleep 15
+                xcrun simctl launch "$UDID" $BID > /dev/null 2>&1; sleep 2
+                P1=$(pgrep -f "$UDID.*Stand.app/Stand" | head -1)
+                [ "$P0" != "$P1" ] && echo "  the app was started again after leaving it (crashed?) ${L##*LEAVE }" | tee -a "$SUMMARY" ;;
             esac
           done < "$D/new.txt"
           grep -q "SELFTEST DONE" "$LOG" && break
@@ -81,7 +95,7 @@ while IFS= read -r RT; do
       A=$( [ -n "$APPPID" ] && ps -o rss= -p "$APPPID" | awk '{print int($1/1024)}' || echo 0)
       WEB=$(ps -axo rss=,command= | grep -i "simruntime" | grep -i "WebContent" | grep -v grep | awk '{s+=$1} END {print int(s/1024)}')
       echo "$NOW,${A:-0},${WEB:-0}" >> "$D/memory.csv"
-      [ $NOW -gt 360 ] && { echo "  TIMEOUT (no DONE after 6 minutes)" | tee -a "$SUMMARY"; xcrun simctl io "$UDID" screenshot "$D/timeout.png" > /dev/null 2>&1; break; }
+      [ $NOW -gt 480 ] && { echo "  TIMEOUT (no DONE after 8 minutes)" | tee -a "$SUMMARY"; xcrun simctl io "$UDID" screenshot "$D/timeout.png" > /dev/null 2>&1; break; }
       [ -z "$APPPID" ] && [ $NOW -gt 20 ] && { echo "  the app is not running any more (crashed?)" | tee -a "$SUMMARY"; xcrun simctl io "$UDID" screenshot "$D/gone.png" > /dev/null 2>&1; break; }
       sleep 1
     done
@@ -94,4 +108,4 @@ while IFS= read -r RT; do
     xcrun simctl shutdown "$UDID" > /dev/null 2>&1; xcrun simctl delete "$UDID" > /dev/null 2>&1
   done
 done <<< "$RUNTIMES"
-echo; echo "fails: $(grep -c 'SELFTEST FAIL' "$SUMMARY"), errors: $(grep -c 'SELFTEST error' "$SUMMARY"), timeouts/crashes: $(grep -c 'TIMEOUT\|not running' "$SUMMARY")" | tee -a "$SUMMARY"
+echo; echo "fails: $(grep -c 'SELFTEST FAIL' "$SUMMARY"), errors: $(grep -c 'SELFTEST error' "$SUMMARY"), timeouts/crashes: $(grep -c 'TIMEOUT\|not running\|started again' "$SUMMARY")" | tee -a "$SUMMARY"

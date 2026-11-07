@@ -24,6 +24,15 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
         vc.present(picker, animated: true)
     }
 
+    // (the simulator self-test only: a folder inside Stand's Documents, as if chosen in Files)
+    func pickForTest(_ rel: String, onList: @escaping ([String: Any]) -> Void) {
+        guard ProcessInfo.processInfo.arguments.contains("-standSelfTest"),
+              let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { onList(["cancelled": true]); return }
+        let url = docs.appendingPathComponent(rel, isDirectory: true)
+        standPickedFolder = url
+        DispatchQueue.global(qos: .userInitiated).async { let list = Self.list(url); DispatchQueue.main.async { onList(list) } }
+    }
+
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { onList?(["cancelled": true]); return }
         if let old = standPickedFolder { old.stopAccessingSecurityScopedResource() }
@@ -44,7 +53,7 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
         var files: [[String: Any]] = []
         var notHere = 0
         let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey]
-        let base = root.standardizedFileURL.path
+        let base = root.resolvingSymlinksInPath().standardizedFileURL.path
         let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsPackageDescendants])
         while let f = en?.nextObject() as? URL {
             let name = f.lastPathComponent
@@ -56,7 +65,7 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
             guard kinds.contains(f.pathExtension.lowercased()) else { continue }
             let v = try? f.resourceValues(forKeys: Set(keys))
             guard v?.isRegularFile == true else { continue }
-            var rel = f.standardizedFileURL.path
+            var rel = f.resolvingSymlinksInPath().standardizedFileURL.path
             if rel.hasPrefix(base) { rel = String(rel.dropFirst(base.count)) }
             while rel.hasPrefix("/") { rel.removeFirst() }
             files.append(["rel": rel, "size": v?.fileSize ?? 0])

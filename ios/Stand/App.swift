@@ -386,6 +386,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         case "standDiag":
             files.diag(body)
         case "standPickFolder":
+            if let t = body["testPath"] as? String { StandFolderImport.shared.pickForTest(t) { [weak self] list in self?.send("standFolder", list) }; return }
             StandFolderImport.shared.pick(from: self) { [weak self] list in self?.send("standFolder", list) }
         case "standAwake":
             // (battery: the page says when nothing is going on, and the screen may then lock as iOS is set)
