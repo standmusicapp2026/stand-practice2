@@ -119,7 +119,7 @@ final class StandNativeExtras: NSObject {
         // sound and microphone after the background, a call or an audio reset (StandAudioKeeper.swift)
         StandAudioKeeper.shared.install(on: webView)
         NotificationCenter.default.addObserver(self, selector: #selector(appActive), name: UIApplication.didBecomeActiveNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(appBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appLeaving), name: UIApplication.willResignActiveNotification, object: nil)
     }
 
     // MARK: - JavaScript helpers
@@ -245,15 +245,7 @@ final class StandNativeExtras: NSObject {
         s.delegate = self
         peerID = id
         session = s
-        let adv = MCNearbyServiceAdvertiser(peer: id, discoveryInfo: ["app": "stand", "t": token, "d": deviceId, "k": kind], serviceType: serviceType)
-        adv.delegate = self
-        advertiser = adv
-        let br = MCNearbyServiceBrowser(peer: id, serviceType: serviceType)
-        br.delegate = self
-        browser = br
-        adv.startAdvertisingPeer()
-        br.startBrowsingForPeers()
-        searching = true; looking = true
+        newLooking()
         scheduleRest(after: 120)
     }
 
@@ -274,8 +266,8 @@ final class StandNativeExtras: NSObject {
         restTimer?.invalidate(); restTimer = nil; searching = false; looking = false
         // (no more calls from them once let go: one arriving for a link being taken down could crash)
         stoppedAt = Date()
-        advertiser?.delegate = nil; advertiser?.stopAdvertisingPeer(); advertiser = nil
-        browser?.delegate = nil; browser?.stopBrowsingForPeers(); browser = nil
+        retireLooking()
+        if let s = session { Self.kept.append(s) }
         session?.delegate = nil; session?.disconnect(); session = nil
         invited.removeAll(); seen.removeAll()
         verified.removeAll(); myNonce.removeAll(); pairing = nil
@@ -477,20 +469,53 @@ final class StandNativeExtras: NSObject {
         js("window.standPeerState && window.standPeerState(\(n), \(jsValue(names)))")
     }
 
-    // Leaving Stand and coming back: the looking is NEVER stopped or started here. iOS itself pauses
-    // the looking when an app goes to the background and resumes it when the app comes back (Apple's
-    // documentation of MCNearbyServiceBrowser/Advertiser). Stopping it here as well cancelled the same
-    // iOS object twice, and iOS closed the app inside its own network code (CFNetwork _BrowserCancel:
-    // the crash report of 7 Nov, and the same crash in the simulator test of leaving and coming back).
+    // Leaving Stand and coming back. iOS pauses an app's network looking when the app is put away and
+    // resumes it when it comes back; that pause and resume of iOS's own, and stopping and starting the
+    // same looking again ourselves, both crashed the app now and then inside iOS's network code
+    // (CFNetwork _BrowserCancel: the crash report of 7 Nov, and the same crash in the simulator tests,
+    // where it came after leaving with nothing playing). So: the looking is stopped by Stand itself the
+    // moment Stand stops being in front (before iOS gets to it), its objects are never used again and
+    // never freed (iOS may still finish cancelling them a moment later), and a NEW looking is made a
+    // moment after Stand is in front again.
+    private static var kept: [AnyObject] = []
     private var stoppedAt = Date.distantPast
-    @objc private func appBackground() { }
+    private var lookAgain: DispatchWorkItem?
+    private func newLooking() {
+        guard let id = peerID, session != nil, advertiser == nil, browser == nil else { return }
+        let adv = MCNearbyServiceAdvertiser(peer: id, discoveryInfo: ["app": "stand", "t": token, "d": deviceId, "k": kind], serviceType: serviceType)
+        adv.delegate = self
+        advertiser = adv
+        let br = MCNearbyServiceBrowser(peer: id, serviceType: serviceType)
+        br.delegate = self
+        browser = br
+        adv.startAdvertisingPeer()
+        br.startBrowsingForPeers()
+        searching = true; looking = true
+    }
+    private func retireLooking() {
+        lookAgain?.cancel(); lookAgain = nil
+        if let a = advertiser { a.delegate = nil; a.stopAdvertisingPeer(); Self.kept.append(a) }
+        if let b = browser { b.delegate = nil; b.stopBrowsingForPeers(); Self.kept.append(b) }
+        advertiser = nil; browser = nil
+        if looking { stoppedAt = Date() }
+        looking = false; searching = false
+        seen.removeAll(); invited.removeAll()
+    }
+    @objc private func appLeaving() {
+        guard session != nil else { return }
+        retireLooking()
+    }
     @objc private func appActive() {
-        // (back: the devices still in sight are asked again, a moment later, if none is connected)
-        guard session != nil, looking else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+        guard session != nil, browser == nil else { return }
+        lookAgain?.cancel()
+        let w = DispatchWorkItem { [weak self] in
             guard let self = self, self.session != nil, UIApplication.shared.applicationState == .active else { return }
-            self.restartDiscovery()
+            self.lookAgain = nil
+            self.newLooking()
         }
+        lookAgain = w
+        let wait = max(1.5, 3 - Date().timeIntervalSince(stoppedAt))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: w)
     }
     // (asked to start or stop while Stand is in the background: done once it is open again)
     private func whenActive(_ f: @escaping () -> Void) -> Bool {

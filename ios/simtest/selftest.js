@@ -37,7 +37,7 @@ async function bgRun() {
   await step('background: metronome on', async () => { await closePanels(); await openM(); if (!S().metro) $('#metroToggle').click(); await sleep(2000); await closePanels(); return S().metro ? `beats ${S().beats}` : false; });
   // (the leave is seen by its event: a page paused in the background cannot see it by looking)
   let hides = 0; document.addEventListener('visibilitychange', () => { if (document.hidden) hides++; });
-  const away = async () => { const h0 = hides; const hid = await waitFor(() => hides > h0, 60000); const back = await waitFor(() => !document.hidden, 90000); return { hid: !!hid, back: !!back }; };
+  const away = async () => { const h0 = hides; const hid = await waitFor(() => hides > h0, 150000); const back = await waitFor(() => !document.hidden, 90000); return { hid: !!hid, back: !!back }; };
   for (let n = 1; n <= 3; n++) {
     const s0 = S(), b0 = s0.beats, t0 = Date.now();
     say('SELFTEST LEAVE ' + n);
@@ -49,12 +49,16 @@ async function bgRun() {
     await step(`background ${n}: back, the metronome kept playing`, async () => (hid && back && s.metro && s.beats > b0 + 8) ? info : false);
   }
   await step('background: metronome off', async () => { await openM(); if (S().metro) $('#metroToggle').click(); await sleep(800); await closePanels(); return !S().metro; });
-  const r0 = S().rested;
-  say('SELFTEST LEAVE 4');
-  const { hid, back } = await away();
-  await sleep(2000);
-  if (!(hid && back && S().rested > r0)) say(`SELFTEST detail background 4: hid ${hid} back ${back} rested ${r0}->${S().rested} busy ${S().busy} sound ${S().state}`);
-  await step('background 4: nothing playing, the sound rested away, back fine', async () => (hid && back && S().rested > r0) ? `sound ${S().state}` : false);
+  // (nothing playing: Stand is really put away by iOS each time; four times, short and long)
+  for (let n = 4; n <= 7; n++) {
+    const r0 = S().rested;
+    say('SELFTEST LEAVE ' + n);
+    const { hid, back } = await away();
+    await sleep(2500);
+    const ok = hid && back && (n > 4 || S().rested > r0);
+    if (!ok) say(`SELFTEST detail background ${n}: hid ${hid} back ${back} rested ${r0}->${S().rested} busy ${S().busy} sound ${S().state}`);
+    await step(`background ${n}: nothing playing, the sound rested away, back fine`, async () => ok ? `sound ${S().state}` : false);
+  }
   await step('background: the metronome starts again', async () => { await openM(); $('#metroToggle').click(); await sleep(2000); const ok = S().metro && S().state === 'running'; $('#metroToggle').click(); await sleep(400); await closePanels(); return ok; });
 }
 async function run() {

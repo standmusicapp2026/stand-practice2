@@ -15,7 +15,7 @@ jobs:
   simtest:
     # (Xcode 26 and the iOS 26 simulators, on an Apple-chip Mac)
     runs-on: ${{ inputs.runner || 'macos-26' }}
-    timeout-minutes: 75
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v4
 

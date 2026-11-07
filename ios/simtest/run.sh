@@ -81,7 +81,7 @@ while IFS= read -r RT; do
               *"page: SHOT "*) NAME="${L##*SHOT }"; (xcrun simctl io "$UDID" screenshot "$D/$NAME.png" > /dev/null 2>&1 &) ;;
               # leaving Stand for another app (Settings) for 15 s, then back, as a musician does
               *"page: SELFTEST LEAVE "*) P0=$(pgrep -f "$UDID.*Stand.app/Stand" | head -1)
-                N=${L##*LEAVE }; case "$N" in 2) W=5;; 3) W=25;; *) W=15;; esac
+                N=${L##*LEAVE }; case "$N" in 2) W=5;; 3) W=25;; 5) W=3;; 6) W=25;; 7) W=8;; *) W=15;; esac
                 xcrun simctl launch "$UDID" com.apple.Preferences > /dev/null 2>&1 || echo "  leave $N: Settings did not open" | tee -a "$SUMMARY"
                 echo "  $(date -u +%T) left $N for $W s" >> "$D/leaves.txt"; sleep $W
                 xcrun simctl launch "$UDID" $BID > /dev/null 2>&1; echo "  $(date -u +%T) back $N" >> "$D/leaves.txt"; sleep 2
@@ -97,7 +97,7 @@ while IFS= read -r RT; do
       A=$( [ -n "$APPPID" ] && ps -o rss= -p "$APPPID" | awk '{print int($1/1024)}' || echo 0)
       WEB=$(ps -axo rss=,command= | grep -i "simruntime" | grep -i "WebContent" | grep -v grep | awk '{s+=$1} END {print int(s/1024)}')
       echo "$NOW,${A:-0},${WEB:-0}" >> "$D/memory.csv"
-      [ $NOW -gt 480 ] && { echo "  TIMEOUT (no DONE after 8 minutes)" | tee -a "$SUMMARY"; xcrun simctl io "$UDID" screenshot "$D/timeout.png" > /dev/null 2>&1; break; }
+      [ $NOW -gt 720 ] && { echo "  TIMEOUT (no DONE after 12 minutes)" | tee -a "$SUMMARY"; xcrun simctl io "$UDID" screenshot "$D/timeout.png" > /dev/null 2>&1; break; }
       [ -z "$APPPID" ] && [ $NOW -gt 20 ] && { echo "  the app is not running any more (crashed?)" | tee -a "$SUMMARY"; xcrun simctl io "$UDID" screenshot "$D/gone.png" > /dev/null 2>&1; break; }
       sleep 1
     done
