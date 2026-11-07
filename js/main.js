@@ -38,6 +38,7 @@ import { openPair, drawLinked, linkedCount } from './pair.js';
 import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
+import { initNowPlaying } from './nowplaying.js';
 import { startTour } from './tour.js';
 import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange, makeMirror, restoreMirror, mirrorSig } from './backup.js';
 
@@ -7820,6 +7821,37 @@ $('#takeImportFile').addEventListener('change', async (e) => {
 // Recordings & player
 // =====================================================================
 const player = new Player();
+// Away from Stand (the lock screen, Control Center, the headphones' button): what plays, by name,
+// with a play/pause that stops the metronome and drone and starts them again where they were
+// (see nowplaying.js); a scale, a take or a piece playing is stopped by it too.
+const nowPlaying = initNowPlaying({
+  describe() {
+    const parts = [];
+    if (metro.running) parts.push('Metronome · ' + (metro.ramp.on ? metro.ramp.from + '–' + metro.ramp.to : Math.round(metro.bpm)) + ' bpm');
+    if (drone.running) parts.push('Drone · ' + drone.label());
+    if (scale.playing) parts.push('Scale');
+    if (player.playing) parts.push('Recording');
+    if (!parts.length) return null;
+    return { title: parts.join(' · '), album: V.score && V.score.title ? V.score.title : '' };
+  },
+  pause() {
+    const p = { metro: metro.running, beat: metro._beatCount | 0, drone: drone.running };
+    let any = p.metro || p.drone;
+    // (what it was, still shown while paused: play starts it again)
+    p.label = [p.metro ? 'Metronome · ' + Math.round(metro.bpm) + ' bpm' : '', p.drone ? 'Drone · ' + drone.label() : ''].filter(Boolean).join(' · ');
+    if (p.metro) stopMetro();
+    if (p.drone) stopDrone();
+    if (scale.playing) { stopScale(); any = true; }
+    if (player.playing) { player.pause(); any = true; }
+    // (only the metronome and the drone start again with play)
+    return any ? p : null;
+  },
+  resume(p) {
+    if (p.metro && !metro.running) startMetro({ fromBeat: p.beat });
+    if (p.drone && !drone.running) startDrone();
+  },
+});
+window.__standMetro = metro; window.__standDrone = drone;   // (tests)
 let takesScope = 'score', currentTake = null, videoURL = null, nativeVideo = false;
 // This score / All also bring you back from a recording to the list
 $$('#takesScope button').forEach((b) => b.addEventListener('click', () => { takesScope = b.dataset.scope; if (!$('#player').hidden) backToTakeList(); else refreshTakes(); }));

@@ -34,15 +34,27 @@ const home = async () => { await closePanels(); if (!$('#score').hidden) $('#bac
 async function bgRun() {
   const S = () => (window.__standSound ? window.__standSound() : {});
   const openM = async () => { const b = $$('[data-panel=metronome]').find((x) => x.offsetParent) || $('[data-panel=metronome]'); b && b.click(); await sleep(900); $('.tour-skip') && $('.tour-skip').click(); await sleep(200); };
+  // (every click given to the sound system, with its time: away from Stand each one must still be in time)
+  const CL = []; { const P = AudioBufferSourceNode.prototype, st = P.start, sp = P.stop;
+    P.start = function (t, ...r) { CL.push({ t, n: this }); if (CL.length > 3000) CL.splice(0, 1000); return st.call(this, t, ...r); };
+    P.stop = function (...r) { this.__stopped = true; return sp.apply(this, r); }; }
+  const inTime = (from, to) => { const m = window.__standMetro; const ts = CL.filter((x) => !x.n.__stopped && x.t >= from && x.t <= to).map((x) => x.t).sort((a, b) => a - b);
+    const want = 60 / m.bpm / (m.subdiv || 1); let off = 0; for (let i = 1; i < ts.length; i++) if (Math.abs(ts[i] - ts[i - 1] - want) > 0.003) off++; return { n: ts.length, off }; };
   await step('background: metronome on', async () => { await closePanels(); await openM(); if (!S().metro) $('#metroToggle').click(); await sleep(2000); await closePanels(); return S().metro ? `beats ${S().beats}` : false; });
   // (the leave is seen by its event: a page paused in the background cannot see it by looking)
   let hides = 0; document.addEventListener('visibilitychange', () => { if (document.hidden) hides++; });
   const away = async () => { const h0 = hides; const hid = await waitFor(() => hides > h0, 150000); const back = await waitFor(() => !document.hidden, 90000); return { hid: !!hid, back: !!back }; };
+  // (what iOS shows away from Stand: its name for what plays, with the icon, and play/pause)
+  await step('now playing: the metronome by name', async () => { await sleep(1300); const ms = navigator.mediaSession; const md = ms && ms.metadata;
+    if (!ms) return 'no Media Session in this web view';
+    return md && /^Metronome/.test(md.title) && md.artist === 'Stand' && ms.playbackState === 'playing' ? md.title : false; });
   for (let n = 1; n <= 3; n++) {
-    const s0 = S(), b0 = s0.beats, t0 = Date.now();
+    const s0 = S(), b0 = s0.beats, t0 = Date.now(), c0 = window.__standMetro && window.__standMetro._ctx ? window.__standMetro._ctx.currentTime : 0;
     say('SELFTEST LEAVE ' + n);
     const { hid, back } = await away();
     await sleep(2000);
+    if (window.__standMetro && window.__standMetro._ctx) { const it = inTime(c0 + 0.5, window.__standMetro._ctx.currentTime - 0.2);
+      await step(`background ${n}: every click in time`, async () => (it.n > 4 && it.off === 0) ? `${it.n} clicks` : (say(`SELFTEST detail clicks ${n}: ${JSON.stringify(it)}`), false)); }
     const s = S(), secs = Math.round((Date.now() - t0) / 1000);
     const info = `hid ${hid} back ${back} metro ${s.metro} beats ${b0}->${s.beats} clock ${(+s0.clock || 0).toFixed(1)}->${(+s.clock || 0).toFixed(1)} in ${secs} s, sound ${s.state}, rested ${s0.rested}->${s.rested}`;
     if (!(hid && back && s.metro && s.beats > b0 + 8)) say('SELFTEST detail background ' + n + ': ' + info);

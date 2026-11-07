@@ -142,7 +142,13 @@ export class Metronome {
     this._ensureBuffers();
     this._out();
     this._ctx = ctx;
-    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) this._resync(getCtx()); }); }
+    if (!this._wired) {
+      this._wired = true;
+      window.addEventListener('stand-audio-new', () => { if (this.running) this._resync(getCtx()); });
+      // (leaving Stand: the clicks are given far ahead at once, before iOS slows the page; coming
+      // back: those beyond the usual margin are taken back)
+      document.addEventListener('visibilitychange', () => { if (!this.running) return; if (document.hidden) this._tick(); else { this._pullBack(); this._lag = 0; } });
+    }
     this.running = true;
     // (started again where it was, e.g. coming back to Stand: a tempo ramp carries on from that bar)
     this._beatCount = Math.max(0, opts.fromBeat | 0);
@@ -152,7 +158,7 @@ export class Metronome {
     this._stopAfterCountIn = !!opts.stopAfterCountIn;
     // a context that is still waking up (first start) needs a little more time before the first beat
     this._next = opts.at && opts.at > ctx.currentTime + 0.02 ? opts.at : ctx.currentTime + (ctx.state === 'running' ? 0.08 : 0.35);
-    this._queue = [];
+    this._queue = []; this._marks = [];
     wantAudio(true, 'metro');
     this._tick();
     this._timer = setInterval(() => this._tick(), TICK_MS);
@@ -163,7 +169,7 @@ export class Metronome {
       if (!this.running || this._startId !== myStart) return;
       if (c !== ctx0 || this._next < c.currentTime) {
         this._ensureBuffers(); this._out();
-        this._next = c.currentTime + 0.12; this._queue = [];
+        this._next = c.currentTime + 0.12; this._queue = []; this._marks = [];
       }
     });
     const loop = () => { this._drain(); if (this.running || this._queue.length) this._raf = requestAnimationFrame(loop); };
@@ -184,11 +190,34 @@ export class Metronome {
   _resync(ctx) {
     this._ctx = ctx;
     this._ensureBuffers(); this._gain = null; this._out();
-    this._next = ctx.currentTime + 0.1; this._queue = [];
+    this._next = ctx.currentTime + 0.1; this._queue = []; this._marks = [];
+  }
+  // How far ahead the clicks are given to the sound system. Away from Stand (the screen locked,
+  // another app) iOS wakes the page only now and then, a second or more apart: the clicks are then
+  // given several seconds ahead, so each one still sounds exactly in time (the sound system plays
+  // them by itself); back in Stand, it is a fraction of a second again, so a change of tempo is
+  // heard at once.
+  _ahead() {
+    const p = performance.now(), gap = this._tickAt ? (p - this._tickAt) / 1000 : 0; this._tickAt = p;
+    this._lag = Math.max(gap, (this._lag || 0) * 0.97);
+    if (typeof document !== 'undefined' && document.hidden) return Math.min(8, Math.max(2, this._lag * 2.5 + 0.3));
+    return Math.max(LOOKAHEAD, Math.min(0.5, this._lag * 1.5));
+  }
+  // back in Stand: the clicks given far ahead are taken back, beyond the usual margin
+  _pullBack() {
+    const m = this._marks; if (!this.running || !m || !m.length) return;
+    const ctx = getCtx(), lim = ctx.currentTime + LOOKAHEAD + 0.02;
+    const i = m.findIndex((x) => x.t > lim); if (i < 0) return;
+    const at = m[i];
+    if (this._sched) for (const src of [...this._sched]) if (src._t >= at.t - 1e-4) { try { src.stop(0); } catch {} this._sched.delete(src); }
+    this._queue = this._queue.filter((ev) => ev.time < at.t - 1e-4);
+    this._next = at.t; this._beatCount = at.bc; this._sub = at.sub; this._countIn = at.ci;
+    m.length = i;
   }
   _tick() {
     const ctx = getCtx();
-    if (this.running && (this._ctx !== ctx || this._next > ctx.currentTime + 5)) this._resync(ctx);
+    const ahead = this._ahead();
+    if (this.running && (this._ctx !== ctx || this._next > ctx.currentTime + Math.max(5, ahead + 1))) this._resync(ctx);
     // fell behind (the sound system stalled, or the page slept): no burst of clicks, and the beat
     // keeps its place: whole beats are passed over in time, so the tempo and the bar stay as they were
     if (this.running && this._next < ctx.currentTime - 0.25 && ctx.state === 'running') {
@@ -201,7 +230,15 @@ export class Metronome {
       if (!this._wakeAt || now - this._wakeAt > 400) { this._wakeAt = now; ctx.resume().catch(() => {}); }
       if (this._next < ctx.currentTime) this._next = ctx.currentTime + 0.1;
     }
-    while (this.running && this._next < ctx.currentTime + LOOKAHEAD) this._advance(false);
+    while (this.running && this._next < ctx.currentTime + ahead) {
+      // (where each click was given from, to take back those far ahead on coming back to Stand)
+      const m = this._marks || (this._marks = []);
+      m.push({ t: this._next, bc: this._beatCount, sub: this._sub, ci: this._countIn });
+      if (m.length > 600) m.splice(0, m.length - 600);
+      this._advance(false);
+    }
+    // (clicks long past are no longer needed to take back)
+    if (this._marks && this._marks.length && this._marks[0].t < ctx.currentTime - 1) { const k = this._marks.findIndex((x) => x.t >= ctx.currentTime - 1); this._marks.splice(0, k < 0 ? this._marks.length : k); }
   }
   // one subdivision on: played (or, falling behind, only counted)
   _advance(silent) {
