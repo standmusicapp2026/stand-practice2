@@ -53,6 +53,7 @@ async function bgRun() {
   say('SELFTEST LEAVE 4');
   const { hid, back } = await away();
   await sleep(2000);
+  if (!(hid && back && S().rested > r0)) say(`SELFTEST detail background 4: hid ${hid} back ${back} rested ${r0}->${S().rested} busy ${S().busy} sound ${S().state}`);
   await step('background 4: nothing playing, the sound rested away, back fine', async () => (hid && back && S().rested > r0) ? `sound ${S().state}` : false);
   await step('background: the metronome starts again', async () => { await openM(); $('#metroToggle').click(); await sleep(2000); const ok = S().metro && S().state === 'running'; $('#metroToggle').click(); await sleep(400); await closePanels(); return ok; });
 }
