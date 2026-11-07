@@ -6,9 +6,13 @@
 // all the time, a change to a near key (a fifth away, relative, parallel) a little more readily;
 // the drone moves when another key is clearly the likely one for a few seconds. A new note is
 // counted only where a note begins (an attack), and only notes the instrument can play. A
-// chromatic run, a shifting exercise, tuning the strings or a scale never moves it.
-// (Measured on cello melodies with changes of key: on the right key 83% of the time instead of
-// 75%, a change followed in about 15 s instead of 23, and no wrong move instead of 8.)
+// chromatic run, a shifting exercise or tuning the strings never moves it; a scale of another key,
+// played after a pause, moves it as soon as it reaches the octave.
+// After a pause (a new piece, a scale) it judges the new music on its own notes and moves within a
+// few seconds; while you play on without stopping it waits for the music to settle in the new key.
+// (Measured live on Bach suite openings and scales, the drone moving itself: the new key reached in
+// about 4-10 s instead of 12 or more — the earlier ear mostly never moved within a piece — and long
+// passages in one key, chromatic runs, open strings and tuning never move it.)
 
 import { getCtx, acquireMic, releaseMic } from './audio.js';
 import { chromaOf } from './listen.js';
@@ -50,15 +54,24 @@ function scaleFitOf(h, oldK, newK) {
 }
 // the likelihood of each note in each of the 24 keys (0–11 major, 12–23 minor), as logarithms
 // (half the key's shape, half its scale: a note outside the scale says much more than the shape alone)
-const LOGP = (() => { const out = []; for (const [prof, sc] of [[MAJOR, [0, 2, 4, 5, 7, 9, 11]], [MINOR, [0, 2, 3, 5, 7, 8, 9, 10, 11]]]) for (let k = 0; k < 12; k++) { const r = rot(prof, k), sum = r.reduce((a, v) => a + v, 0); out.push(r.map((v, i) => Math.log((globalThis.__kfMix ?? 0.2) * v / sum + (1 - (globalThis.__kfMix ?? 0.2)) * (sc.includes((i - k + 12) % 12) ? 1 / sc.length : 0) + 0.004))); } return out; })();
+// (each note of the scale by how often it is used: in minor the raised 7th, the leading note, is
+// nearly always there, the flat 7th and the raised 6th less — so minor keys are not spread over nine
+// equal notes, which made every note a major key shares count a little against them)
+const SCW = [[1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 1, G0('__kfM6', 0.45), G0('__kfB7', 0.55), G0('__kfL7', 0.9)]];
+function G0(k, d) { return globalThis[k] ?? ({ __kfMix: 0.2 })[k] ?? d; }
+const LOGP = (() => { const out = []; const mix = globalThis.__kfMix ?? 0.2; for (const [prof, sw] of [[MAJOR, SCW[0]], [MINOR, SCW[1]]]) for (let k = 0; k < 12; k++) { const r = rot(prof, k), sum = r.reduce((a, v) => a + v, 0), ws = sw.reduce((a, v) => a + v, 0); out.push(r.map((v, i) => Math.log(mix * v / sum + (1 - mix) * sw[(i - k + 12) % 12] / ws + 0.004))); } return out; })();
 const NOTE_CAP = 0.55;     // seconds a single note can count for
-const V2 = () => (globalThis.__kfV ?? 2) === 2;
+const V3 = () => (globalThis.__kfV ?? 3) === 3;
+const V2 = () => (globalThis.__kfV ?? 3) >= 2;
+// (the settings found best on real music — Bach suites, scales — and confirmed on pieces not used to find them)
+const KF_DEFAULTS = {"__kfH": 8, "__kfOwn": 0.8, "__kfM": 0.8, "__kfHalf": 5, "__kfHalfW": 5, "__kfNear": 1.4, "__kfFit": 0.7, "__kfEps": 0.3, "__kfRestW": 0.8, "__kfChroma": 0, "__kfH3": 0.2, "__kfFreshH": 0.4, "__kfNew": 1.2, "__kfGone": 0.4, "__kfGoneN": 12, "__kfSettle": 2500, "__kfMinNotes": 3, "__kfStartW": 1.2, "__kfMix": 0.2, "__kfTriad": 1, "__kfQuiet": 0.3, "__kfLowRun": 6, "__kfGap": 800, "__kfD": 3, "__kfRiv": 3, "__kfFreshMs": 14000, "__kfLvQ": 0.35};
+const G = (k, d) => globalThis[k] ?? KF_DEFAULTS[k] ?? d;
 // A note heard is now and then the wrong note (an attack, an overtone: about one in ten, and more
 // in a room or a scratchy attack): each note
 // counts as "this note, or a mistake", so one wrong note says little, the same note again and again a lot.
 let LOGE = null, LOGE_EPS = -1;
 const logE = () => {
-  const eps = globalThis.__kfEps ?? 0.35;
+  const eps = G('__kfEps', 0.35);
   if (LOGE && LOGE_EPS === eps) return LOGE;
   LOGE_EPS = eps; LOGE = LOGP.map((row) => { const pr = row.map(Math.exp), sum = pr.reduce((a, v) => a + v, 0); return pr.map((v) => Math.log((1 - eps) * v / sum + eps / 12)); });
   return LOGE;
@@ -114,9 +127,10 @@ export class KeyFollower {
   // move the drone away from it a moment later)
   set(pc, minor) {
     const now = this._now();
-    this.fastBg = now + 2500; this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0);
+    this.fastBg = now + 2500; this.flFrom = now; this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0);
     this.notesSince = 0; this.movedAt = now; this.recent = []; this.cur = null; this.durs = [];
     if (this.r) this.r.fill(0);
+    if (this.C) this.C.fill(0);
   }
   // how likely each of the 24 keys is now, given what was heard (the key it is in counts most at first)
   _resetPost() {
@@ -226,10 +240,62 @@ export class KeyFollower {
       res[k] = m > b * 1.6 ? m - b * 1.3 : 0;
       bg[k] = m < b ? b * 0.75 + m * 0.25 : Math.min(m, b * up + 1e-7);
     }
+    // (the level above the drone's own steady sound: what is played, held notes too; the drone's
+    // sound is learnt as the lowest each frequency has been over a moment after it starts or moves,
+    // and afterwards rises only very slowly — so a pause is heard as one, a long note never is)
+    const now = this._now(), fl = this.fl || (this.fl = new Float32Array(n)), mv = this.flFrom ?? -1;
+    if (now < mv + 150) { this.flLearn = 0; }
+    else if (now < mv + 1650) { if (!this.flLearn) { fl.set(mag); this.flLearn = 1; } else for (let k = 0; k < n; k++) if (mag[k] < fl[k]) fl[k] = mag[k]; }
+    else for (let k = 0; k < n; k++) fl[k] = mag[k] < fl[k] ? fl[k] * 0.9 + mag[k] * 0.1 : fl[k] * 1.0015 + 1e-9;
+    const k0 = Math.max(2, Math.floor(45 / (this.an.context ? this.an.context.sampleRate / this.an.fftSize : 10.77))), k1 = Math.min(n, Math.ceil(5000 / (this.an.context ? this.an.context.sampleRate / this.an.fftSize : 10.77)));
+    let lv = 0; for (let k = k0; k < k1; k++) { const d = mag[k] - 2 * fl[k]; if (d > 0) lv += d; }
+    this.lv = now < mv + 1650 ? -1 : lv;
     return res;
   }
   // the note heard in what is new: the pitch whose overtones together are strongest
-  _pitch(res, sr) {
+  // The note, precisely: the peaks of the new sound, each found to a fraction of a bin (so a low C
+  // and C♯, 4 Hz apart, are never confused), and the pitch whose harmonics explain them best (each
+  // peak's strength compressed, so the many weak overtones of a low note count too, and its 3rd
+  // harmonic is never taken for the note: that read a fifth too high).
+  _pitch(res, sr) { return G('__kfP', 2) === 2 ? this._pitch2(res, sr) : this._pitch1(res, sr); }
+  _pitch2(res, sr) {
+    const N = this.an.fftSize, binHz = sr / N, n = res.length;
+    const [lo, hi] = this.range || [36, 96];
+    const kLo = Math.max(2, Math.floor(45 / binHz)), kHi = Math.min(n - 2, Math.ceil(5000 / binHz));
+    let mx = 0; for (let k = kLo; k <= kHi; k++) if (res[k] > mx) mx = res[k];
+    if (mx <= 0) return null;
+    const thr = mx * G('__kfPk', 0.03), pk = [];
+    for (let k = kLo; k <= kHi; k++) {
+      const b = res[k]; if (b <= thr || b < res[k - 1] || b < res[k + 1]) continue;
+      const a = Math.log(res[k - 1] + 1e-12), c = Math.log(res[k + 1] + 1e-12), bb = Math.log(b);
+      const den = a - 2 * bb + c, off = den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den)) : 0;
+      pk.push([(k + off) * binHz, Math.sqrt(b / mx)]);
+    }
+    if (!pk.length) return null;
+    pk.sort((x, y) => y[1] - x[1]); if (pk.length > 16) pk.length = 16;
+    if (globalThis.__kfRec) this.lastPk = pk.map((q) => [+q[0].toFixed(2), +q[1].toFixed(3)]);
+    let tot = 0; for (const q of pk) tot += q[1];
+    const fLo = 440 * Math.pow(2, (lo - 69.5) / 12), fHi = 440 * Math.pow(2, (hi - 68.5) / 12);
+    const score = (f0) => {
+      const got = new Float64Array(13); let s = 0;
+      for (const [f, a] of pk) { const h = Math.round(f / f0); if (h < 1 || h > 12) continue; const dev = Math.abs(1200 * Math.log2(f / (h * f0))); if (dev > 40) continue; const v = a * (1 - dev / 40) / Math.pow(h, G('__kfHw', 0.35)); if (v > got[h]) { s += v - got[h]; got[h] = v; } }
+      // (a pitch with no peak at its own place, nor at its octave, is not the note)
+      if (!got[1] && !got[2]) s *= 0.5;
+      return s;
+    };
+    let best = 0, bestF = 0, second = 0;
+    for (let i = 0; i < Math.min(6, pk.length); i++) for (let h = 1; h <= 8; h++) {
+      const f0 = pk[i][0] / h; if (f0 < fLo || f0 > fHi) continue;
+      // (refined: the harmonics' own average place)
+      const s0 = score(f0);
+      if (s0 > best * 1.0001) { if (Math.abs(1200 * Math.log2(f0 / (bestF || 1))) > 60) second = best; best = s0; bestF = f0; } else if (s0 > second && Math.abs(1200 * Math.log2(f0 / bestF)) > 60) second = s0;
+    }
+    if (!bestF) return null;
+    const midi = Math.round(69 + 12 * Math.log2(bestF / 440));
+    // clarity: how much of the new sound this note explains (above half reads as above 6, as before)
+    return { midi, clarity: 12 * best / tot, sum: best, f: bestF };
+  }
+  _pitch1(res, sr) {
     const N = this.an.fftSize, binHz = sr / N;
     let best = -1, bestS = 0, second = 0, tot = 0;
     const [lo, hi] = this.range || [36, 96];
@@ -257,9 +323,10 @@ export class KeyFollower {
     let e = 0; for (let k = 4; k < res.length; k++) e += res[k];
     const pt = this._pitch(res, sr);
     // (chords and double stops: the pitch classes that sound, when no single note is clear)
-    const chroma = pt && pt.clarity > 6 ? null : () => chromaOf(res, sr, this.an.fftSize);
-    if (globalThis.__kfRec) globalThis.__kfRec.push([now, dt, e, pt && pt.clarity > 6 ? pt.midi : -1, chroma ? chroma() : null]);
-    this._step(now, dt, e, pt && pt.clarity > 6 ? pt.midi : -1, chroma);
+    const CLT = G('__kfP', 2) === 2 ? G('__kfCL', 3.5) : 6;
+    const chroma = pt && pt.clarity > CLT ? null : () => chromaOf(res, sr, this.an.fftSize);
+    if (globalThis.__kfRec) globalThis.__kfRec.push([now, dt, e, pt && pt.clarity > CLT ? pt.midi : -1, chromaOf(res, sr, this.an.fftSize).map((v) => +v.toFixed(3)), pt ? pt.midi : -1, pt ? +pt.clarity.toFixed(2) : 0, ...((q) => q ? [q.midi, +q.clarity.toFixed(2)] : [-1, 0])(this._pitch1(res, sr)), +rms.toExponential(3), +(this.lv ?? -1).toExponential(3), this.lastPk || []]); this.lastPk = null;
+    this._step(now, dt, e, pt && pt.clarity > CLT ? pt.midi : -1, chroma);
   }
   // two memories: the last half minute or so, and the last few seconds (what you play now)
   _fade(dt) {
@@ -275,10 +342,41 @@ export class KeyFollower {
     // a note begins where the new sound rises (an attack, a bow change): only there is a new note
     // counted; a different pitch read later, while a note sounds on and fades, is not a note
     const eh = this.eHist || (this.eHist = []); const eMin = eh.length ? Math.min(...eh) : 0;
-    if (e > Math.max(eMin * (globalThis.__kfRise ?? 1.4), this.eFloor * 6)) this.onsetAt = now;
+    if (e > Math.max(eMin * (globalThis.__kfRise ?? 1.4), this.eFloor * G('__kfOnF', 6))) this.onsetAt = now;
     eh.push(e); if (eh.length > 3) eh.shift();
+    // a pause: the new sound well below how loud you have been playing (the last few seconds), for a
+    // moment (a dip between two notes is not one). (The room's quiet alone was not enough: it starts
+    // from the silence before the first note and took minutes to reach the room's own noise, so no
+    // pause, nor the end of a phrase, was ever heard.)
+    this.ePeak = Math.max(e, (this.ePeak || 0) * Math.pow(0.5, dt / G('__kfPeakHalf', 4)));
+    let low = e < Math.max(this.eFloor * 3 + 1e-5, this.ePeak * G('__kfQuiet', 0.12));
+    // (better: the level above the drone's own sound, against how loud you have been playing lately —
+    // a held note stays above it, the drone and the room never do)
+    const lv = this.__tickLv !== undefined ? this.__tickLv : this.lv;
+    if (G('__kfLvPause', 1) && lv !== undefined && lv < 0) low = false;
+    else if (G('__kfLvPause', 1) && lv !== undefined) {
+      const hs = this.lvHist || (this.lvHist = []);
+      const srt = [...hs].sort((a, b) => a - b), P = srt.length >= 10 ? srt[Math.floor(srt.length * 0.4)] : 0;
+      low = P > 0 && lv < G('__kfLvQ', 0.3) * P;
+      if (!low) { hs.push(lv); if (hs.length > 75) hs.shift(); }
+    }
+    this.lowRun = low ? (this.lowRun || 0) + 1 : 0;
+    // (only the pause and the end of a phrase: the notes themselves are counted as before)
+    if (V3() && this.lowRun === (G('__kfLvPause', 1) && (this.__tickLv ?? this.lv) !== undefined ? G('__kfLvN', 8) : G('__kfLowRun', 10))) { if (!(this.silentFrom >= 0)) this.silentFrom = now - 40 * (this.lowRun - 1); this._noteOff(now, true); }
+    if (V3() && !low && this.silentFrom >= 0) { if (now - this.silentFrom >= G('__kfGap', 1000)) this._afresh(now); this.silentFrom = -1; }
     if (e < this.eFloor * 3 + 1e-5) { this.prevPc = -1; this.pcRun = 0; this.quietAt = now; if (V2()) this._noteOff(now, true); return; }
     let heard = false;
+    // (every moment, the share of each of the 12 notes in what sounds new, a little: fast passages
+    // and double stops count too, where no single note is clear)
+    const cw = G('__kfChroma', 0);
+    if (cw > 0 && V3()) {
+      const c = this.__tickChroma || (typeof chroma === 'function' ? chroma() : chroma);
+      if (c) {
+        const a = G('__kfH3', 0.35), b2 = G('__kfH5', 0.2), d = new Float64Array(12); let sm = 0;
+        for (let i = 0; i < 12; i++) { d[i] = Math.max(0, c[i] - a * c[(i + 5) % 12] - b2 * c[(i + 8) % 12]); sm += d[i]; }
+        if (sm > 0) { const L = logE(); this._evidence((k) => { let v = 0; for (let i = 0; i < 12; i++) v += d[i] * L[k][i]; return cw * dt * v / sm; }); }
+      }
+    }
     if (midi >= 0) {
       const pc = ((midi % 12) + 12) % 12;
       // the same note twice in a row (80 ms) is a note, not a scrape
@@ -305,6 +403,15 @@ export class KeyFollower {
       if (sum > 0) { for (let i = 0; i < 12; i++) { const w = (dt * 0.35 * c[i]) / sum; this.h[i] += w; this.r[i] += w; this.ev[i] += w; } heard = true; }
     }
     if (!heard) return;
+    if (G('__kfD', 3) === 4 && V3()) { this._decide4(now); return; }
+    if (V3()) {
+      const k0 = this.key; this._decide3(now);
+      // (and, while you play on without a pause, the steadier way of the earlier ear: the likely key over
+      // the last few seconds — it follows a piece that moves to a near key, where only one note changes)
+      // (not just after a pause: there the new piece is judged as above, on its own notes)
+      if (G('__kfHyb', 1) && this.key === k0 && !(G('__kfHybF', 1) && now - (this.freshAt ?? -1e12) < G('__kfHybMs', 14000))) this._decide2(now);
+      return;
+    }
     if (V2()) { this._decide2(now); return; }
     this._update(dt, now);
   }
@@ -315,7 +422,26 @@ export class KeyFollower {
     this.cur = { pc, at, from: prev ? prev.pc : -1, fromAt: prev ? prev.at : -1e9 };
     // each note: the keys whose scale has it gain, the others lose (a little for being played)
     const L = logE(); this._evidence((k) => L[k][pc] * 0.6);
-    this.notesSince = (this.notesSince || 0) + 1;
+    // (a triad outlined, root – third – fifth one after another, up or down: an arpeggio of that
+    // chord, most often the tonic's — G B D says G major, E G B says E minor)
+    const tw = G('__kfTriad', 1);
+    if (V3() && tw > 0) {
+      const h = this.tri || (this.tri = []); h.push(pc); if (h.length > 3) h.shift();
+      if (h.length === 3 && new Set(h).size === 3) {
+        const st = [...h].sort((a, b) => a - b);
+        for (const r of st) { const d1 = (st.find((x) => (x - r + 12) % 12 === 4) ?? -1), d1m = (st.find((x) => (x - r + 12) % 12 === 3) ?? -1), d5 = st.find((x) => (x - r + 12) % 12 === 7) ?? -1;
+          if (d5 < 0) continue;
+          const minor = d1 < 0 && d1m >= 0; if (d1 < 0 && d1m < 0) continue;
+          const kk = r + (minor ? 12 : 0); this._evidence((k) => (k === kk ? Math.log(3) : 0) * tw); break; }
+      }
+    }
+    // (the first note after a pause: the start of a scale, a piece, a phrase — very often the tonic)
+    if (V3() && this.freshAt !== undefined && !this.startDone && this.freshAt >= 0) { this.startDone = true; this.firstAfter = pc; this._evidence((k) => Math.log(REST[k][pc]) * G('__kfStartW', 1.2)); }
+    this.notesSince = (this.notesSince || 0) + 1; this.notesSeen = (this.notesSeen || 0) + 1;
+    if (this.afterFresh && this.afterFresh.length < 30) this.afterFresh.push(pc);
+    // (the notes of the last several seconds, one count each, for "a note only the new key has")
+    const nw = this.nwin || (this.nwin = new Float64Array(12)), f = Math.pow(0.5, Math.max(0, at - (this.nwAt ?? at)) / 1000 / G('__kfNwHalf', 6)); this.nwAt = at;
+    for (let i = 0; i < 12; i++) nw[i] *= f; nw[pc] += 1;
   }
   _noteOff(at, rest) {
     const n = this.cur; if (!n) return;
@@ -331,9 +457,10 @@ export class KeyFollower {
     const long = durs.length >= 3 && dur >= Math.max(0.5, med * 1.6);
     const lead = n.from === (n.pc + 11) % 12 && at - n.fromAt < 3000;
     const c = (long ? 1 : 0) + (rest && dur >= 0.25 ? 0.8 : 0) + (lead && (long || rest) ? 0.6 : 0);
-    if (c > 0) this._evidence((k) => Math.log(REST[k][n.pc]) * c * (globalThis.__kfRestW ?? 1.4));
+    if (c > 0) this._evidence((k) => Math.log(REST[k][n.pc]) * c * G('__kfRestW', 1.4));
   }
   _evidence(f) {
+    if (V3()) this._proof(f);
     const p = this.post; if (!p) return;
     // (a key may change at any note: a little of each key's likelihood flows to its near keys first)
     const s = globalThis.__kfStay ?? 0.97, q = new Float64Array(24);
@@ -342,6 +469,189 @@ export class KeyFollower {
     for (let k = 0; k < 24; k++) { l[k] = f(k); if (l[k] > mx) mx = l[k]; }
     let sum = 0; for (let k = 0; k < 24; k++) { q[k] *= Math.exp(l[k] - mx); sum += q[k]; }
     for (let k = 0; k < 24; k++) p[k] = Math.max(1e-6, q[k] / sum);
+  }
+  // ---- the proof for each other key against the key the drone is in (a change detector) ----
+  // Each note adds, for every other key, how much better that key explains it than the drone's key
+  // (a note both keys have adds about nothing; a note only the other key has adds a lot; a note only
+  // the drone's key has takes it away); the proof never goes below nothing and fades with time
+  // (a few passing notes long ago are forgotten).
+  _proof(f) {
+    const cur = this.key; if (!cur) return;
+    const ci = cur.pc + (cur.minor ? 12 : 0), now = this._now();
+    const C = this.C || (this.C = new Float64Array(24));
+    const fade = Math.pow(0.5, Math.max(0, now - (this.Cat ?? now)) / 1000 / G('__kfHalf', 8)); this.Cat = now;
+    const lc = f(ci);
+    // and, apart from the drone's key, how well each key explains the last few seconds (to choose among them)
+    const W = this.W || (this.W = new Float64Array(24)), fw = Math.pow(0.5, Math.max(0, now - (this.Wat ?? now)) / 1000 / G('__kfHalfW', 5)); this.Wat = now;
+    for (let k = 0; k < 24; k++) { const fk = f(k); W[k] = W[k] * fw + fk; if (k === ci) { C[k] = 0; continue; } C[k] = Math.max(0, C[k] * fade + fk - lc); }
+  }
+  _decide3(now) {
+    const S = this._sens(), cur = this.key;
+    // what the ear believes now (shown under the drone)
+    const p = this.post; let b = 0; for (let k = 1; k < 24; k++) if (p[k] > p[b]) b = k;
+    this.onHear && this.onHear(p[b] > 0.5 ? { pc: b % 12, minor: b >= 12, score: p[b] } : null);
+    if (!cur || !this.C) return;
+    const C = this.C, ci = cur.pc + (cur.minor ? 12 : 0);
+    // 1. has the drone's key been left? (some key has proof enough against it)
+    // 2. then which key: the one that explains the last few seconds best, clearly, and has proof too
+    // a scale says its key: a stepwise run from a note to the same note an octave away
+    const sk = G('__kfScale', 1) ? this._scaleKey() : null;
+    if (sk && !(sk.pc === cur.pc && sk.minor === cur.minor) && now - (this.movedAt ?? -1e12) >= 1200) {
+      this.why = 'scale'; this.pa = null; this.cand = null; this.key = sk; this.movedAt = now; this.notesSince = 0; this.fastBg = now + 2500; this.flFrom = now; this.C.fill(0); this.scaleDone = this.notesSeen;
+      this.onKey && this.onKey(this.key); return;
+    }
+    const W = this.W;
+    let k1 = -1, k2 = -1; for (let k = 0; k < 24; k++) { if (k === ci || C[k] <= 0) continue; if (k1 < 0 || W[k] > W[k1]) { k2 = k1; k1 = k; } else if (k2 < 0 || W[k] > W[k2]) k2 = k; }
+    if (k1 < 0) return;
+    let cm = 0; for (let k = 0; k < 24; k++) if (C[k] > cm) cm = C[k];
+    const nk = { pc: k1 % 12, minor: k1 >= 12 };
+    const near = relative(cur, nk) || cur.pc === nk.pc;
+    const fresh = now - (this.freshAt ?? -1e12) < G('__kfFreshMs', 8000);
+    const H = lerp(G('__kfH', 4.5) * 1.5, G('__kfH', 4.5) * 0.7, S) * (near ? G('__kfNear', 1.4) : 1) * (fresh ? G('__kfFreshH', 0.7) : 1);
+    const wm = k2 < 0 ? 99 : W[k1] - W[k2];
+    this.dbg = { k: k1, C: +C[k1].toFixed(2), C2: +cm.toFixed(2), H: +H.toFixed(2), wm: +wm.toFixed(2) };
+    if (cm < H || C[k1] < H * G('__kfOwn', 0.6) || wm < G('__kfM', 0.8)) return;
+    // never on what is not a key at all (a chromatic run, a shifting exercise, half steps), never on a
+    // key that does not hold what you play now, and not again the moment after a move
+    const r = this.r; let totR = 0; for (let i = 0; i < 12; i++) totR += r[i];
+    let spread = 0; for (let i = 0; i < 12; i++) if (r[i] >= 0.05 * totR) spread++;
+    const rc = this.recent || []; let semi = 0, steps = 0;
+    for (let i = 1; i < rc.length; i++) { const d = Math.abs(rc[i] - rc[i - 1]); if (d === 0) continue; steps++; if (d === 1) semi++; }
+    const chromatic = steps >= 8 && semi / steps > G('__kfSemi', 0.4);
+    const fit = scaleFit(r, nk.pc, nk.minor);
+    const settled = now - (this.movedAt ?? -1e12) >= G('__kfSettle', 2500);
+    this.dbg.guard = [spread, chromatic, +fit.toFixed(2), settled];
+    // tuning: open strings, a fifth apart, again and again (no key in that)
+    let fifths = 0, moves = 0; const pcs = new Set();
+    for (let i = Math.max(1, rc.length - 10); i < rc.length; i++) { const d = ((rc[i] - rc[i - 1]) % 12 + 12) % 12; pcs.add(rc[i] % 12); if (d === 0) continue; moves++; if (d === 5 || d === 7) fifths++; }
+    const tuning = moves >= 4 && fifths / moves >= 0.6 && pcs.size <= 4;
+    if (tuning) { this.dbg.tuning = true; return; }
+    if (chromatic || spread > G('__kfSpread', 9) || fit < G('__kfFit', 0.8) || !settled || (this.notesSince || 0) < G('__kfMinNotes', 3)) return;
+    // as a musician hears it: a key changes only with a note the new key has and the old one has not
+    // (C♯ from G to D, D♯ to E minor, F♯ from D minor to D major); from a minor key to its relative
+    // major (A minor to C) there is none: there the minor's leading note (G♯) must have gone
+    if (!this._newNote(cur, nk)) { this.dbg.nn = false; return; }
+    // and not while a neighbour of that key (its dominant or subdominant, its relative or parallel
+    // key) explains what you play almost as well: only once the note that tells them apart has been
+    // heard (E♯, not E, for F♯ major against B major; the leading note for a minor key against its
+    // relative major) — the way a musician tells them apart
+    const riv = this._rival(k1, W);
+    if (riv >= 0) { this.dbg.rival = riv; return; }
+    this.why = 'proof'; this.pa = null; this.cand = null; this.key = nk; this.movedAt = now; this.notesSince = 0; this.fastBg = now + 2500; this.flFrom = now; this.C.fill(0);
+    // (the filter shown under the drone starts from the new key too)
+    const q = this.post; for (let k = 0; k < 24; k++) q[k] = Math.max(q[k], 0); q[k1] = Math.max(q[k1], 0.6); let sm = 0; for (let k = 0; k < 24; k++) sm += q[k]; for (let k = 0; k < 24; k++) q[k] /= sm;
+    this.onKey && this.onKey(this.key);
+  }
+  // ---- the key now: which key explains the last few seconds best (the ends of phrases weighing
+  // most), against the drone's key; it moves when another key is clearly better, stays the better
+  // one for a few notes, and has a note the drone's key has not ----
+  _decide4(now) {
+    const S = this._sens(), cur = this.key;
+    const p = this.post; let b = 0; for (let k = 1; k < 24; k++) if (p[k] > p[b]) b = k;
+    this.onHear && this.onHear(p[b] > 0.5 ? { pc: b % 12, minor: b >= 12, score: p[b] } : null);
+    const W = this.W; if (!cur || !W) return;
+    const ci = cur.pc + (cur.minor ? 12 : 0);
+    // (only on a new note: the decision is a musician's, note by note)
+    const n = this.notesSeen || 0; if (n === this.lastDecN) return; this.lastDecN = n;
+    let k1 = -1, k2 = -1; for (let k = 0; k < 24; k++) { if (k1 < 0 || W[k] > W[k1]) { k2 = k1; k1 = k; } else if (k2 < 0 || W[k] > W[k2]) k2 = k; }
+    if (k1 === ci) { this.win = null; return; }
+    const nk = { pc: k1 % 12, minor: k1 >= 12 }, near = relative(cur, nk) || cur.pc === nk.pc;
+    const fresh = now - (this.freshAt ?? -1e12) < G('__kfFreshMs', 8000);
+    const T = lerp(1.4, 0.7, S) * G('__kfT', 3) * (near ? G('__kfNear', 1.4) : 1) * (fresh ? G('__kfFreshH', 0.7) : 1);
+    const gap = W[k1] - W[ci], marg = W[k1] - W[k2];
+    this.dbg = { k: k1, C: +gap.toFixed(2), C2: +marg.toFixed(2), H: +T.toFixed(2) };
+    if (gap < T || marg < G('__kfM', 0.8)) { this.win = null; return; }
+    if (!this.win || this.win.k !== k1) { this.win = { k: k1, n: 0 }; }
+    this.win.n++;
+    if (this.win.n < G('__kfStable', 2)) return;
+    const r = this.r; let totR = 0; for (let i = 0; i < 12; i++) totR += r[i];
+    let spread = 0; for (let i = 0; i < 12; i++) if (r[i] >= 0.05 * totR) spread++;
+    const rc = this.recent || []; let semi = 0, steps = 0;
+    for (let i = 1; i < rc.length; i++) { const d = Math.abs(rc[i] - rc[i - 1]); if (d === 0) continue; steps++; if (d === 1) semi++; }
+    const chromatic = steps >= 8 && semi / steps > G('__kfSemi', 0.4);
+    const settled = now - (this.movedAt ?? -1e12) >= G('__kfSettle', 2500);
+    this.dbg.guard = [spread, chromatic, settled];
+    if (chromatic || spread > G('__kfSpread', 9) || !settled || (this.notesSince || 0) < G('__kfMinNotes', 3)) return;
+    if (G('__kfNN', 1) && !this._newNote(cur, nk)) { this.dbg.nn = false; return; }
+    this.key = nk; this.movedAt = now; this.notesSince = 0; this.fastBg = now + 2500; this.flFrom = now; this.win = null;
+    if (this.C) this.C.fill(0);
+    this.onKey && this.onKey(this.key);
+  }
+  _scaleKey() {
+    const now0 = (o) => o._now();
+    // a scale from a pause: from its first note (or the second or third, when the first was not
+    // heard) step by step to the same note an octave away; steps by note name, so an octave heard
+    // wrongly does not break it, a wrong note away and straight back is left out, and a note not
+    // heard at all leaves a third, still a step
+    const seq0 = this.afterFresh || []; if (seq0.length < 6 || this.scaleFor === this.freshAt) return null;
+    if (now0(this) - (this.freshAt ?? -1e12) > 15000) return null;
+    const seq = []; for (let k = 0; k < seq0.length; k++) { const p = seq0[k]; if (seq.length && seq[seq.length - 1] === p) continue; seq.push(p); }
+    const iv = (a, b) => ((b - a) % 12 + 12) % 12;
+    const f = []; for (let k = 0; k < seq.length; k++) { const a = f[f.length - 1], b = seq[k], c = seq[k + 1]; if (a !== undefined && c !== undefined) { const d1 = iv(a, b), d2 = iv(a, c); const step = (d) => (d >= 1 && d <= 4) || (d >= 8 && d <= 11); if (!step(d1) && step(d2) && G('__kfScaleTol', 1)) continue; } f.push(b); }
+    // (from its first note, or from that note again an octave on — a low first octave is often
+    // half heard, the second clearly)
+    for (let s0 = 0; s0 < f.length; s0++) {
+      if (s0 > G("__kfScaleS0", 0) && !(G('__kfScale2', 1) && f[s0] === f[0])) continue;
+      let dir = 0, tot = 0; const seg = [f[s0]];
+      for (let k = s0 + 1; k < f.length; k++) {
+        const d = iv(f[k - 1], f[k]); const up = d >= 1 && d <= 4, dn = d >= 8 && d <= 11;
+        if (!up && !dn) break; const sd = up ? 1 : -1; if (dir && sd !== dir) break; dir = sd;
+        tot += up ? d : 12 - d; seg.push(f[k]);
+        if (tot === 12 && f[k] === f[s0] && seg.length >= G('__kfScaleN', 6)) {
+          const t = f[s0], pcs = new Set(seg), rel = (x) => pcs.has((t + x) % 12);
+          if (pcs.size < 6) break;
+          // (only a real major or minor scale on that note: every note of it in that scale, the second a
+          // whole step up, the fifth there — G to G in C major (no F♯) or B to B in G (C, a half step up)
+          // is a mode of another key, not a scale of its own; a minor scale needs its sixth or leading note)
+          const inSet = (set) => [...pcs].every((x) => set.includes((x - t + 12) % 12));
+          if (G('__kfScaleStrict', 1)) {
+            if (inSet([0, 2, 4, 5, 7, 9, 11]) && rel(2) && rel(4) && rel(7) && pcs.size >= G('__kfScaleN', 6)) { this.scaleFor = this.freshAt; return { pc: t, minor: false }; }
+            if (inSet([0, 2, 3, 5, 7, 8, 9, 10, 11]) && rel(2) && rel(3) && rel(5) && rel(7) && (rel(8) || rel(11)) && !(rel(9) && rel(10) && !rel(11))) { this.scaleFor = this.freshAt; return { pc: t, minor: true }; }
+            break;
+          }
+          if (rel(4) && !rel(3) && rel(7)) { this.scaleFor = this.freshAt; return { pc: t, minor: false }; }
+          if (rel(3) && !rel(4) && rel(7)) { this.scaleFor = this.freshAt; return { pc: t, minor: true }; }
+          break;
+        }
+        if (tot > 12) break;
+      }
+    }
+    return null;
+  }
+  _afresh(now) {
+    this.freshAt = now; this.startDone = false; this.firstAfter = -1; this.afterFresh = [];
+    for (const a of [this.C, this.W, this.nwin]) if (a) a.fill(0);
+  }
+  _rival(k1, W) {
+    const M2 = G('__kfRiv', 0); if (!M2) return -1;
+    const nk = { pc: k1 % 12, minor: k1 >= 12 }, nw = this.nwin; if (!nw) return -1;
+    const core = (k) => k.minor ? [0, 2, 3, 5, 7, 8, 11] : [0, 2, 4, 5, 7, 9, 11];
+    let tot = 0; for (let i = 0; i < 12; i++) tot += nw[i];
+    for (let k = 0; k < 24; k++) {
+      if (k === k1 || W[k1] - W[k] >= M2) continue;
+      const rk = { pc: k % 12, minor: k >= 12 };
+      const d = (rk.pc - nk.pc + 12) % 12;
+      const nb = (rk.minor === nk.minor && (d === 5 || d === 7)) || relative(rk, nk) || (rk.pc === nk.pc && rk.minor !== nk.minor);
+      if (!nb) continue;
+      const cn = core(nk), cr = core(rk); let only = 0, gone = 0;
+      for (let i = 0; i < 12; i++) { const inN = cn.includes((i - nk.pc + 12) % 12), inR = cr.includes((i - rk.pc + 12) % 12); if (inN && !inR) only += nw[i]; else if (inR && !inN) gone += nw[i]; }
+      // (a major key against its relative minor has no note of its own: the minor's leading note must be absent)
+      const ok = only > 0 ? (only >= G('__kfRivN', 1) && only > gone) : (gone <= 0.3 && tot >= G('__kfRivT', 8));
+      if (!ok) return k;
+    }
+    return -1;
+  }
+  _newNote(cur, nk) {
+    const nw = this.nwin; if (!nw) return false;
+    const core = (k) => k.minor ? [0, 2, 3, 5, 7, 8, 11] : [0, 2, 4, 5, 7, 9, 11];
+    const so = core(cur), sn = core(nk); let fresh = 0, gone = 0, tot = 0;
+    for (let i = 0; i < 12; i++) { tot += nw[i]; const inN = sn.includes((i - nk.pc + 12) % 12), inO = so.includes((i - cur.pc + 12) % 12); if (inN && !inO) fresh += nw[i]; else if (inO && !inN) gone += nw[i]; }
+    if (fresh >= G('__kfNew', 1.2) && gone <= fresh) return true;
+    // (or the old key's own note has gone, over many notes: G no more, from D to A)
+    if (tot >= G('__kfGoneN', 9) && gone <= G('__kfGone', 0.3) && !(nk.minor && relative(cur, nk))) return true;
+    // (minor to its relative major: no leading note of the minor any more)
+    if (cur.minor && !nk.minor && relative(cur, nk)) return nw[(cur.pc + 11) % 12] <= G('__kfLeadGone', 0.15) * Math.max(1, tot / 6);
+    return false;
   }
   _decide2(now) {
     const S = this._sens(), cur = this.key;
@@ -374,7 +684,7 @@ export class KeyFollower {
     if (!this.cand || this.cand.pc !== best.pc || this.cand.minor !== best.minor) { this.cand = { ...best, since: now, lastOk: now }; return; }
     this.cand.lastOk = now;
     if (now - this.cand.since >= lerp(globalThis.__kfHold ?? 1200, 400, S)) {
-      this.key = best; this.cand = null; this.movedAt = now; this.notesSince = 0; this.fastBg = now + 2500;
+      this.key = best; this.cand = null; this.movedAt = now; this.notesSince = 0; this.fastBg = now + 2500; this.flFrom = now; this.why = 'filter'; if (this.C) this.C.fill(0);
       // (the new key is now the likely one; the filter goes on from where it is)
       this.onKey && this.onKey(this.key);
     }
