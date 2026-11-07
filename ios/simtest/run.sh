@@ -81,7 +81,8 @@ while IFS= read -r RT; do
               *"page: SHOT "*) NAME="${L##*SHOT }"; (xcrun simctl io "$UDID" screenshot "$D/$NAME.png" > /dev/null 2>&1 &) ;;
               # leaving Stand for another app (Settings) for 15 s, then back, as a musician does
               *"page: SELFTEST LEAVE "*) P0=$(pgrep -f "$UDID.*Stand.app/Stand" | head -1)
-                xcrun simctl launch "$UDID" com.apple.Preferences > /dev/null 2>&1; sleep 15
+                N=${L##*LEAVE }; case "$N" in 2) W=5;; 3) W=25;; *) W=15;; esac
+                xcrun simctl launch "$UDID" com.apple.Preferences > /dev/null 2>&1; sleep $W
                 xcrun simctl launch "$UDID" $BID > /dev/null 2>&1; sleep 2
                 P1=$(pgrep -f "$UDID.*Stand.app/Stand" | head -1)
                 [ "$P0" != "$P1" ] && echo "  the app was started again after leaving it (crashed?) ${L##*LEAVE }" | tee -a "$SUMMARY" ;;

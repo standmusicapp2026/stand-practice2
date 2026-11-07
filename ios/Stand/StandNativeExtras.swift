@@ -138,8 +138,11 @@ final class StandNativeExtras: NSObject {
     private func handle(_ op: String, _ body: [String: Any]) {
         switch op {
         case "start":
-            startPeer(name: (body["name"] as? String) ?? UIDevice.current.name)
+            let name = (body["name"] as? String) ?? UIDevice.current.name
+            if whenActive({ [weak self] in self?.startPeer(name: name) }) { return }
+            startPeer(name: name)
         case "stop":
+            if whenActive({ [weak self] in self?.stopPeer() }) { return }
             stopPeer()
         case "send":
             guard let str = body["data"] as? String, let data = ("J" + str).data(using: .utf8) else { return }
@@ -233,7 +236,7 @@ final class StandNativeExtras: NSObject {
         let kind = UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad"
         displayName = name.hasPrefix("Stand ") ? "Stand " + kind : String(name.prefix(50))
         if session != nil { reportPeers(); restartDiscovery(); return }
-        // (just taken down: a new looking only after 3 s — see appBackground)
+        // (just taken down: a new looking only after 3 s)
         let since = Date().timeIntervalSince(stoppedAt)
         if since < 3 { DispatchQueue.main.asyncAfter(deadline: .now() + (3 - since)) { [weak self] in if self?.session == nil { self?.startPeer(name: name) } }; return }
         let id = Self.savedPeerID(displayName)
@@ -270,7 +273,7 @@ final class StandNativeExtras: NSObject {
     private func stopPeer() {
         restTimer?.invalidate(); restTimer = nil; searching = false; looking = false
         // (no more calls from them once let go: one arriving for a link being taken down could crash)
-        stoppedAt = Date(); awayStop?.cancel(); awayStop = nil
+        stoppedAt = Date()
         advertiser?.delegate = nil; advertiser?.stopAdvertisingPeer(); advertiser = nil
         browser?.delegate = nil; browser?.stopBrowsingForPeers(); browser = nil
         session?.delegate = nil; session?.disconnect(); session = nil
@@ -474,35 +477,29 @@ final class StandNativeExtras: NSObject {
         js("window.standPeerState && window.standPeerState(\(n), \(jsValue(names)))")
     }
 
-    // Leaving Stand for a moment (another app, the home screen, and back) does not stop the looking:
-    // stopping iOS's network looking and starting it again within a second crashed the app on the
-    // iPhone, inside iOS's own network code (CFNetwork, crash report of 7 Nov). It stops only after
-    // 15 s away, and is started again no sooner than 3 s after it stopped.
-    private var awayStop: DispatchWorkItem?
+    // Leaving Stand and coming back: the looking is NEVER stopped or started here. iOS itself pauses
+    // the looking when an app goes to the background and resumes it when the app comes back (Apple's
+    // documentation of MCNearbyServiceBrowser/Advertiser). Stopping it here as well cancelled the same
+    // iOS object twice, and iOS closed the app inside its own network code (CFNetwork _BrowserCancel:
+    // the crash report of 7 Nov, and the same crash in the simulator test of leaving and coming back).
     private var stoppedAt = Date.distantPast
-    @objc private func appBackground() {
-        guard looking else { return }
-        awayStop?.cancel()
-        let w = DispatchWorkItem { [weak self] in
-            guard let self = self, self.looking, UIApplication.shared.applicationState == .background else { return }
-            self.looking = false; self.stoppedAt = Date()
-            self.advertiser?.stopAdvertisingPeer()
-            self.browser?.stopBrowsingForPeers()
-            self.seen.removeAll()   // (found again when the looking starts again)
-        }
-        awayStop = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: w)
-    }
+    @objc private func appBackground() { }
     @objc private func appActive() {
-        awayStop?.cancel(); awayStop = nil
-        guard session != nil, !looking else { return }
-        // (back after a longer time away, where the looking was stopped: started again, not too soon)
-        let wait = max(0.6, 3 - Date().timeIntervalSince(stoppedAt))
-        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
-            guard self.session != nil, !self.looking, UIApplication.shared.applicationState == .active else { return }
-            self.looking = true
-            self.advertiser?.startAdvertisingPeer(); self.browser?.startBrowsingForPeers(); self.searching = true
+        // (back: the devices still in sight are asked again, a moment later, if none is connected)
+        guard session != nil, looking else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, self.session != nil, UIApplication.shared.applicationState == .active else { return }
+            self.restartDiscovery()
         }
+    }
+    // (asked to start or stop while Stand is in the background: done once it is open again)
+    private func whenActive(_ f: @escaping () -> Void) -> Bool {
+        guard UIApplication.shared.applicationState == .background else { return false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard self != nil else { return }
+            if UIApplication.shared.applicationState == .background { _ = self?.whenActive(f) } else { f() }
+        }
+        return true
     }
 }
 
