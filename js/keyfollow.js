@@ -409,7 +409,7 @@ export class KeyFollower {
       // (and, while you play on without a pause, the steadier way of the earlier ear: the likely key over
       // the last few seconds — it follows a piece that moves to a near key, where only one note changes)
       // (not just after a pause: there the new piece is judged as above, on its own notes)
-      if (G('__kfHyb', 1) && this.key === k0 && !(G('__kfHybF', 1) && now - (this.freshAt ?? -1e12) < G('__kfHybMs', 14000))) this._decide2(now);
+      if (G('__kfHyb', 1) && this.key === k0 && !(G('__kfHybF', 1) && now - (this.freshAt ?? -1e12) < G('__kfHybMs', 14000)) && !this._tuning()) this._decide2(now);
       return;
     }
     if (V2()) { this._decide2(now); return; }
@@ -485,6 +485,16 @@ export class KeyFollower {
     const W = this.W || (this.W = new Float64Array(24)), fw = Math.pow(0.5, Math.max(0, now - (this.Wat ?? now)) / 1000 / G('__kfHalfW', 5)); this.Wat = now;
     for (let k = 0; k < 24; k++) { const fk = f(k); W[k] = W[k] * fw + fk; if (k === ci) { C[k] = 0; continue; } C[k] = Math.max(0, C[k] * fade + fk - lc); }
   }
+  // Tuning: open strings, a fifth apart, again and again — no key in that. (A note misheard now and
+  // then, A taken for B♭, does not hide it: four notes make nearly all of it.)
+  _tuning() {
+    const rc = this.recent || []; let fifths = 0, moves = 0; const cnt = {};
+    const from = Math.max(1, rc.length - 12);
+    for (let i = from; i < rc.length; i++) { const d = ((rc[i] - rc[i - 1]) % 12 + 12) % 12; cnt[rc[i] % 12] = (cnt[rc[i] % 12] || 0) + 1; if (d === 0) continue; moves++; if (d === 5 || d === 7) fifths++; }
+    const n = rc.length - from; if (n < 5) return false;
+    const top4 = Object.values(cnt).sort((a, b) => b - a).slice(0, 4).reduce((a, b) => a + b, 0);
+    return moves >= 4 && fifths / moves >= 0.5 && top4 / n >= 0.8;
+  }
   _decide3(now) {
     const S = this._sens(), cur = this.key;
     // what the ear believes now (shown under the drone)
@@ -522,10 +532,7 @@ export class KeyFollower {
     const settled = now - (this.movedAt ?? -1e12) >= G('__kfSettle', 2500);
     this.dbg.guard = [spread, chromatic, +fit.toFixed(2), settled];
     // tuning: open strings, a fifth apart, again and again (no key in that)
-    let fifths = 0, moves = 0; const pcs = new Set();
-    for (let i = Math.max(1, rc.length - 10); i < rc.length; i++) { const d = ((rc[i] - rc[i - 1]) % 12 + 12) % 12; pcs.add(rc[i] % 12); if (d === 0) continue; moves++; if (d === 5 || d === 7) fifths++; }
-    const tuning = moves >= 4 && fifths / moves >= 0.6 && pcs.size <= 4;
-    if (tuning) { this.dbg.tuning = true; return; }
+    if (this._tuning()) { this.dbg.tuning = true; return; }
     if (chromatic || spread > G('__kfSpread', 9) || fit < G('__kfFit', 0.8) || !settled || (this.notesSince || 0) < G('__kfMinNotes', 3)) return;
     // as a musician hears it: a key changes only with a note the new key has and the old one has not
     // (C♯ from G to D, D♯ to E minor, F♯ from D minor to D major); from a minor key to its relative
