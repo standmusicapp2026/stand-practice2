@@ -2463,6 +2463,9 @@ function drawLasso(pts) {
 }
 
 // ---------- markings state ----------
+// (the tool wheel and the ruler, further down)
+const WHEEL = { el: null, closing: 0 };
+const RULER = { on: false, el: null, cx: 0, cy: 0, ang: 0, len: 0, h: 78, g: null };
 const INK = {
   tool: 'pen', finger: false, stamp: 'p', erase: 'smart', penKind: 'fountain', recent: [], kinds: {}, eraser: { size: 3, whole: false }, tape: { pat: 'stripes', size: 4 }, shapeFill: false, steady: 0,
   slots: [COLORS[0], COLORS[2]], slot: 0,
@@ -2484,7 +2487,7 @@ function inkHint(msg, ms = 3200) { const h = $('#inkHint'); h.textContent = msg;
 function setInking(on) {
   if (on && V.half) { V.half = false; layout(); }
   V.inking = on;
-  if (!on) { finishText(); flushWord(); finishTextBox(); }
+  if (!on) { finishText(); flushWord(); finishTextBox(); hideRuler(); closeWheel(); }
   $('#inkbar').hidden = !on; $('#inkBtn').classList.toggle('on', on); inkBarBack();
   stage.classList.toggle('inking', on);
   closeInkPops(); clearSelection();
@@ -2553,6 +2556,8 @@ function syncInkBar() {
   const penDot = $('#penDot'); if (penDot) penDot.style.setProperty('--c', penColor());
   syncSizes();
   $('#fingerBtn').classList.toggle('on', INK.finger);
+  if (!nb && RULER.on) hideRuler();
+  if ($('#rulerBtn')) $('#rulerBtn').classList.toggle('on', RULER.on);
   $('#inkUndo').disabled = !V.undo.length; $('#inkRedo').disabled = !V.redo.length;
 }
 // three quick thicknesses next to the colours, like a notes app
@@ -2591,19 +2596,20 @@ function fillInkPop() {
   const sw = $('#swatches'); sw.textContent = '';
   const nb = NBK();
   const pick = (c) => { if (tool === 'hl') { INK.hl.c = c; INK.hlSlots[INK.hlSlot] = c; } else { INK.slots[INK.slot] = c; if (nb && tool === 'pen') styleFor('pen').c = c; } fillInkPop(); syncInkBar(); persistInk(); };
-  for (const c of nb && tool !== 'hl' ? PALETTE : COLORS) {
+  // (in a notebook the highlighters have all the pens' colours too)
+  for (const c of nb ? PALETTE : COLORS) {
     const b = el('button'); b.style.setProperty('--c', c); b.classList.toggle('on', c === cur); b.setAttribute('aria-label', 'Colour ' + c);
     b.addEventListener('click', () => pick(c));
     sw.append(b);
   }
-  sw.classList.toggle('wide', nb && tool !== 'hl');
+  sw.classList.toggle('wide', nb);
   // any colour, and the ones chosen that way lately
   $('#customColWrap').hidden = !nb;
   $('#inkCustom').value = /^#[0-9a-f]{6}$/i.test(cur) ? cur : '#16181d';
   const rc = $('#recentCols'); rc.textContent = ''; rc.hidden = !nb || !INK.recent.length;
   for (const c of INK.recent) { const b = el('button'); b.style.setProperty('--c', c); b.classList.toggle('on', c === cur); b.addEventListener('click', () => pick(c)); rc.append(b); }
   INK._pick = pick;
-  $('#palSets').hidden = !(nb && tool !== 'hl'); if (!$('#palSets').hidden) fillPalSets(cur, pick);
+  $('#palSets').hidden = !nb; if (!$('#palSets').hidden) fillPalSets(cur, pick);
   $('#steadyRow').hidden = tool !== 'pen'; $('#steady').value = INK.steady; $('#steadyVal').textContent = INK.steady ? INK.steady : 'Off';
   const pk = $('#penKinds'); pk.hidden = !(nb && tool === 'pen');
   if (!pk.hidden) {
@@ -2829,6 +2835,7 @@ function pushUndoGroup(list) { markEdited(); for (const x of list) { const pgNo 
 function undo() { clearSelection(); const u = V.undo[V.undo.length - 1]; if (!u) return; if (showUndoPage(u)) { inkHint('This is the page that changes. Undo again to undo it.', 2200); return; } V.undo.pop(); for (const x of u.group || [u]) applyItems(x.key, x.before); V.redo.push(u); syncInkBar(); }
 function redo() { clearSelection(); const u = V.redo[V.redo.length - 1]; if (!u) return; if (showUndoPage(u)) { inkHint('This is the page that changes. Redo again to redo it.', 2200); return; } V.redo.pop(); for (const x of u.group || [u]) applyItems(x.key, x.after); V.undo.push(u); syncInkBar(); }
 $('#inkUndo').addEventListener('click', undo);
+$('#rulerBtn').addEventListener('click', () => { closeInkPops(); toggleRuler(); });
 $('#inkRedo').addEventListener('click', redo);
 
 // ---------- selection (lasso) ----------
@@ -3236,6 +3243,10 @@ function deleteSelection() {
 
 // ---------- notebooks: photos, text boxes, pens ----------
 const NBK = () => !!(V.file && V.file.kind === 'paper');
+// (tests: the last marking on the page in the middle, and how far its points stray from a straight line)
+window.__lastInk = () => { const e = centreEntry(); const it = e && e.layer && e.layer.items[e.layer.items.length - 1]; if (!it || !it.p) return it ? { t: it.t } : null;
+  const a = it.p[0], b = it.p[it.p.length - 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; const dev = Math.max(...it.p.map((q) => Math.abs((q[0] - a[0]) * (b[1] - a[1]) - (q[1] - a[1]) * (b[0] - a[0])) / L));
+  return { t: it.t, n: it.p.length, dev: +dev.toFixed(5), dy: +(b[1] - a[1]).toFixed(5) }; };
 window.__nbCount = () => V.pages.map((p) => (p.layer ? p.layer.items.filter((x) => x.t !== 'bg').map((x) => x.t).join('+') || '-' : '?')).join(' , ');
 // the page in the middle of the screen
 let lastEntry = null;
@@ -4651,6 +4662,7 @@ function startInk(e, entry) {
   if (pk && pk !== 'fountain') item.pk = pk;
   if (tool === 'text') wordPenDown();
   GS = { kind: 'ink', id: e.pointerId, entry, rect, before, item, type: e.pointerType, t0: now(), predicted: null, word: tool === 'text' };
+  if (RULER.on) rulerStart(GS, e);
   scheduleLive();
 }
 let liveRaf = 0;
@@ -4677,6 +4689,7 @@ function moveInk(e) {
   if (GS.kind === 'tape' && GS.slur) { const p = relPos(GS.entry, e, GS.rect); GS.path.push([p[0], p[1]]); GS.item = slurItem(GS.a, [p[0], p[1]], GS.path, GS.rect); scheduleLive(); return; }
   if (GS.kind === 'tape') { const p = relPos(GS.entry, e, GS.rect); GS.item.x1 = +p[0].toFixed(4); GS.item.y1 = +p[1].toFixed(4); scheduleLive(); return; }
   if (GS.straight && GS.straight.shape) return;
+  if (GS.kind === 'ink' && GS.ruler) { rulerMove(GS, e); GS.predicted = null; scheduleLive(); return; }
   const pts = GS.item.p;
   for (const ev of list) {
     const p = relPos(GS.entry, ev, GS.rect);
@@ -4709,7 +4722,8 @@ function watchHold(g, e) {
     let len = 0; for (let i = 1; i < pts.length; i++) len += Math.hypot((pts[i][0] - pts[i - 1][0]) * r.width, (pts[i][1] - pts[i - 1][1]) * r.height);
     const a = pts[0], b = pts[pts.length - 1];
     const chord = Math.hypot((b[0] - a[0]) * r.width, (b[1] - a[1]) * r.height);
-    if (chord < 30 || len > chord * 1.25) {
+    // (a highlighter has no shapes: gone over back and forth, it is still made one straight band)
+    if (chord < 30 || (len > chord * 1.25 && g.item.t === 'pen')) {
       // a loop: a circle, box or triangle becomes a clean one
       if (g.item.t !== 'pen') return;
       const PS = pageSize(r), px = pts.map((q) => [q[0] * PS[0], q[1] * PS[1]]);
@@ -4784,6 +4798,198 @@ window.standPencilTap = () => {
   closeInkPops(); clearSelection(); syncInkBar();
   inkHint(INK.tool === 'eraser' ? 'Eraser' : 'Back to ' + ({ pen: 'the pen', hl: 'the highlighter', stamp: 'symbols', text: 'text', select: 'select', print: 'the score eraser' }[INK.tool] || 'writing'), 1200);
 };
+// ---------- the tool wheel: squeeze the Apple Pencil Pro, a circle of the tools opens at its tip ----------
+// Outside: the tools (the same as the markings bar has here, score or notebook). Inside: the colours
+// of the tool in use. In the middle: undo. A tap chooses and it closes; a tap away, or another
+// squeeze, closes it.
+let lastPenAt = null;
+window.addEventListener('pointermove', (e) => { if (e.pointerType === 'pen') lastPenAt = [e.clientX, e.clientY]; }, { passive: true, capture: true });
+window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'pen') lastPenAt = [e.clientX, e.clientY]; }, { passive: true, capture: true });
+function wheelTools() {
+  const nb = NBK();
+  return (nb ? ['pen', 'hl', 'eraser', 'select', 'tbox', 'tape', 'note', 'ruler'] : ['pen', 'hl', 'eraser', 'select', 'text', 'stamp', 'note', 'print'])
+    .filter((t) => t === 'ruler' ? !!$('#rulerBtn') : !!$(`.ink-tool[data-tool="${t}"]`));
+}
+const WHEEL_NAMES = { pen: 'Pen', hl: 'Highlighter', eraser: 'Eraser', select: 'Select', text: 'Text', tbox: 'Text box', stamp: 'Symbols', tape: 'Washi tape', note: 'Note', print: 'Score eraser', ruler: 'Ruler' };
+function wheelChoose(t) {
+  if (t === 'ruler') { toggleRuler(); return; }
+  closeInkPops(); clearSelection();
+  if (t === 'note' && INK.tool !== 'note') INK.beforeNote = INK.tool;
+  if (t !== 'tbox') finishTextBox();
+  if (t !== 'text') flushWord();
+  INK.tool = t; syncInkBar(); persistInk();
+  inkHint(WHEEL_NAMES[t] || '', 900);
+}
+function wheelColour(c) {
+  if (!['pen', 'hl', 'stamp'].includes(INK.tool)) { INK.tool = 'pen'; }
+  if (INK.tool === 'hl') { INK.hl.c = c; INK.hlSlots[INK.hlSlot] = c; }
+  else { INK.slots[INK.slot] = c; if (NBK() && INK.tool === 'pen') styleFor('pen').c = c; }
+  syncInkBar(); persistInk();
+}
+function wheelColours() {
+  const hl = INK.tool === 'hl';
+  const mine = hl ? INK.hlSlots : INK.slots;
+  const base = hl ? ['#e6b800', '#2f9e55', '#0f8f8f', '#2b6fd6', '#d23c8f', '#ea7a17'] : ['#16181d', '#d12f2f', '#2b6fd6', '#2f9e55', '#ea7a17', '#7b3fc4'];
+  const out = []; for (const c of [...mine, ...base]) if (c && !out.some((x) => x.toLowerCase() === c.toLowerCase())) out.push(c);
+  return out.slice(0, 8);
+}
+function closeWheel(toward) {
+  const w = WHEEL.el; if (!w) return; WHEEL.el = null;
+  w.classList.remove('open'); w.classList.add('closing');
+  if (toward) w.style.setProperty('--tx', (toward[0] - w._cx) + 'px'), w.style.setProperty('--ty', (toward[1] - w._cy) + 'px');
+  if (w._shade) w._shade.remove();
+  setTimeout(() => w.remove(), 190);
+}
+function openWheel(x, y) {
+  if ($('#score').hidden) return;
+  if (WHEEL.el) { closeWheel(); return; }
+  if (!V.inking) setInking(true);
+  if (textEdit) finishText();
+  const R = 136, vw = innerWidth, vh = innerHeight;
+  if (!(x >= 0 && y >= 0)) [x, y] = lastPenAt || [vw / 2, vh / 2];
+  const cx = clamp(x, R + 10, vw - R - 10), cy = clamp(y, R + 10, vh - R - 10);
+  const w = el('div', 'wheel'); w._cx = cx; w._cy = cy;
+  w.style.left = cx + 'px'; w.style.top = cy + 'px';
+  // (it grows from the tip of the Pencil, even when moved in from an edge)
+  w.style.setProperty('--ox', (x - cx) + 'px'); w.style.setProperty('--oy', (y - cy) + 'px');
+  w.setAttribute('role', 'dialog'); w.setAttribute('aria-label', 'Tools');
+  const disc = el('div', 'wheel-disc'); w.append(disc);
+  const label = el('div', 'wheel-label'); w.append(label);
+  const say = (t) => { label.textContent = t; label.classList.toggle('on', !!t); };
+  const tools = wheelTools(), n = tools.length;
+  tools.forEach((t, i) => {
+    const a = -Math.PI / 2 + (i / n) * Math.PI * 2;
+    const b = el('button', 'wheel-tool'); b.dataset.tool = t;
+    const src = t === 'ruler' ? $('#rulerBtn') : $(`.ink-tool[data-tool="${t}"]`);
+    b.innerHTML = src ? src.innerHTML : ''; b.querySelectorAll('[id]').forEach((q) => q.removeAttribute('id'));
+    b.setAttribute('aria-label', WHEEL_NAMES[t]);
+    b.classList.toggle('on', t === 'ruler' ? !!RULER.on : INK.tool === t);
+    b.style.setProperty('--x', (Math.cos(a) * 104).toFixed(1) + 'px'); b.style.setProperty('--y', (Math.sin(a) * 104).toFixed(1) + 'px'); b.style.setProperty('--d', (i * 16) + 'ms');
+    b.addEventListener('pointerenter', () => say(WHEEL_NAMES[t]));
+    b.addEventListener('pointerleave', () => say(''));
+    b.addEventListener('click', (e) => { e.stopPropagation(); wheelChoose(t); closeWheel(); });
+    w.append(b);
+  });
+  const cols = wheelColours(), cur = colorFor(INK.tool === 'hl' ? 'hl' : 'pen');
+  cols.forEach((c, i) => {
+    const a = -Math.PI / 2 + Math.PI / cols.length + (i / cols.length) * Math.PI * 2;
+    const b = el('button', 'wheel-col'); b.style.setProperty('--c', c);
+    b.classList.toggle('on', c.toLowerCase() === (cur || '').toLowerCase());
+    b.classList.toggle('hl', INK.tool === 'hl');
+    b.setAttribute('aria-label', 'Colour ' + c);
+    b.style.setProperty('--x', (Math.cos(a) * 56).toFixed(1) + 'px'); b.style.setProperty('--y', (Math.sin(a) * 56).toFixed(1) + 'px'); b.style.setProperty('--d', (90 + i * 14) + 'ms');
+    b.addEventListener('click', (e) => { e.stopPropagation(); wheelColour(c); closeWheel(); });
+    w.append(b);
+  });
+  const u = el('button', 'wheel-undo'); u.innerHTML = '<svg><use href="#i-undo"/></svg>'; u.setAttribute('aria-label', 'Undo');
+  u.disabled = !V.undo.length;
+  u.addEventListener('pointerenter', () => say('Undo')); u.addEventListener('pointerleave', () => say(''));
+  u.addEventListener('click', (e) => { e.stopPropagation(); undo(); u.disabled = !V.undo.length; });
+  w.append(u);
+  // a tap anywhere else closes it (and does nothing else)
+  const shade = el('div', 'wheel-shade');
+  const off = (e) => { e.preventDefault(); e.stopPropagation(); closeWheel(); shade.remove(); };
+  shade.addEventListener('pointerdown', off);
+  w._shade = shade;
+  document.body.append(shade, w);
+  WHEEL.el = w;
+  requestAnimationFrame(() => requestAnimationFrame(() => w.classList.add('open')));
+}
+// ---------- the ruler (notebooks): lay it on the page, draw along it ----------
+// One finger moves it, two turn it (it holds at every 45°). A line started with the Pencil, or a
+// finger that writes, close to either edge runs straight along that edge, as with a real ruler.
+function rulerGeom() { const u = [Math.cos(RULER.ang), Math.sin(RULER.ang)], n = [-u[1], u[0]]; return { u, n }; }
+function placeRuler() {
+  const r = RULER.el; if (!r) return;
+  r.style.width = RULER.len + 'px'; r.style.height = RULER.h + 'px';
+  r.style.transform = `translate(${RULER.cx - RULER.len / 2}px, ${RULER.cy - RULER.h / 2}px) rotate(${RULER.ang}rad)`;
+  // (the angle it makes with the page: 0° level, 90° upright)
+  let deg = Math.round((RULER.ang * 180) / Math.PI) % 180; if (deg < 0) deg += 180; if (deg > 90) deg = 180 - deg;
+  r.querySelector('.ruler-deg').textContent = deg + '°';
+}
+function showRuler() {
+  if (RULER.on) return;
+  RULER.on = true;
+  const r = el('div', 'ruler'); r.setAttribute('aria-label', 'Ruler: one finger moves it, two turn it');
+  r.innerHTML = '<div class="ruler-ticks"></div><span class="ruler-deg">0°</span>';
+  RULER.el = r;
+  const sr = stage.getBoundingClientRect();
+  RULER.len = Math.round(Math.min(980, Math.max(sr.width, sr.height) * 0.78)); RULER.ang = 0;
+  RULER.cx = sr.left + sr.width / 2; RULER.cy = sr.top + sr.height * 0.55;
+  document.body.append(r); placeRuler();
+  requestAnimationFrame(() => r.classList.add('in'));
+  syncInkBar();
+}
+function hideRuler() {
+  if (!RULER.on) return;
+  RULER.on = false; const r = RULER.el; RULER.el = null; RULER.g = null;
+  if (r) { r.classList.remove('in'); setTimeout(() => r.remove(), 200); }
+  const b = $('#rulerBtn'); if (b) b.classList.remove('on');
+}
+function toggleRuler() { if (RULER.on) hideRuler(); else { showRuler(); inkHint('Draw along an edge. One finger moves the ruler, two turn it.', 2600); } syncInkBar(); }
+// where a point is on the ruler: along it (from the middle) and across it (from the middle line)
+function rulerAt(x, y) { const { u, n } = rulerGeom(), dx = x - RULER.cx, dy = y - RULER.cy; return { a: dx * u[0] + dy * u[1], d: dx * n[0] + dy * n[1] }; }
+function onRuler(x, y) { if (!RULER.on) return false; const q = rulerAt(x, y); return Math.abs(q.a) <= RULER.len / 2 && Math.abs(q.d) <= RULER.h / 2; }
+// a stroke starting this close to an edge follows it
+function rulerStart(g, e) {
+  if (!RULER.on || !g || g.kind !== 'ink' || g.item.t === 'white' || g.word) return;
+  const q = rulerAt(e.clientX, e.clientY);
+  if (Math.abs(q.a) > RULER.len / 2 + 24) return;
+  const off = Math.abs(q.d) - RULER.h / 2;
+  if (off < -16 || off > 30) return;
+  const side = q.d < 0 ? -1 : 1;
+  const half = (g.item.s * g.rect.width) / 2;
+  g.ruler = { side, a0: q.a, lift: RULER.h / 2 + half + 1, pr: e.pointerType === 'pen' ? clamp(e.pressure || 0.5, 0.35, 0.65) : 0.5 };
+  rulerLine(g, q.a);
+}
+function rulerLine(g, a1) {
+  const { u, n } = rulerGeom(), R = g.ruler;
+  const pt = (a) => { const x = RULER.cx + u[0] * a + n[0] * R.side * R.lift, y = RULER.cy + u[1] * a + n[1] * R.side * R.lift; const f = fracOf(x, y, g.rect); return [f[0], f[1], R.pr]; };
+  const N = 14; g.item.p = Array.from({ length: N }, (_, i) => pt(R.a0 + ((a1 - R.a0) * i) / (N - 1)));
+}
+function rulerMove(g, e) { rulerLine(g, rulerAt(e.clientX, e.clientY).a); }
+// moving and turning it, with the fingers on it (they never reach the page underneath)
+window.addEventListener('pointerdown', (e) => {
+  if (!RULER.on || e.pointerType === 'pen' || !onRuler(e.clientX, e.clientY)) return;
+  if (e.target.closest && e.target.closest('.inkbar, .ink-pop, .wheel, .panel, dialog')) return;
+  e.preventDefault(); e.stopPropagation();
+  const G = RULER.g || (RULER.g = { pts: new Map() });
+  G.pts.set(e.pointerId, [e.clientX, e.clientY]);
+  G.base = { cx: RULER.cx, cy: RULER.cy, ang: RULER.ang, pts: new Map([...G.pts].map(([k, v]) => [k, v.slice()])) };
+  RULER.el.classList.add('held');
+}, { capture: true });
+window.addEventListener('pointermove', (e) => {
+  const G = RULER.g; if (!RULER.on || !G || !G.pts.has(e.pointerId)) return;
+  e.preventDefault(); e.stopPropagation();
+  G.pts.set(e.pointerId, [e.clientX, e.clientY]);
+  const ids = [...G.base.pts.keys()].filter((k) => G.pts.has(k));
+  if (ids.length >= 2) {
+    const [a, b] = ids, p0 = G.base.pts.get(a), q0 = G.base.pts.get(b), p1 = G.pts.get(a), q1 = G.pts.get(b);
+    const da = Math.atan2(q1[1] - p1[1], q1[0] - p1[0]) - Math.atan2(q0[1] - p0[1], q0[0] - p0[0]);
+    let ang = G.base.ang + da;
+    // (it holds at every 45°, level and upright most of all)
+    const step = Math.PI / 4, near = Math.round(ang / step) * step; if (Math.abs(ang - near) < (3 * Math.PI) / 180) ang = near;
+    RULER.ang = ang;
+    RULER.cx = G.base.cx + (p1[0] + q1[0] - p0[0] - q0[0]) / 2; RULER.cy = G.base.cy + (p1[1] + q1[1] - p0[1] - q0[1]) / 2;
+  } else if (ids.length === 1) {
+    const p0 = G.base.pts.get(ids[0]), p1 = G.pts.get(ids[0]);
+    RULER.cx = G.base.cx + p1[0] - p0[0]; RULER.cy = G.base.cy + p1[1] - p0[1];
+  }
+  placeRuler();
+}, { capture: true });
+const rulerUp = (e) => {
+  const G = RULER.g; if (!G || !G.pts.has(e.pointerId)) return;
+  e.stopPropagation();
+  G.pts.delete(e.pointerId);
+  if (!G.pts.size) { RULER.g = null; if (RULER.el) RULER.el.classList.remove('held'); return; }
+  G.base = { cx: RULER.cx, cy: RULER.cy, ang: RULER.ang, pts: new Map([...G.pts].map(([k, v]) => [k, v.slice()])) };
+};
+window.addEventListener('pointerup', rulerUp, { capture: true });
+window.addEventListener('pointercancel', rulerUp, { capture: true });
+window.__ruler = RULER;   // (tests)
+window.standPencilSqueeze = (at) => { try { openWheel(at && at.x, at && at.y); } catch (err) { console.warn(err); } };
+window.__wheel = { open: openWheel, close: closeWheel, get el() { return WHEEL.el; } };   // (tests)
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && WHEEL.el) closeWheel(); });
 function endInk(cancelled) {
   const g = GS; GS = null;
   if (g) clearTimeout(g.holdT);
@@ -4796,7 +5002,7 @@ function endInk(cancelled) {
     for (const t of [0.35, 0.65, 0.88, 1]) pts.push([l[0] + (g.rawLast[0] - l[0]) * t, l[1] + (g.rawLast[1] - l[1]) * t, l[2]]);
   }
   // a quick, straight sideways sweep of a finger is a page turn, not a line
-  if (g.kind === 'ink' && g.type === 'touch' && !g.word && g.item && g.item.p.length >= 2) {
+  if (g.kind === 'ink' && g.type === 'touch' && !g.word && !g.ruler && g.item && g.item.p.length >= 2) {
     const P = g.item.p, a = P[0], b = P[P.length - 1];
     const dx = b[0] - a[0], dy = b[1] - a[1], dur = now() - g.t0;
     let len = 0; for (let i = 1; i < P.length; i++) len += Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]);

@@ -1929,3 +1929,59 @@ body.phone .stat b { font-size: 22px; }
 .wel-wow li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.35; }
 .wel-wow svg { width: 20px; height: 20px; flex: none; color: var(--accent-text); margin-top: 1px; }
 
+
+/* ---------- the tool wheel (squeeze the Apple Pencil Pro) ---------- */
+.wheel-shade { position: fixed; inset: 0; z-index: 60; background: transparent; touch-action: none; }
+.wheel { position: fixed; z-index: 61; width: 0; height: 0; pointer-events: none; --tx: 0px; --ty: 0px; }
+.wheel > * { pointer-events: auto; }
+.wheel-disc { position: absolute; left: -136px; top: -136px; width: 272px; height: 272px; border-radius: 50%;
+  background: var(--surface); -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4); box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  transform: translate(var(--ox), var(--oy)) scale(.18); opacity: 0; transition: transform .34s cubic-bezier(.2, 1.35, .35, 1), opacity .16s ease; }
+.wheel-disc::after { content: ''; position: absolute; inset: 64px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--line); }
+.wheel-tool, .wheel-col, .wheel-undo { position: absolute; display: grid; place-items: center; border-radius: 50%;
+  transform: translate(var(--ox), var(--oy)) scale(.3); opacity: 0;
+  transition: transform .36s cubic-bezier(.2, 1.4, .35, 1) var(--d, 0ms), opacity .18s ease var(--d, 0ms), background-color .15s; }
+.wheel-tool { left: -23px; top: -23px; width: 46px; height: 46px; color: var(--ink); }
+.wheel-tool svg { width: 24px; height: 24px; }
+.wheel-tool .stamp-ico { font: 26px/1 Bravura, serif; margin-top: 2px; }
+.wheel-tool .tb-ico { font-weight: 650; font-size: 17px; }
+.wheel-tool .pen-dot, .wheel-tool .hl-dot { display: none; }
+.wheel-tool.on { background: var(--accent); color: var(--accent-ink); box-shadow: 0 4px 14px rgba(31, 58, 143, .35); }
+.wheel-tool:active { background: var(--accent-soft); }
+.wheel-col { left: -13px; top: -13px; width: 26px; height: 26px; background: var(--c); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .45), 0 0 0 1px var(--line); }
+.wheel-col.hl { opacity: .8; }
+.wheel-col.on { box-shadow: 0 0 0 2.5px var(--surface-solid), 0 0 0 4.5px var(--ink); }
+.wheel-undo { left: -25px; top: -25px; width: 50px; height: 50px; background: var(--sunk); color: var(--ink); }
+.wheel-undo svg { width: 22px; height: 22px; }
+.wheel-undo:disabled { color: var(--muted); opacity: .5; }
+.wheel-label { position: absolute; top: 146px; left: 0; transform: translateX(-50%) translateY(-4px); white-space: nowrap; padding: 5px 11px; border-radius: 999px;
+  background: var(--surface-solid); color: var(--ink); font-size: 13px; font-weight: 600; box-shadow: var(--shadow); opacity: 0; transition: opacity .12s, transform .12s; pointer-events: none !important; }
+.wheel-label.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.wheel.open .wheel-disc { transform: none; opacity: 1; }
+.wheel.open .wheel-tool, .wheel.open .wheel-col { transform: translate(var(--x), var(--y)); opacity: 1; }
+.wheel.open .wheel-undo { transform: none; opacity: 1; }
+.wheel.open .wheel-undo:disabled { opacity: .5; }
+.wheel.closing .wheel-disc, .wheel.closing .wheel-tool, .wheel.closing .wheel-col, .wheel.closing .wheel-undo {
+  transition: transform .17s cubic-bezier(.5, 0, .9, .4), opacity .15s ease; transition-delay: 0ms; transform: translate(var(--tx), var(--ty)) scale(.2); opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .wheel-disc, .wheel-tool, .wheel-col, .wheel-undo { transition: opacity .12s ease !important; transform: translate(var(--x, 0px), var(--y, 0px)) !important; }
+  .wheel-disc, .wheel-undo { transform: none !important; }
+}
+
+/* ---------- the ruler (notebooks) ---------- */
+.ruler { position: fixed; left: 0; top: 0; z-index: 12; transform-origin: 50% 50%; border-radius: 10px; touch-action: none; pointer-events: none;
+  background: rgba(250, 251, 253, .62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  box-shadow: 0 8px 26px rgba(14, 20, 45, .18), inset 0 0 0 1px rgba(18, 21, 34, .14); opacity: 0; transition: opacity .2s ease; }
+.ruler.in { opacity: 1; }
+.ruler.held { box-shadow: 0 12px 34px rgba(14, 20, 45, .26), inset 0 0 0 1.5px var(--accent); }
+.ruler-ticks { position: absolute; inset: 0; border-radius: inherit;
+  background:
+    repeating-linear-gradient(90deg, rgba(18, 21, 34, .55) 0 1px, transparent 1px 50px) top left / 100% 22px no-repeat,
+    repeating-linear-gradient(90deg, rgba(18, 21, 34, .4) 0 1px, transparent 1px 10px) top left / 100% 11px no-repeat,
+    repeating-linear-gradient(90deg, rgba(18, 21, 34, .55) 0 1px, transparent 1px 50px) bottom left / 100% 22px no-repeat,
+    repeating-linear-gradient(90deg, rgba(18, 21, 34, .4) 0 1px, transparent 1px 10px) bottom left / 100% 11px no-repeat; }
+.ruler-deg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 600 15px/1 var(--font-num); color: #121522; background: rgba(255, 255, 255, .8); padding: 4px 9px; border-radius: 999px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ruler { background: rgba(40, 46, 64, .62); box-shadow: 0 8px 26px rgba(0, 0, 0, .4), inset 0 0 0 1px rgba(255, 255, 255, .16); }
+  :root:not([data-theme="light"]) .ruler-ticks { filter: invert(1); } :root:not([data-theme="light"]) .ruler-deg { background: rgba(22, 27, 41, .85); color: #E9ECF4; } }
+:root[data-theme="dark"] .ruler { background: rgba(40, 46, 64, .62); box-shadow: 0 8px 26px rgba(0, 0, 0, .4), inset 0 0 0 1px rgba(255, 255, 255, .16); }
+:root[data-theme="dark"] .ruler-ticks { filter: invert(1); } :root[data-theme="dark"] .ruler-deg { background: rgba(22, 27, 41, .85); color: #E9ECF4; }

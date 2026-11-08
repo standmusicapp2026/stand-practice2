@@ -189,22 +189,40 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             guard let self = self else { return }
             if !to.isEmpty { self.shareTo(to, url) } else { self.presentShareSheet(url) }
         }
-        // Apple Pencil double-tap (and squeeze on Pencil Pro) switches to the eraser and back.
+        // Apple Pencil double-tap: the eraser and back; squeeze (Pencil Pro): the tool wheel.
         let pencil = UIPencilInteraction()
         pencil.delegate = self
         webView.addInteraction(pencil)
     }
 
-    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+    // Double-tap: the eraser and back, unless the iPad is set to show a palette on double-tap
+    // (Settings > Apple Pencil): then Stand's tool wheel opens at the tip, as on a squeeze.
+    private func pencilTapped(at point: CGPoint?) {
+        if UIPencilInteraction.preferredTapAction == .showColorPalette || UIPencilInteraction.preferredTapAction == .showInkAttributes {
+            openWheel(at: point); return
+        }
+        if #available(iOS 17.5, *), UIPencilInteraction.preferredTapAction == .showContextualPalette { openWheel(at: point); return }
         webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil)
     }
+    private func openWheel(at point: CGPoint?) {
+        let at = point.map { "{x:\(Int($0.x)),y:\(Int($0.y))}" } ?? "null"
+        webView.evaluateJavaScript("window.standPencilSqueeze && window.standPencilSqueeze(\(at))", completionHandler: nil)
+    }
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) { pencilTapped(at: nil) }
     @available(iOS 17.5, *)
     func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap) {
-        webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil)
+        pencilTapped(at: tap.hoverPose?.location)
     }
+    // Squeeze (Apple Pencil Pro): the tool wheel opens where the Pencil is, unless the iPad is set
+    // to switch to the eraser on a squeeze, or to nothing.
     @available(iOS 17.5, *)
     func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
-        if squeeze.phase == .ended { webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil) }
+        guard squeeze.phase == .ended else { return }
+        switch UIPencilInteraction.preferredSqueezeAction {
+        case .ignore, .runSystemShortcut: return
+        case .switchEraser, .switchPrevious: webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil)
+        default: openWheel(at: squeeze.hoverPose?.location)
+        }
     }
 
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
