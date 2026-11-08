@@ -2036,7 +2036,18 @@ function wireTop() {
 async function openExample({ play = false } = {}) {
   try {
     const have = (await db.all('scores')).find((s) => s.kind === 'comp' && s.example === 'holst');
-    let id = have && (await db.get('files', have.fileId).catch(() => null)) ? have.id : null, made = false;
+    const hf = have ? await db.get('files', have.fileId).catch(() => null) : null;
+    let id = hf ? have.id : null, made = false;
+    // (a newer example than the one kept, after an update of Stand: the kept one is brought up to it)
+    if (hf && hf.data) {
+      const r = await fetch('examples/holst-jupiter.json').catch(() => null);
+      const cur = r && r.ok ? await r.json().catch(() => null) : null;
+      if (cur && (cur.exVersion || 1) > (hf.data.exVersion || 1)) {
+        cur.created = hf.data.created || Date.now();
+        await db.put('files', { ...hf, data: cur });
+        await db.put('scores', { ...have, title: cur.title, composer: cur.composer, thumb: null });
+      }
+    }
     if (!id) {
       const r = await fetch('examples/holst-jupiter.json'); if (!r.ok) throw new Error('missing');
       const score = await r.json(); score.created = Date.now();
