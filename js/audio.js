@@ -51,6 +51,7 @@ export function getCtx() {
     const c0 = ctx;
     c0.addEventListener('statechange', () => {
       if (c0 !== ctx) return;
+      alog('now ' + c0.state + (c0.__ours ? ' (by Stand)' : ''));
       // (replaced once for an interruption; again only after sound has come back in between)
       if (c0.state === 'interrupted') { if (!intrAt) intrAt = performance.now(); } else if (c0.state === 'running') { intrAt = 0; intrHealed = false; }
       // Pause and play away from Stand (the lock screen, Control Center, the headphones' button):
@@ -59,7 +60,7 @@ export function getCtx() {
       if (c0.state === 'running') { c0.__ran = true; c0.__ours = false; }
       if (pausedOutside(c0)) return;
       playedOutside(c0);
-      if (wantSound && c0.state !== 'running') c0.resume().catch(() => {});
+      if (wantSound && c0.state !== 'running' && !remotePaused) c0.resume().catch(() => {});
     });
   }
   // (asked for: it will sound now, so it does not rest; see "battery" below)
@@ -137,7 +138,11 @@ export function playedOutside(c = ctx) {
 if (typeof window !== 'undefined' && window.AudioContext) {
   const AP = window.AudioContext.prototype, sus0 = AP.suspend, res0 = AP.resume;
   if (sus0) AP.suspend = function (...a) { ourSuspendAt = performance.now(); this.__ours = true; return sus0.apply(this, a); };
-  if (res0) AP.resume = function (...a) { ourResumeAt = performance.now(); this.__outside = false; return res0.apply(this, a); };
+  // (paused from outside: nothing wakes it by itself — a touch, coming back, a check — until play is
+  // pressed or something is started in Stand)
+  if (res0) AP.resume = function (...a) {
+    if (remotePaused && this.__outside) { alog('not woken (paused from outside Stand)'); return Promise.resolve(); }
+    ourResumeAt = performance.now(); this.__outside = false; this.__ours = false; return res0.apply(this, a); };
   window.__standOutside = { pause: (c) => sus0.call(c), play: (c) => res0.call(c) };   // (tests: as iOS does)
 }
 let wantSound = false;
@@ -315,6 +320,8 @@ const mediaEls = new Set();         // videos and recordings played through it
 let lastSound = typeof performance !== 'undefined' ? performance.now() : 0, restingCtx = null;
 function rouse() {
   lastSound = performance.now();
+  // (a sound started in Stand after a pause from outside: that pause is over)
+  if (remotePaused) { remotePaused = false; alog('started again in Stand'); }
   if (restingCtx && restingCtx === ctx) { restingCtx = null; alog('awake again'); }
   if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
 }

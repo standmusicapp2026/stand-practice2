@@ -188,6 +188,8 @@ export class Metronome {
 
   // the sound system was replaced (iOS dropped the old one): the beat carries on in the new one
   _resync(ctx) {
+    // (the clicks already given are taken back, so none sounds twice or out of time)
+    if (this._sched) { for (const s of this._sched) { try { s.stop(0); } catch {} } this._sched.clear(); }
     this._ctx = ctx;
     this._ensureBuffers(); this._gain = null; this._out();
     this._next = ctx.currentTime + 0.1; this._queue = []; this._marks = [];
@@ -217,7 +219,10 @@ export class Metronome {
   _tick() {
     const ctx = getCtx();
     const ahead = this._ahead();
-    if (this.running && (this._ctx !== ctx || this._next > ctx.currentTime + Math.max(5, ahead + 1))) this._resync(ctx);
+    // (back in Stand, even before it is told: the clicks given far ahead are taken back)
+    if (this.running && this._ctx === ctx && !(typeof document !== 'undefined' && document.hidden) && this._next > ctx.currentTime + 0.6) this._pullBack();
+    // (a new sound system, or a clock gone back: never only because the clicks are given far ahead)
+    if (this.running && (this._ctx !== ctx || this._next > ctx.currentTime + 12)) this._resync(ctx);
     // fell behind (the sound system stalled, or the page slept): no burst of clicks, and the beat
     // keeps its place: whole beats are passed over in time, so the tempo and the bar stay as they were
     if (this.running && this._next < ctx.currentTime - 0.25 && ctx.state === 'running') {

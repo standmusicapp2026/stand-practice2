@@ -31,6 +31,8 @@ const home = async () => { await closePanels(); if (!$('#score').hidden) $('#bac
 // Leaving Stand with the metronome on, as a musician does (another app, then back), three times:
 // it keeps playing and nothing breaks. Then leaving with nothing playing: the sound rests (nothing
 // is left showing as playing). The test machine switches apps when it reads "SELFTEST LEAVE n".
+// (what happened to the sound lately, said when a check fails)
+const alogTail = (n = 10) => (window.__audioLog || []).slice(-n).map((e) => `${((e.t - Date.now()) / 1000).toFixed(1)}s ${e.what} [${e.state}]`).join(' | ');
 async function bgRun() {
   const S = () => (window.__standSound ? window.__standSound() : {});
   const openM = async () => { const b = $$('[data-panel=metronome]').find((x) => x.offsetParent) || $('[data-panel=metronome]'); b && b.click(); await sleep(900); $('.tour-skip') && $('.tour-skip').click(); await sleep(200); };
@@ -39,7 +41,9 @@ async function bgRun() {
     P.start = function (t, ...r) { CL.push({ t, n: this }); if (CL.length > 3000) CL.splice(0, 1000); return st.call(this, t, ...r); };
     P.stop = function (...r) { this.__stopped = true; return sp.apply(this, r); }; }
   const inTime = (from, to) => { const m = window.__standMetro; const ts = CL.filter((x) => !x.n.__stopped && x.t >= from && x.t <= to).map((x) => x.t).sort((a, b) => a - b);
-    const want = 60 / m.bpm / (m.subdiv || 1); let off = 0; for (let i = 1; i < ts.length; i++) if (Math.abs(ts[i] - ts[i - 1] - want) > 0.003) off++; return { n: ts.length, off }; };
+    const want = 60 / m.bpm / (m.subdiv || 1); let off = 0; const bad = [];
+    for (let i = 1; i < ts.length; i++) if (Math.abs(ts[i] - ts[i - 1] - want) > 0.003) { off++; if (bad.length < 8) bad.push(`${(ts[i] - from).toFixed(2)}:${(ts[i] - ts[i - 1]).toFixed(3)}`); }
+    return { n: ts.length, off, want: +want.toFixed(3), bad, log: off ? alogTail() : undefined }; };
   await step('background: metronome on', async () => { await closePanels(); await openM(); if (!S().metro) $('#metroToggle').click(); await sleep(2000); await closePanels(); return S().metro ? `beats ${S().beats}` : false; });
   // (the leave is seen by its event: a page paused in the background cannot see it by looking)
   let hides = 0; document.addEventListener('visibilitychange', () => { if (document.hidden) hides++; });
@@ -63,10 +67,10 @@ async function bgRun() {
   // (pause and play from the lock screen, as iOS does them: the sound system paused, later started, from outside)
   await step('lock screen pause: the metronome stops and stays stopped', async () => { const m = window.__standMetro, c = m._ctx; if (!window.__standOutside) return false;
     await window.__standOutside.pause(c); await sleep(2500); const d = `metro ${m.running} sound ${c.state} same ${c === m._ctx} ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}`;
-    if (!(!m.running && c.state === 'suspended')) say('SELFTEST detail lock pause: ' + d); return !m.running && c.state === 'suspended' ? d : false; });
+    if (!(!m.running && c.state === 'suspended')) say('SELFTEST detail lock pause: ' + d + ' log: ' + alogTail()); return !m.running && c.state === 'suspended' ? d : false; });
   await step('lock screen play: the metronome starts again', async () => { const m = window.__standMetro, c = m._ctx;
     await window.__standOutside.play(c); await sleep(1500); const d = `metro ${m.running} sound ${c.state} beats ${S().beats}`;
-    if (!(m.running && c.state === 'running')) say('SELFTEST detail lock play: ' + d); return m.running && c.state === 'running' ? d : false; });
+    if (!(m.running && c.state === 'running')) say('SELFTEST detail lock play: ' + d + ' log: ' + alogTail()); return m.running && c.state === 'running' ? d : false; });
   await step('background: metronome off', async () => { await openM(); if (S().metro) $('#metroToggle').click(); await sleep(800); await closePanels(); return !S().metro; });
   // (nothing playing: Stand is really put away by iOS each time; four times, short and long)
   for (let n = 4; n <= 7; n++) {
