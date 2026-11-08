@@ -1022,7 +1022,7 @@ window.standFolder = async (msg) => {
 };
 $('#brFolder')?.addEventListener('click', () => {
   const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standPickFolder;
-  if (h && (window.standCaps || {}).folders) h.postMessage({});
+  if (h && (window.standCaps || {}).folders) { h.postMessage({}); toast('Open the folder, then tap Open at the top right (or Select, the folders, Open).', 9000); }
   else { toast('Choosing a whole folder needs the Stand app. Choose the PDFs instead (in Files, tap Select, then Select All).', 6000); $('#importInput').click(); }
 });
 $('#brArchive')?.addEventListener('click', () => $('#brArchiveInput').click());

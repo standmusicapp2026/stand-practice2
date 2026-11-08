@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 
 /// The folder the person chose, kept open (security scope) while the page reads from it.
 var standPickedFolder: URL?
+/// Several folders chosen at once: each by its name (the first part of what the page asks for).
+var standPickedRoots: [String: URL] = [:]
 
 final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
     static let shared = StandFolderImport()
@@ -20,7 +22,9 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
         self.onList = onList
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
         picker.delegate = self
-        picker.allowsMultipleSelection = false
+        // (one folder or several: inside a folder, "Open" takes that folder; in a list, "Select"
+        // then the folders, then "Open")
+        picker.allowsMultipleSelection = true
         vc.present(picker, animated: true)
     }
 
@@ -28,7 +32,16 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
     func pickForTest(_ rel: String, onList: @escaping ([String: Any]) -> Void) {
         guard ProcessInfo.processInfo.arguments.contains("-standSelfTest"),
               let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { onList(["cancelled": true]); return }
+        // (several folders: "a|b", as if chosen together)
+        if rel.contains("|") {
+            self.onList = onList
+            let urls = rel.split(separator: "|").map { docs.appendingPathComponent(String($0), isDirectory: true) }
+            documentPicker(UIDocumentPickerViewController(forOpeningContentTypes: [.folder]), didPickDocumentsAt: urls)
+            return
+        }
         let url = docs.appendingPathComponent(rel, isDirectory: true)
+        for (_, u) in standPickedRoots { u.stopAccessingSecurityScopedResource() }
+        standPickedRoots = [:]
         standPickedFolder = url
         DispatchQueue.global(qos: .userInitiated).async { let list = Self.list(url); DispatchQueue.main.async { onList(list) } }
     }
@@ -36,12 +49,35 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { onList?(["cancelled": true]); return }
         if let old = standPickedFolder { old.stopAccessingSecurityScopedResource() }
-        _ = url.startAccessingSecurityScopedResource()
-        standPickedFolder = url
+        for (_, u) in standPickedRoots { u.stopAccessingSecurityScopedResource() }
+        standPickedRoots = [:]; standPickedFolder = nil
         let reply = onList
+        if urls.count == 1 {
+            _ = url.startAccessingSecurityScopedResource()
+            standPickedFolder = url
+            DispatchQueue.global(qos: .userInitiated).async {
+                let list = Self.list(url)
+                DispatchQueue.main.async { reply?(list) }
+            }
+            return
+        }
+        // several folders: each comes in as a folder of its own name
+        var roots: [String: URL] = [:]
+        for u in urls {
+            _ = u.startAccessingSecurityScopedResource()
+            var name = u.lastPathComponent, n = 2
+            while roots[name] != nil { name = "\(u.lastPathComponent) \(n)"; n += 1 }
+            roots[name] = u
+        }
+        standPickedRoots = roots
         DispatchQueue.global(qos: .userInitiated).async {
-            let list = Self.list(url)
-            DispatchQueue.main.async { reply?(list) }
+            var files: [[String: Any]] = []; var notHere = 0
+            for (name, u) in roots.sorted(by: { $0.key.localizedStandardCompare($1.key) == .orderedAscending }) {
+                let l = Self.list(u)
+                notHere += l["notHere"] as? Int ?? 0
+                for f in l["files"] as? [[String: Any]] ?? [] { var g = f; g["rel"] = name + "/" + (f["rel"] as? String ?? ""); files.append(g) }
+            }
+            DispatchQueue.main.async { reply?(["name": "", "files": files, "notHere": notHere]) }
         }
     }
 

@@ -61,6 +61,10 @@ while IFS= read -r RT; do
       cp "$PDF" "$C0/Documents/BringTest/Etudes/IMSLP04304-PMLP05705-Popper_High_School_Op73_No1.pdf"
       cp "$PDF" "$C0/Documents/BringTest/Etudes/Duport_21_Etudes_No7.pdf"
       cp "$PDF" "$C0/Documents/BringTest/Pieces/IMSLP925638_-_String_Quartet_No.4_Op.18_No.4_Beethoven_Ludwig_van_-_Cello.pdf"
+      # (two folders chosen together)
+      mkdir -p "$C0/Documents/Multi/Sonatas" "$C0/Documents/Multi/Studies"
+      cp "$PDF" "$C0/Documents/Multi/Sonatas/Brahms Sonata E minor.pdf"
+      cp "$PDF" "$C0/Documents/Multi/Studies/Piatti Caprice 1.pdf"
     fi
     START=$(date +%s)
     # (the iOS 18 simulators cannot find WebKit's Swift library by themselves: a known simulator

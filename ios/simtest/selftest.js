@@ -60,6 +60,11 @@ async function bgRun() {
     if (!(hid && back && s.metro && s.beats > b0 + 8)) say('SELFTEST detail background ' + n + ': ' + info);
     await step(`background ${n}: back, the metronome kept playing`, async () => (hid && back && s.metro && s.beats > b0 + 8) ? info : false);
   }
+  // (pause and play from the lock screen, as iOS does them: the sound system paused, later started, from outside)
+  await step('lock screen pause: the metronome stops and stays stopped', async () => { const m = window.__standMetro, c = m._ctx; if (!window.__standOutside) return false;
+    await window.__standOutside.pause(c); await sleep(2500); return !m.running && c.state === 'suspended' ? `sound ${c.state}, ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}` : false; });
+  await step('lock screen play: the metronome starts again', async () => { const m = window.__standMetro, c = m._ctx;
+    await window.__standOutside.play(c); await sleep(1500); return m.running && c.state === 'running' ? `beats ${S().beats}` : false; });
   await step('background: metronome off', async () => { await openM(); if (S().metro) $('#metroToggle').click(); await sleep(800); await closePanels(); return !S().metro; });
   // (nothing playing: Stand is really put away by iOS each time; four times, short and long)
   for (let n = 4; n <= 7; n++) {
@@ -197,6 +202,16 @@ async function run() {
     return `3 scores in ${names.join(', ')}: ${titles}`;
   }, 120000);
   await shot('12b-brought');
+  await step('bring two folders chosen together', async () => {
+    const { db, getSetting } = await import('/js/db.js');
+    const before = (await db.all('scores')).length;
+    window.webkit.messageHandlers.standPickFolder.postMessage({ testPath: 'Multi/Sonatas|Multi/Studies' });
+    let n = before; for (let i = 0; i < 60 && n < before + 2; i++) { await sleep(1000); n = (await db.all('scores')).length; }
+    await sleep(1500);
+    const fol = (await getSetting('folders', [])).map((f) => f.name).filter((x) => /Sonatas|Studies/.test(x));
+    if (n - before !== 2 || fol.length !== 2) throw new Error(`${n - before} scores, folders ${fol}`);
+    return `2 scores in ${fol.join(', ')}`;
+  }, 90000);
   await step('backup panel', async () => { await closePanels(); const b = $('[data-panel=backup]'); if (b) b.click(); await sleep(1200); return true; });
   await shot('12-backup');
   await closePanels();

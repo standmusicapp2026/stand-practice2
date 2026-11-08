@@ -95,6 +95,13 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         } else if path.hasPrefix("/__picked/"), let picked = standPickedFolder {
             // a folder chosen to bring scores from another app (StandFolderImport.swift)
             base = picked; rel = String(path.dropFirst("/__picked/".count))
+        } else if path.hasPrefix("/__picked/"), !standPickedRoots.isEmpty {
+            // several folders chosen at once: the first part names which one
+            let r = String(path.dropFirst("/__picked/".count))
+            let first = String(r.split(separator: "/", maxSplits: 1).first ?? "")
+            // (a name not chosen: answered "not found" below)
+            let picked = standPickedRoots[first] ?? documentsDir.appendingPathComponent("__none", isDirectory: true)
+            base = picked; rel = String(r.dropFirst(first.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         } else if path.hasPrefix("/__docs/") {
             // the backup kept in Files › Stand › Backup, read back to bring the library back (only there)
             base = documentsDir.appendingPathComponent("Backup", isDirectory: true); rel = String(path.dropFirst("/__docs/".count))

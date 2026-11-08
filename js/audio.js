@@ -53,6 +53,11 @@ export function getCtx() {
       if (c0 !== ctx) return;
       // (replaced once for an interruption; again only after sound has come back in between)
       if (c0.state === 'interrupted') { if (!intrAt) intrAt = performance.now(); } else if (c0.state === 'running') { intrAt = 0; intrHealed = false; }
+      // Pause and play away from Stand (the lock screen, Control Center, the headphones' button):
+      // iOS pauses the sound system itself, or starts it again. Not woken up then (as after an
+      // interruption): told to what plays, which stops — or starts again where it was.
+      if (c0.state === 'suspended' && wantSound && performance.now() - ourSuspendAt > 1500) { alog('paused from outside Stand'); remote('pause'); if (!wantSound) return; }
+      if (c0.state === 'running' && remotePaused && performance.now() - ourResumeAt > 1500) { alog('played from outside Stand'); remote('play'); }
       if (wantSound && c0.state !== 'running') c0.resume().catch(() => {});
     });
   }
@@ -106,6 +111,19 @@ export function cameraMic(on) {
 // lock, the mic starting) is then undone at once. Each asks for itself, so one stopping never
 // leaves another without its watch.
 const wanting = new Set();
+// (pause/play from outside Stand: its own pauses and wakes are told apart from those of iOS)
+let ourSuspendAt = -1e9, ourResumeAt = -1e9, remotePaused = false;
+const remoteFns = [];
+function remote(what) { for (const f of remoteFns) { try { f(what); } catch (e) { console.warn(e); } } }
+export function onRemote(f) { remoteFns.push(f); }
+export function setRemotePaused(b) { remotePaused = !!b; }
+// (every pause and wake asked for by Stand itself goes through these)
+if (typeof window !== 'undefined' && window.AudioContext) {
+  const AP = window.AudioContext.prototype, sus0 = AP.suspend, res0 = AP.resume;
+  if (sus0) AP.suspend = function (...a) { ourSuspendAt = performance.now(); return sus0.apply(this, a); };
+  if (res0) AP.resume = function (...a) { ourResumeAt = performance.now(); return res0.apply(this, a); };
+  window.__standOutside = { pause: (c) => sus0.call(c), play: (c) => res0.call(c) };   // (tests: as iOS does)
+}
 let wantSound = false;
 export function wantAudio(on, who = 'metro') {
   if (on) wanting.add(who); else wanting.delete(who);
