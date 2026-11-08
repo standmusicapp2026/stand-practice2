@@ -1,5 +1,5 @@
 // Sample-accurate metronome: Web Audio lookahead scheduler with a smooth or stepped tempo ramp.
-import { getCtx, master, ensureRunning, wantAudio, freshSound } from './audio.js';
+import { pausedOutside, getCtx, master, ensureRunning, wantAudio, freshSound } from './audio.js';
 
 const LOOKAHEAD = 0.12;      // seconds scheduled ahead
 
@@ -225,6 +225,8 @@ export class Metronome {
       while (this._next < ctx.currentTime + 0.03 && guard++ < 100000) this._advance(true);
     }
     // a suspended or interrupted sound system plays nothing: wake it, and do not replay the time that passed
+    // (paused from the lock screen: not woken; it stops)
+    if (this.running && pausedOutside(ctx)) return;
     if (this.running && ctx.state !== 'running') {
       const now = performance.now();
       if (!this._wakeAt || now - this._wakeAt > 400) { this._wakeAt = now; ctx.resume().catch(() => {}); }

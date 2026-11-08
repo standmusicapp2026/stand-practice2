@@ -3,7 +3,7 @@
 // and a play/pause that stops what plays and starts it again where it was.
 // (iOS already shows Stand's sound there, as WebKit's own "Now Playing" entry, but with nothing in
 // it: this gives it a name and a picture, and its buttons (the Media Session of the page).)
-import { wantAudio, onRemote, setRemotePaused } from './audio.js';
+import { wantAudio, onRemote, setRemotePaused, playedOutside } from './audio.js';
 
 const ART = [180, 192, 512].map((s) => ({ src: new URL(`icons/icon-${s}.png`, location.href).href, sizes: `${s}x${s}`, type: 'image/png' }));
 // (after a pause from the lock screen the sound system is kept awake a while, so the play button
@@ -20,6 +20,8 @@ export function initNowPlaying({ describe, pause, resume }) {
     if (on) holdT = setTimeout(() => { wantAudio(false, 'nowplaying'); paused = null; setRemotePaused(false); update(); }, HOLD_MS);
   };
   function update() {
+    // (started again from outside Stand, seen even if the sound system said nothing)
+    if (paused) playedOutside();
     let d = null; try { d = describe(); } catch {}
     // (something plays again, started in Stand: the pause from the lock screen is over)
     if (d && paused) { paused = null; setRemotePaused(false); hold(false); }

@@ -62,9 +62,11 @@ async function bgRun() {
   }
   // (pause and play from the lock screen, as iOS does them: the sound system paused, later started, from outside)
   await step('lock screen pause: the metronome stops and stays stopped', async () => { const m = window.__standMetro, c = m._ctx; if (!window.__standOutside) return false;
-    await window.__standOutside.pause(c); await sleep(2500); return !m.running && c.state === 'suspended' ? `sound ${c.state}, ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}` : false; });
+    await window.__standOutside.pause(c); await sleep(2500); const d = `metro ${m.running} sound ${c.state} same ${c === m._ctx} ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}`;
+    if (!(!m.running && c.state === 'suspended')) say('SELFTEST detail lock pause: ' + d); return !m.running && c.state === 'suspended' ? d : false; });
   await step('lock screen play: the metronome starts again', async () => { const m = window.__standMetro, c = m._ctx;
-    await window.__standOutside.play(c); await sleep(1500); return m.running && c.state === 'running' ? `beats ${S().beats}` : false; });
+    await window.__standOutside.play(c); await sleep(1500); const d = `metro ${m.running} sound ${c.state} beats ${S().beats}`;
+    if (!(m.running && c.state === 'running')) say('SELFTEST detail lock play: ' + d); return m.running && c.state === 'running' ? d : false; });
   await step('background: metronome off', async () => { await openM(); if (S().metro) $('#metroToggle').click(); await sleep(800); await closePanels(); return !S().metro; });
   // (nothing playing: Stand is really put away by iOS each time; four times, short and long)
   for (let n = 4; n <= 7; n++) {

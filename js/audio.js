@@ -56,14 +56,17 @@ export function getCtx() {
       // Pause and play away from Stand (the lock screen, Control Center, the headphones' button):
       // iOS pauses the sound system itself, or starts it again. Not woken up then (as after an
       // interruption): told to what plays, which stops — or starts again where it was.
-      if (c0.state === 'suspended' && wantSound && performance.now() - ourSuspendAt > 1500) { alog('paused from outside Stand'); remote('pause'); if (!wantSound) return; }
-      if (c0.state === 'running' && remotePaused && performance.now() - ourResumeAt > 1500) { alog('played from outside Stand'); remote('play'); }
+      if (c0.state === 'running') { c0.__ran = true; c0.__ours = false; }
+      if (pausedOutside(c0)) return;
+      playedOutside(c0);
       if (wantSound && c0.state !== 'running') c0.resume().catch(() => {});
     });
   }
   // (asked for: it will sound now, so it does not rest; see "battery" below)
   lastSound = performance.now(); if (restingCtx === ctx) restingCtx = null;
-  if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  // (not when it was paused from the lock screen: then what plays stops instead)
+  if (ctx.state === 'running') { ctx.__ran = true; ctx.__ours = false; }
+  if (ctx.state !== 'running' && !pausedOutside(ctx) && !remotePaused) ctx.resume().catch(() => {});
   return ctx;
 }
 export function freshSound() {
@@ -117,15 +120,31 @@ const remoteFns = [];
 function remote(what) { for (const f of remoteFns) { try { f(what); } catch (e) { console.warn(e); } } }
 export function onRemote(f) { remoteFns.push(f); }
 export function setRemotePaused(b) { remotePaused = !!b; }
+// Paused from outside Stand (iOS, from the lock screen)? Asked before anything wakes the sound: then
+// it is not woken, and what plays is told to stop (once). Also: started again from outside?
+export function pausedOutside(c = ctx) {
+  // (only a sound system that was playing and that Stand did not pause itself)
+  if (!c || c.state !== 'suspended' || !c.__ran || c.__ours || remotePaused || !wantSound) return false;
+  if (performance.now() - ourSuspendAt < 1500) return false;
+  alog('paused from outside Stand'); c.__outside = true; remotePaused = true; remote('pause'); return true;
+}
+export function playedOutside(c = ctx) {
+  if (!c || !c.__outside || c.state !== 'running') return false;
+  c.__outside = false;
+  if (!remotePaused) return false;
+  alog('played from outside Stand'); remote('play'); return true;
+}
 // (every pause and wake asked for by Stand itself goes through these)
 if (typeof window !== 'undefined' && window.AudioContext) {
   const AP = window.AudioContext.prototype, sus0 = AP.suspend, res0 = AP.resume;
-  if (sus0) AP.suspend = function (...a) { ourSuspendAt = performance.now(); return sus0.apply(this, a); };
-  if (res0) AP.resume = function (...a) { ourResumeAt = performance.now(); return res0.apply(this, a); };
+  if (sus0) AP.suspend = function (...a) { ourSuspendAt = performance.now(); this.__ours = true; return sus0.apply(this, a); };
+  if (res0) AP.resume = function (...a) { ourResumeAt = performance.now(); this.__outside = false; return res0.apply(this, a); };
   window.__standOutside = { pause: (c) => sus0.call(c), play: (c) => res0.call(c) };   // (tests: as iOS does)
 }
 let wantSound = false;
 export function wantAudio(on, who = 'metro') {
+  // (something asked to sound: whatever was paused from the lock screen is over)
+  if (on && who !== 'nowplaying') remotePaused = false;
   if (on) wanting.add(who); else wanting.delete(who);
   wantSound = wanting.size > 0;
   if (on) { getCtx(); watch(); }
@@ -138,6 +157,7 @@ function watch() {
   watchT = setInterval(() => {
     if (!wantSound && micUsers === 0) { clearInterval(watchT); watchT = 0; lastClock = -1; stuckFor = 0; return; }
     if (document.hidden || !ctx) return;
+    if (remotePaused || pausedOutside()) return;
     // (interrupted: a call or Siri has the sound, and it comes back by itself when they end; but
     // the microphone opening or closing also leaves it "interrupted", and that never ends by itself.
     // So: replaced once that interruption has lasted a few seconds, and only once for it, never
