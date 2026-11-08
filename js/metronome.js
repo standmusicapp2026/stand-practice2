@@ -200,7 +200,7 @@ export class Metronome {
   _ahead() {
     const p = performance.now(), gap = this._tickAt ? (p - this._tickAt) / 1000 : 0; this._tickAt = p;
     this._lag = Math.max(gap, (this._lag || 0) * 0.97);
-    if (typeof document !== 'undefined' && document.hidden) return Math.min(8, Math.max(2, this._lag * 2.5 + 0.3));
+    if (typeof document !== 'undefined' && document.hidden) return Math.min(10, Math.max(5, this._lag * 2.5 + 0.5));
     return Math.max(LOOKAHEAD, Math.min(0.5, this._lag * 1.5));
   }
   // back in Stand: the clicks given far ahead are taken back, beyond the usual margin

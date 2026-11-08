@@ -125,7 +125,6 @@ export function setRemotePaused(b) { remotePaused = !!b; }
 export function pausedOutside(c = ctx) {
   // (only a sound system that was playing and that Stand did not pause itself)
   if (!c || c.state !== 'suspended' || !c.__ran || c.__ours || remotePaused || !wantSound) return false;
-  if (performance.now() - ourSuspendAt < 1500) return false;
   alog('paused from outside Stand'); c.__outside = true; remotePaused = true; remote('pause'); return true;
 }
 export function playedOutside(c = ctx) {
