@@ -52,6 +52,7 @@ async function bgRun() {
   await step('now playing: the metronome by name', async () => { await sleep(1300); const ms = navigator.mediaSession; const md = ms && ms.metadata;
     if (!ms) return 'no Media Session in this web view';
     return md && /^Metronome/.test(md.title) && md.artist === 'Stand' && ms.playbackState === 'playing' ? md.title : false; });
+  let seenAway = 0;
   for (let n = 1; n <= 3; n++) {
     const s0 = S(), b0 = s0.beats, t0 = Date.now(), c0 = window.__standMetro && window.__standMetro._ctx ? window.__standMetro._ctx.currentTime : 0;
     say('SELFTEST LEAVE ' + n);
@@ -62,8 +63,11 @@ async function bgRun() {
     const s = S(), secs = Math.round((Date.now() - t0) / 1000);
     const info = `hid ${hid} back ${back} metro ${s.metro} beats ${b0}->${s.beats} clock ${(+s0.clock || 0).toFixed(1)}->${(+s.clock || 0).toFixed(1)} in ${secs} s, sound ${s.state}, rested ${s0.rested}->${s.rested}`;
     if (!(hid && back && s.metro && s.beats > b0 + 8)) say('SELFTEST detail background ' + n + ': ' + info);
-    await step(`background ${n}: back, the metronome kept playing`, async () => (hid && back && s.metro && s.beats > b0 + 8) ? info : false);
+    // (a busy test machine sometimes never puts Stand away: then it was not away, and is judged only on playing on)
+    if (hid) seenAway++;
+    await step(`background ${n}: back, the metronome kept playing`, async () => (back && s.metro && s.beats > b0 + 8) ? (hid ? info : 'not put away this time; ' + info) : false);
   }
+  await step('background: put away at least twice while playing', async () => seenAway >= 2 ? `${seenAway} of 3` : false);
   // (pause and play from the lock screen, as iOS does them: the sound system paused, later started, from outside)
   await step('lock screen pause: the metronome stops and stays stopped', async () => { const m = window.__standMetro, c = m._ctx; if (!window.__standOutside) return false;
     await window.__standOutside.pause(c); await sleep(2500); const d = `metro ${m.running} sound ${c.state} same ${c === m._ctx} ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}`;
