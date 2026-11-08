@@ -26,7 +26,7 @@ jobs:
           if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
           if [ -d examples ]; then cp -R examples ios/Stand/www/; fi
           cp ios/simtest/selftest.js ios/Stand/www/js/selftest.js
-          mkdir -p ios/Stand/www/_selftest && cp ios/simtest/vector8.pdf ios/Stand/www/_selftest/
+          mkdir -p ios/Stand/www/_selftest && cp ios/simtest/vector8.pdf ios/simtest/piano.pdf ios/Stand/www/_selftest/
 
       - name: Generate Xcode project
         run: |

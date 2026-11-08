@@ -174,8 +174,46 @@ async function run() {
     $('.tour-skip') && $('.tour-skip').click(); await sleep(300);
     await stroke('pen', 0.3, 0.3); await sleep(600); return true;
   });
+  // (squeezing the Pencil Pro: the tool wheel at the tip; a tap on a tool chooses it and closes it)
+  await step('tool wheel (Pencil squeeze)', async () => {
+    window.standPencilSqueeze({ x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2) }); await sleep(800);
+    const w = $('.wheel.open'); if (!w) return false;
+    const n = w.querySelectorAll('.wheel-tool').length; w.querySelector('.wheel-tool[data-tool=hl]').click(); await sleep(500);
+    const ok = ($('.ink-tool.on[data-tool]') || {}).dataset?.tool === 'hl' && !$('.wheel');
+    $('.ink-tool[data-tool=pen]').click(); await sleep(200);
+    return ok ? n + ' tools' : false;
+  });
+  await step('ruler: a line along its edge is straight', async () => {
+    const b = $('#rulerBtn'); if (!b || !b.offsetParent) return 'no ruler button here';
+    b.click(); await sleep(500); const R = window.__ruler; if (!R || !R.on) return false;
+    const t = $('#stage'), y = R.cy + R.h / 2 + 8;
+    ptr(t, 'pointerdown', R.cx - 150, y, 35, 'pen');
+    for (let i = 1; i <= 25; i++) { ptr(t, 'pointermove', R.cx - 150 + i * 12, y + Math.sin(i) * 6, 35, 'pen'); await sleep(16); }
+    ptr(t, 'pointerup', R.cx + 150, y, 35, 'pen'); await sleep(500);
+    const li = window.__lastInk(); b.click(); await sleep(300);
+    return li && li.dev < 0.0006 && Math.abs(li.dy) < 0.0006 && !window.__ruler.on ? 'straight' : (say('SELFTEST detail ruler ' + JSON.stringify(li)), false);
+  });
   await shot('09-notebook');
   await step('back home 2', async () => { await home(); return !$('#library').hidden; });
+  // (the tempo printed in a score: found, and a tap starts the metronome at it)
+  await step('tempo mark: found, a tap starts the metronome at it', async () => {
+    const buf = await (await fetch('_selftest/piano.pdf')).arrayBuffer();
+    const f = new File([buf], 'Little Piece selftest.pdf', { type: 'application/pdf' });
+    const dt = new DataTransfer(); dt.items.add(f);
+    const n0 = $$('#grid .card:not(.folder)').length;
+    const inp = $('#importInput'); inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!(await waitFor(() => $$('#grid .card:not(.folder)').length >= n0 + 1, 30000))) return false;
+    await sleep(800);
+    const card = $$('#grid .card:not(.folder)').find((c) => /Little Piece/i.test(c.textContent)); if (!card) return false;
+    card.click();
+    if (!(await waitFor(() => $$('#stage .tempo-mark').length >= 2, 20000))) { say('SELFTEST detail tempo: marks ' + $$('#stage .tempo-mark').length); return false; }
+    const m = $$('#stage .tempo-mark'), lbl = m.map((x) => x.getAttribute('aria-label')).join(' | ');
+    m[0].click(); await sleep(1000);
+    const ok = window.__standMetro.bpm === 108 && window.__standMetro.running;
+    $('#metroToggle').click(); await sleep(300); await closePanels();
+    return ok ? lbl : (say('SELFTEST detail tempo: ' + lbl + ' bpm ' + window.__standMetro.bpm + ' running ' + window.__standMetro.running), false);
+  });
+  await step('back home 2b', async () => { await home(); return !$('#library').hidden; });
   await step('Compose', async () => {
     const E = await import('./compose/editor.js');
     await E.createComposition({ title: 'Selftest', insts: ['cello', 'piano'], time: [4, 4], bars: 8 });
