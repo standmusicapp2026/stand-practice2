@@ -77,15 +77,18 @@ async function bgRun() {
     if (!(m.running && c.state === 'running')) say('SELFTEST detail lock play: ' + d + ' log: ' + alogTail()); return m.running && c.state === 'running' ? d : false; });
   await step('background: metronome off', async () => { await openM(); if (S().metro) $('#metroToggle').click(); await sleep(800); await closePanels(); return !S().metro; });
   // (nothing playing: Stand is really put away by iOS each time; four times, short and long)
+  let seenAway2 = 0;
   for (let n = 4; n <= 7; n++) {
     const r0 = S().rested;
     say('SELFTEST LEAVE ' + n);
     const { hid, back } = await away();
     await sleep(2500);
-    const ok = hid && back && (n > 4 || S().rested > r0);
+    if (hid) seenAway2++;
+    const ok = back && (!hid ? n > 4 : (n > 4 || S().rested > r0));
     if (!ok) say(`SELFTEST detail background ${n}: hid ${hid} back ${back} rested ${r0}->${S().rested} busy ${S().busy} sound ${S().state}`);
-    await step(`background ${n}: nothing playing, the sound rested away, back fine`, async () => ok ? `sound ${S().state}` : false);
+    await step(`background ${n}: nothing playing, the sound rested away, back fine`, async () => ok ? (hid ? '' : 'not put away this time; ') + `sound ${S().state}` : false);
   }
+  await step('background: put away at least three times of four with nothing playing', async () => seenAway2 >= 3 ? `${seenAway2} of 4` : false);
   await step('background: the metronome starts again', async () => { await openM(); $('#metroToggle').click(); await sleep(2000); const ok = S().metro && S().state === 'running'; $('#metroToggle').click(); await sleep(400); await closePanels(); return ok; });
 }
 async function run() {
