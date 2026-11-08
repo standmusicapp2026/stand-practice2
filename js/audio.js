@@ -142,7 +142,8 @@ if (typeof window !== 'undefined' && window.AudioContext) {
   // pressed or something is started in Stand)
   if (res0) AP.resume = function (...a) {
     if (remotePaused && this.__outside) { alog('not woken (paused from outside Stand)'); return Promise.resolve(); }
-    ourResumeAt = performance.now(); this.__outside = false; this.__ours = false; return res0.apply(this, a); };
+    // (a pause of Stand's own not yet taken effect is undone; one that has stays Stand's until it plays)
+    ourResumeAt = performance.now(); this.__outside = false; if (this.state === 'running') this.__ours = false; return res0.apply(this, a); };
   window.__standOutside = { pause: (c) => sus0.call(c), play: (c) => res0.call(c) };   // (tests: as iOS does)
 }
 let wantSound = false;
