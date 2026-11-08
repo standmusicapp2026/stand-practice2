@@ -12,7 +12,9 @@ export function linesOf(A) {
     const firstHead = heads.length ? Math.min(...heads.map((q) => q.x)) : s0.x0 + sp * 5;
     const headEnd = Math.max(s0.x0 + sp * 2.5, firstHead - sp * 1.0);
     const bars = (s0.bars || []).map((b) => b.x).filter((x) => x > headEnd + sp && x < s0.x1 - sp * 1.2).sort((a, b) => a - b);
-    lines.push({ y0: top - sp * 4.2, y1: bot + sp * 4.2, top, bot, x0, x1, headEnd, cuts: [headEnd, ...bars, s0.x1], W, H, sp });
+    // (each staff of the line, top to bottom: a piano's two, a quartet's four; one can be kept alone)
+    const staves = sts.map((q) => [q.top, q.bottom]).sort((p, q) => p[0] - q[0]);
+    lines.push({ y0: top - sp * 4.2, y1: bot + sp * 4.2, top, bot, x0, x1, headEnd, cuts: [headEnd, ...bars, s0.x1], W, H, sp, staves });
   }
   // neighbouring lines share the white space between them
   for (let i = 0; i < lines.length; i++) {
@@ -21,7 +23,7 @@ export function linesOf(A) {
   }
   for (let i = 0; i < lines.length; i++) {
     const L = lines[i];
-    lines[i] = { y0: Math.max(0, L.y0) / H, y1: Math.min(H, L.y1) / H, x0: L.x0 / W, x1: L.x1 / W, cuts: L.cuts.map((x) => x / W), top: L.top / H, bot: L.bot / H, sp: L.sp / H };
+    lines[i] = { y0: Math.max(0, L.y0) / H, y1: Math.min(H, L.y1) / H, x0: L.x0 / W, x1: L.x1 / W, cuts: L.cuts.map((x) => x / W), top: L.top / H, bot: L.bot / H, sp: L.sp / H, staves: L.staves.map(([t, b]) => [t / H, b / H]) };
   }
   return lines;
 }

@@ -248,3 +248,8 @@
 .cp-sel-more .sheet-head { flex-basis: 100%; min-height: 26px; color: color-mix(in srgb, var(--bg) 60%, transparent); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
 .cp-sel button.more { font-weight: 700; }
 .cp-sel .what.soft { opacity: .75; font-style: italic; }
+
+/* the top and bottom of the chosen lines: pulled in, staff by staff (a piano's right hand alone) */
+.pk-vhandle { position: absolute; z-index: 3; height: 30px; margin-top: -15px; width: 64px; margin-left: -32px; touch-action: none; cursor: ns-resize; }
+.pk-vhandle::after { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 14px; margin-top: -7px; border-radius: 7px; background: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.pk-vhandle::before { content: ""; position: absolute; left: 24px; right: 24px; top: 50%; height: 2px; margin-top: -4px; border-radius: 1px; background: rgba(255,255,255,.85); box-shadow: 0 4px 0 rgba(255,255,255,.85); z-index: 1; }

@@ -418,6 +418,7 @@
         <button id="insPhoto"><svg><use href="#i-image"/></svg><span>Photo</span></button>
         <button id="insCamera"><svg><use href="#i-capture"/></svg><span>Camera</span></button>
         <button id="insPaste"><svg><use href="#i-paste"/></svg><span>Paste</span></button>
+        <button id="insScore"><svg><use href="#i-lib"/></svg><span>From a score</span></button>
       </div>
       <div class="ins-row ins-row-2">
         <button id="insWord"><span class="ins-art word-art">ENCORE</span><span>Photo in a word</span></button>
@@ -1585,7 +1586,7 @@
     <button class="btn primary" id="pkDone" disabled>Use this</button>
   </header>
   <div class="pk-lib" id="pkLib"></div>
-  <div class="pk-stage" id="pkStage"><div class="pk-page" id="pkPage"><canvas id="pkCanvas"></canvas><canvas id="pkDraw"></canvas><span class="pk-handle l" id="pkHandleL" hidden></span><span class="pk-handle r" id="pkHandleR" hidden></span></div>
+  <div class="pk-stage" id="pkStage"><div class="pk-page" id="pkPage"><canvas id="pkCanvas"></canvas><canvas id="pkDraw"></canvas><span class="pk-handle l" id="pkHandleL" hidden></span><span class="pk-handle r" id="pkHandleR" hidden></span><span class="pk-vhandle t" id="pkHandleT" hidden aria-label="Pull down to leave out the staves above"></span><span class="pk-vhandle b" id="pkHandleB" hidden aria-label="Pull up to leave out the staves below"></span></div>
     <span class="pk-finding" id="pkFinding" hidden><i></i>Finding the lines…</span>
   </div>
   <div class="pk-bar" id="pkBar"><button class="btn small" id="pkPrev"><svg><use href="#i-back"/></svg></button><span class="num" id="pkPageNo"></span><button class="btn small" id="pkNext"><svg class="flipx"><use href="#i-back"/></svg></button><button class="btn small ghost" id="pkAll">Whole page</button><button class="btn small ghost" id="pkClear" hidden>Clear</button><span class="hint" id="pkHint">Tap a line, or slide your finger from the first bar to the last. Pages can be added one after another.</span></div>

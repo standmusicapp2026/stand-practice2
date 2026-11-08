@@ -1985,3 +1985,23 @@ body.phone .stat b { font-size: 22px; }
   :root:not([data-theme="light"]) .ruler-ticks { filter: invert(1); } :root:not([data-theme="light"]) .ruler-deg { background: rgba(22, 27, 41, .85); color: #E9ECF4; } }
 :root[data-theme="dark"] .ruler { background: rgba(40, 46, 64, .62); box-shadow: 0 8px 26px rgba(0, 0, 0, .4), inset 0 0 0 1px rgba(255, 255, 255, .16); }
 :root[data-theme="dark"] .ruler-ticks { filter: invert(1); } :root[data-theme="dark"] .ruler-deg { background: rgba(22, 27, 41, .85); color: #E9ECF4; }
+.insert-pop .ins-pane[data-pane="photos"] > .ins-row:first-child { grid-template-columns: repeat(4, 1fr); }
+
+/* ---------- the tempo printed in a score: tap it, the metronome starts at that tempo ---------- */
+.tempo-mark { position: absolute; z-index: 3; border-radius: 9px; background: transparent; padding: 0; min-width: 0; -webkit-tap-highlight-color: transparent; }
+.tempo-mark:active { background: rgba(255, 196, 70, .22); }
+#stage.inking .tempo-mark { pointer-events: none; }
+/* the first time a score is opened: a soft light passes over the mark, twice, then it is gone */
+.tempo-mark.glow { animation: tempo-glow 3.4s ease-in-out 1; overflow: hidden; }
+.tempo-mark.glow::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 236, 170, .75) 50%, transparent 80%) no-repeat; background-size: 60% 100%; background-position: -120% 0;
+  mix-blend-mode: multiply; animation: tempo-sweep 3.4s ease-in-out 1; }
+@keyframes tempo-glow {
+  0% { box-shadow: 0 0 0 0 rgba(255, 184, 48, 0); background: rgba(255, 210, 100, 0); }
+  22% { box-shadow: 0 0 22px 6px rgba(255, 184, 48, .42); background: rgba(255, 210, 100, .18); }
+  45% { box-shadow: 0 0 8px 2px rgba(255, 184, 48, .12); background: rgba(255, 210, 100, .05); }
+  65% { box-shadow: 0 0 22px 6px rgba(255, 184, 48, .38); background: rgba(255, 210, 100, .16); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 184, 48, 0); background: rgba(255, 210, 100, 0); }
+}
+@keyframes tempo-sweep { 0%, 8% { background-position: -120% 0; } 40% { background-position: 220% 0; } 48% { background-position: -120% 0; } 80% { background-position: 220% 0; } 100% { background-position: 220% 0; } }
+@media (prefers-reduced-motion: reduce) { .tempo-mark.glow, .tempo-mark.glow::after { animation-duration: 2.4s; } .tempo-mark.glow::after { display: none; } }

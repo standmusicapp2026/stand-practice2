@@ -47,6 +47,8 @@ async function bgRun() {
   await step('background: metronome on', async () => { await closePanels(); await openM(); if (!S().metro) $('#metroToggle').click(); await sleep(2000); await closePanels(); return S().metro ? `beats ${S().beats}` : false; });
   // (the leave is seen by its event: a page paused in the background cannot see it by looking)
   let hides = 0; document.addEventListener('visibilitychange', () => { if (document.hidden) hides++; });
+  // (how much the page ran while away: a stalled test machine sometimes runs none of it at all)
+  let awayTicks = 0; setInterval(() => { if (document.hidden) awayTicks++; }, 200);
   const away = async () => { const h0 = hides; const hid = await waitFor(() => hides > h0, 150000); const back = await waitFor(() => !document.hidden, 90000); return { hid: !!hid, back: !!back }; };
   // (what iOS shows away from Stand: its name for what plays, with the icon, and play/pause)
   await step('now playing: the metronome by name', async () => { await sleep(1300); const ms = navigator.mediaSession; const md = ms && ms.metadata;
@@ -79,13 +81,15 @@ async function bgRun() {
   // (nothing playing: Stand is really put away by iOS each time; four times, short and long)
   let seenAway2 = 0;
   for (let n = 4; n <= 7; n++) {
-    const r0 = S().rested;
+    const r0 = S().rested, k0 = awayTicks;
     say('SELFTEST LEAVE ' + n);
     const { hid, back } = await away();
     await sleep(2500);
     if (hid) seenAway2++;
-    const ok = back && (!hid ? n > 4 : (n > 4 || S().rested > r0));
-    if (!ok) say(`SELFTEST detail background ${n}: hid ${hid} back ${back} rested ${r0}->${S().rested} busy ${S().busy} sound ${S().state}`);
+    // (the first time, the sound must have rested while away, unless the page never ran there at all)
+    const ran = awayTicks - k0 >= 6;
+    const ok = back && (!hid ? n > 4 : (n > 4 || S().rested > r0 || !ran));
+    if (!ok || !ran) say(`SELFTEST detail background ${n}: hid ${hid} back ${back} rested ${r0}->${S().rested} busy ${S().busy} sound ${S().state} ran away ${awayTicks - k0}`);
     await step(`background ${n}: nothing playing, the sound rested away, back fine`, async () => ok ? (hid ? '' : 'not put away this time; ') + `sound ${S().state}` : false);
   }
   await step('background: put away at least three times of four with nothing playing', async () => seenAway2 >= 3 ? `${seenAway2} of 4` : false);

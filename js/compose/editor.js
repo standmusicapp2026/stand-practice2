@@ -89,7 +89,8 @@ async function closeCompose() {
   C.lyFor = null;
   player.stop(); syncPlay();
   try { D.hidePanel(); } catch {}   // (Layout, Capture, Sound… close with Compose)
-  await save(true);
+  // (a save that fails never keeps you in Compose)
+  try { await save(true); } catch (err) { console.warn(err); }
   $('#compose').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
   C.score = null; C.lay = null;
   $('#cpPages').textContent = ''; C.pages = [];
@@ -104,18 +105,22 @@ function saveSoon(thumb) { clearTimeout(C.saveT); C.saveT = setTimeout(() => sav
 }
 async function save(thumb) {
   clearTimeout(C.saveT); C.saveT = 0;
-  if (!C.score || !C.id) return;
-  await db.put('files', { id: C.fileId, kind: 'comp', data: C.score });
-  const meta = await db.get('scores', C.id);
+  // (what is saved is taken now: Compose closed, or another score opened, while this is written
+  // changes nothing in it)
+  const sc = C.score, id = C.id, fileId = C.fileId, lay = C.lay;
+  if (!sc || !id) return;
+  const th = thumb && lay ? thumbOf(lay) : null;
+  await db.put('files', { id: fileId, kind: 'comp', data: sc });
+  const meta = await db.get('scores', id);
   if (!meta) return;
-  meta.title = C.score.title || 'Untitled'; meta.composer = C.score.composer || ''; meta.pages = C.lay ? C.lay.pages.length : 1;
-  if (thumb && C.lay) { meta.thumb = await thumbOf(); meta.thumbAt = Date.now(); }
+  meta.title = sc.title || 'Untitled'; meta.composer = sc.composer || ''; meta.pages = lay ? lay.pages.length : 1;
+  if (th) { const b = await th; if (b) { meta.thumb = b; meta.thumbAt = Date.now(); } }
   await db.put('scores', meta);
 }
-async function thumbOf() {
-  const c = document.createElement('canvas'); const k = 360 / C.lay.W;
-  c.width = 360; c.height = Math.round(C.lay.H * k);
-  const g = c.getContext('2d'); g.scale(k, k); drawPage(g, C.lay, 0);
+function thumbOf(lay = C.lay) {
+  const c = document.createElement('canvas'); const k = 360 / lay.W;
+  c.width = 360; c.height = Math.round(lay.H * k);
+  const g = c.getContext('2d'); g.scale(k, k); drawPage(g, lay, 0);
   return new Promise((res) => c.toBlob((b) => res(b), 'image/jpeg', 0.82));
 }
 

@@ -31,6 +31,7 @@ import { placeWords } from './textplace.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks } from './imslp.js';
 import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
+import { findMarks } from './tempo.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
 import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch, pairList } from './link.js';
@@ -1774,7 +1775,105 @@ async function layout(fade) {
   syncPaperPlus();
   $('#pageRange').value = V.page + 1;
   prefetch(token);
+  showTempoMarks(token, entries);
 }
+// ---------- the tempo printed in the score ----------
+// Where a page says how fast (♩ = 108, Allegretto…), a tap there starts the metronome at that
+// tempo. The first time a score is opened, each mark glows softly once, so it is found; after
+// that it is just there to tap. The words come from the PDF itself, or (scans, photos) from the
+// iPad's own text reader; each page is read once and kept.
+const TEMPO = { last: null, glow: null, glowed: new Set(), mem: new Map(), reading: new Map() };
+const OCRWAIT = new Map();
+async function pageWords(i) {
+  const doc = V.doc; if (!doc) return [];
+  // 1. the words in the PDF (exact, and at once)
+  try {
+    if (doc.pdf && !doc.rawSizes && !(doc.composite && doc.composite(i))) {
+      const o = doc.orig ? doc.orig(i) : i;
+      if (o < (doc.ownPages || doc.pages)) {
+        const page = await doc.pdf.getPage(o + 1), vp = page.getViewport({ scale: 1 }), tc = await page.getTextContent();
+        const box = doc.piece ? doc.piece(i) : null;
+        let items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => {
+          const size = Math.hypot(it.transform[2], it.transform[3]) || it.height || 10;
+          return { s: it.str, x: it.transform[4] / vp.width, y: (vp.height - it.transform[5] - size * 0.85) / vp.height, w: Math.max(it.width || it.str.length * size * 0.5, 1) / vp.width, h: size / vp.height };
+        });
+        if (box) items = items.filter((q) => q.y >= box.y && q.y + q.h <= box.y + box.h).map((q) => ({ ...q, y: (q.y - box.y) / box.h, h: q.h / box.h }));
+        if (tc.items.length) return items;
+      }
+    }
+  } catch (err) { console.warn(err); }
+  // 2. read off the page (a scan or a photo): only on the iPad, where it has its own reader
+  const rec = NATIVE && NATIVE.standRecognize, fake = globalThis.__readTextTest;
+  if (!rec && !fake) return [];
+  const [pw, ph] = doc.sizes[i]; const W = 1500, H = Math.round((W * ph) / pw);
+  const c = document.createElement('canvas');
+  try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return []; }
+  let got;
+  if (fake) got = await fake(c);
+  else {
+    const id = 'tempo:' + uid();
+    got = await new Promise((res) => {
+      const timer = setTimeout(() => { OCRWAIT.delete(id); res([]); }, 12000);
+      OCRWAIT.set(id, (lines) => { clearTimeout(timer); res(lines); });
+      rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words: ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft'], lines: true });
+    });
+  }
+  c.width = c.height = 0;
+  return (got || []).filter((l) => l && l.s && (l.c ?? 1) >= 0.3).map((l) => ({ s: String(l.s), x: l.x, y: l.y, w: l.w, h: l.h }));
+}
+async function tempoMarksOf(i) {
+  const doc = V.doc, sc = V.score; if (!doc || !sc) return [];
+  const box = doc.piece ? doc.piece(i) : null;
+  const key = (doc.orig ? doc.orig(i) : i) + (box ? '@' + box.y.toFixed(3) : '') + (doc.composite && doc.composite(i) ? '+' : '');
+  const fk = 'tempo2:' + (sc.fileId || sc.id);
+  let kept = TEMPO.mem.get(fk);
+  if (!kept) { kept = (await getSetting(fk, null)) || {}; TEMPO.mem.set(fk, kept); }
+  if (kept[key]) return kept[key];
+  const rk = fk + '|' + key;
+  if (!TEMPO.reading.has(rk)) TEMPO.reading.set(rk, (async () => {
+    const marks = findMarks(await pageWords(i));
+    kept[key] = marks; setSetting(fk, kept).catch(() => {});
+    return marks;
+  })().finally(() => TEMPO.reading.delete(rk)));
+  return TEMPO.reading.get(rk);
+}
+async function showTempoMarks(token, entries) {
+  const sc = V.score; if (!sc || !entries || !entries.length || (V.doc && V.doc.paper)) return;
+  // a score opened now: the marks glow this time only if it was never opened before
+  if (TEMPO.last !== sc.id) {
+    TEMPO.last = sc.id; TEMPO.glowed = new Set();
+    const seen = S.tempoSeen || (S.tempoSeen = []);
+    TEMPO.glow = seen.includes(sc.id) ? null : sc.id;
+    if (!seen.includes(sc.id)) { seen.push(sc.id); if (seen.length > 3000) seen.splice(0, seen.length - 3000); saveSettings(); }
+  }
+  // (after the page is shown, and quietly: reading never holds up turning)
+  await new Promise((r) => setTimeout(r, 250));
+  for (const e of entries) {
+    if (token !== layoutToken || V.score !== sc) return;
+    let marks; try { marks = await tempoMarksOf(e.index); } catch (err) { console.warn(err); continue; }
+    if (token !== layoutToken || !e.inner.isConnected) return;
+    e.inner.querySelectorAll('.tempo-mark').forEach((x) => x.remove());
+    for (const m of marks) {
+      const b = el('button', 'tempo-mark');
+      const pad = 0.006;
+      b.style.left = ((m.x - pad) * 100) + '%'; b.style.top = ((m.y - pad * 0.7) * 100) + '%';
+      b.style.width = ((m.w + pad * 2) * 100) + '%'; b.style.height = ((m.h + pad * 1.4) * 100) + '%';
+      const what = m.word ? `${m.word}, ${m.bpm}` : `${m.bpm}`;
+      b.setAttribute('aria-label', `Metronome at ${what} beats a minute`);
+      const gk = e.index + ':' + m.x + ':' + m.y;
+      if (TEMPO.glow === sc.id && !TEMPO.glowed.has(gk)) { TEMPO.glowed.add(gk); b.classList.add('glow'); setTimeout(() => b.classList.remove('glow'), 3600); }
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); tempoTapped(m); });
+      e.inner.append(b);
+    }
+  }
+}
+function tempoTapped(m) {
+  setBpm(m.bpm);
+  showPanel('metronome');
+  if (!metro.running) startMetro();
+  toast((m.word ? m.word + ' — ' : '') + `♩ = ${m.bpm}` + (m.exact ? '' : ' (about: no number printed)'), 2400);
+}
+window.__tempo = { marksOf: tempoMarksOf, TEMPO };   // (tests)
 // The next pages (and the ones before) are drawn ahead, after the pages on screen.
 function prefetch(token) {
   if (token !== layoutToken || !V.doc) return;
@@ -4217,6 +4316,20 @@ $('#insGlass').addEventListener('click', () => {
 })();
 $('#insCamera').addEventListener('click', () => { closeInkPops(); $('#insCam').click(); });
 $('#insPaste').addEventListener('click', () => { closeInkPops(); pasteFromClipboard(); });
+// music from a score in the library, a PDF or a photo: choose the lines (or draw around any part),
+// a piano's one staff if wanted, and it comes onto the page as a picture
+async function insertFromScore() {
+  closeInkPops();
+  const entry = centreEntry();
+  const res = await pickRegion(null, null, { title: 'Choose the music for your page', done: 'Add to the page' });
+  if (!res || !res.canvas) return false;
+  const blob = await new Promise((r) => res.canvas.toBlob(r, 'image/png'));
+  res.canvas.width = res.canvas.height = 0;
+  if (!blob) return false;
+  const name = ((res.source && (res.source.title || res.source.file)) || 'Music') + '.png';
+  return insertPictures([new File([blob], name, { type: 'image/png' })], entry ? { entry, p: [0.5, 0.42] } : undefined);
+}
+$('#insScore').addEventListener('click', () => { insertFromScore(); });
 for (const id of ['#insFile', '#insCam']) $(id).addEventListener('change', async (e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) insertPictures(f); });
 
 // ---------- text boxes: typed, or written with the Pencil (the iPad's Scribble turns it into type) ----------
@@ -5132,6 +5245,7 @@ function startPinch() {
 
 stage.addEventListener('pointerdown', (e) => {
   if (!V.doc) return;
+  if (!V.inking && e.target && e.target.closest && e.target.closest('.tempo-mark')) return;   // (the tempo mark takes its own tap)
   const t = now();
   const info = { id: e.pointerId, type: e.pointerType, x: e.clientX, y: e.clientY, palm: false };
   PT.set(e.pointerId, info);
@@ -10435,6 +10549,7 @@ function decideWord(job) {
   wordRead(job, pick ? pick.text : '');
 }
 window.standRecognized = (msg) => {
+  if (msg && OCRWAIT.has(msg.id)) { const f = OCRWAIT.get(msg.id); OCRWAIT.delete(msg.id); f(msg.lines || []); return; }
   // the top of a page read for its title (readTopOfPage)
   if (String(msg.id).startsWith('info:')) { const f = TOPREAD.get(msg.id); TOPREAD.delete(msg.id); if (f) f(msg.lines || []); return; }
   // words read for the composer's capture go there

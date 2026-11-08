@@ -11,13 +11,14 @@ const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-const PK = { picks: new Map(), doc: null, page: 0, resolve: null, box: null, pts: null, thumbs: [], lines: null, sel: [], trim: null, linesCache: new Map() };
+const PK = { picks: new Map(), doc: null, page: 0, resolve: null, box: null, pts: null, thumbs: [], lines: null, sel: [], trim: null, cut: null, linesCache: new Map() };
 
 export function pickRegion(src, file, opts = {}) {
   return new Promise(async (resolve) => {
     PK.resolve = resolve; PK.box = null; PK.opts = opts; PK.picks = new Map();
     $('#picker').hidden = false; $('#pkDone').disabled = true;
     $('#pkTitle').textContent = opts.title || 'Choose the music';
+    $('#pkDone').textContent = opts.done || 'Use this';
     if (src === 'file' && file) { await openFile(file); return; }
     if (src && src.scoreId) { await openLibraryScore(src.scoreId, src.page || 0); return; }
     showLibrary();
@@ -84,7 +85,7 @@ async function showPage() {
   $('#pkPrev').disabled = PK.page === 0; $('#pkNext').disabled = PK.page >= PK.doc.pages - 1;
   // what was chosen on this page before (several pages can be chosen, one after another)
   const was = PK.picks.get(PK.page);
-  PK.box = null; PK.sel = was ? was.sel.slice() : []; PK.trim = was ? { ...was.trim } : null; PK.lines = null; $('#pkHandleL').hidden = $('#pkHandleR').hidden = true;
+  PK.box = null; PK.sel = was ? was.sel.slice() : []; PK.trim = was ? { ...was.trim } : null; PK.cut = was && was.cut ? { ...was.cut } : null; PK.lines = null; $('#pkHandleL').hidden = $('#pkHandleR').hidden = $('#pkHandleT').hidden = $('#pkHandleB').hidden = true;
   syncDone();
   const stage = $('#pkStage'), r = stage.getBoundingClientRect();
   const [pw, ph] = PK.doc.sizes[PK.page];
@@ -110,7 +111,8 @@ async function showPage() {
 let LW = null, lwBroken = false, lwBusy = null, lwSeq = 0;
 const RQ = { want: [], running: false };
 const pageKey = (page) => PK.doc.id + ':' + page + ':' + (PK.source.scoreId || PK.source.file || '');
-const keepKey = () => (PK.source.fileId ? 'pklines:' + PK.source.fileId : null);
+// (v2: the lines know their staves; lines kept before that are read again once)
+const keepKey = () => (PK.source.fileId ? 'pklines2:' + PK.source.fileId : null);
 const origOf = (page) => { try { return String(PK.doc.orig ? PK.doc.orig(page) : page); } catch { return String(page); } };
 function dropReader() {
   if (LW) { try { LW.terminate(); } catch {} LW = null; }
@@ -219,7 +221,7 @@ async function findLines() {
 }
 // remember this page's choice, and whether there is anything to use
 function savePick() {
-  if (PK.sel.length && PK.trim) PK.picks.set(PK.page, { sel: PK.sel.slice(), trim: { ...PK.trim } }); else PK.picks.delete(PK.page);
+  if (PK.sel.length && PK.trim) PK.picks.set(PK.page, { sel: PK.sel.slice(), trim: { ...PK.trim }, cut: PK.cut ? { ...PK.cut } : null }); else PK.picks.delete(PK.page);
   syncDone();
 }
 function syncDone() {
@@ -234,7 +236,7 @@ function nearLine(fy) { let best = -1, bd = 1e9; (PK.lines || []).forEach((L, i)
 function selectRange(i1, j1, i2, j2) {
   if (i2 < i1 || (i2 === i1 && j2 < j1)) [i1, j1, i2, j2] = [i2, j2, i1, j1];
   PK.sel = []; for (let i = i1; i <= i2; i++) PK.sel.push(i);
-  PK.trim = { a: j1, b: j2 + 1 };
+  PK.trim = { a: j1, b: j2 + 1 }; fitCut();
   PK.box = null;
   drawSel(); drawTray();
 }
@@ -245,23 +247,57 @@ function toggleLine(i) {
   PK.sel.sort((a, b) => a - b);
   PK.box = null; PK.trim = null;
   if (PK.sel.length) { const last = PK.lines[PK.sel[PK.sel.length - 1]]; PK.trim = { a: 0, b: last.cuts.length - 1 }; }
+  fitCut();
   savePick();
   drawSel(); drawTray();
 }
 function rr(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+// ---------- some of the staves only (a piano's right hand, one part of a quartet) ----------
+// The chosen lines' box can be pulled in from the top and from the bottom, a staff at a time. It
+// works when every chosen line has the same staves (a page of piano music): the same staves of each.
+function staffCount(lines, sel) {
+  const ns = sel.map((i) => (lines[i] && lines[i].staves ? lines[i].staves.length : 0));
+  return ns.length && ns.every((n) => n === ns[0]) ? ns[0] : 0;
+}
+function fitCut() {
+  const n = PK.lines ? staffCount(PK.lines, PK.sel) : 0;
+  if (n < 2 || !PK.cut) { PK.cut = null; return; }
+  PK.cut.from = Math.max(0, Math.min(PK.cut.from, n - 1)); PK.cut.to = Math.max(PK.cut.from, Math.min(PK.cut.to, n - 1));
+  if (PK.cut.from === 0 && PK.cut.to === n - 1) PK.cut = null;
+}
+// the top and bottom of a line, with only its kept staves (half way to the staves left out)
+export function lineSpan(L, cut) {
+  if (!cut || !L.staves || L.staves.length < 2) return [L.y0, L.y1];
+  const S = L.staves, n = S.length, from = Math.min(cut.from, n - 1), to = Math.min(Math.max(cut.to, from), n - 1);
+  const y0 = from === 0 ? L.y0 : (S[from - 1][1] + S[from][0]) / 2;
+  const y1 = to === n - 1 ? L.y1 : (S[to][1] + S[to + 1][0]) / 2;
+  return [y0, y1];
+}
 // The chosen lines get a blue box; its two ends can be pulled in, bar by bar.
 const TRAY = {};
 function drawTray() {
   const hl = $('#pkHandleL'), hr = $('#pkHandleR');
   const others = [...PK.picks.keys()].filter((p) => p !== PK.page);
   const elsewhere = others.length ? ` Also chosen: ${others.length === 1 ? 'page' : 'pages'} ${others.map((p) => p + 1).join(', ')}.` : '';
-  if (!PK.sel.length || !PK.lines) { hl.hidden = hr.hidden = true; $('#pkHint').textContent = (PK.lines && PK.lines.length ? 'Tap a line, or slide from the first bar to the last.' : 'Draw a loop around the music you want.') + elsewhere; return; }
+  const ht = $('#pkHandleT'), hb = $('#pkHandleB');
+  if (!PK.sel.length || !PK.lines) { hl.hidden = hr.hidden = ht.hidden = hb.hidden = true; $('#pkHint').textContent = (PK.lines && PK.lines.length ? 'Tap a line, or slide from the first bar to the last.' : 'Draw a loop around the music you want.') + elsewhere; return; }
   const first = PK.lines[PK.sel[0]], last = PK.lines[PK.sel[PK.sel.length - 1]];
-  const place = (h, L, f) => { h.hidden = false; h.style.left = (f * 100) + '%'; h.style.top = ((L.y0 + 0.004) * 100) + '%'; h.style.height = ((L.y1 - L.y0 - 0.008) * 100) + '%'; };
+  const place = (h, L, f) => { const [y0, y1] = lineSpan(L, PK.cut); h.hidden = false; h.style.left = (f * 100) + '%'; h.style.top = ((y0 + 0.004) * 100) + '%'; h.style.height = ((y1 - y0 - 0.008) * 100) + '%'; };
   place(hl, first, first.cuts[PK.trim.a]);
   place(hr, last, last.cuts[PK.trim.b]);
+  // top and bottom: only with two staves or more in the line
+  const nst = staffCount(PK.lines, PK.sel);
+  ht.hidden = hb.hidden = nst < 2;
+  if (nst >= 2) {
+    const fa = first.cuts[PK.trim.a], fb = PK.sel.length === 1 ? first.cuts[PK.trim.b] : first.x1;
+    const la = PK.sel.length === 1 ? first.cuts[PK.trim.a] : last.x0, lb = last.cuts[PK.trim.b];
+    ht.style.left = (((fa + fb) / 2) * 100) + '%'; ht.style.top = (lineSpan(first, PK.cut)[0] * 100) + '%';
+    hb.style.left = (((la + lb) / 2) * 100) + '%'; hb.style.top = (lineSpan(last, PK.cut)[1] * 100) + '%';
+  }
   const nb = barsChosen();
-  $('#pkHint').textContent = `${nb} ${nb === 1 ? 'bar' : 'bars'} on this page — pull the ends to change.` + (elsewhere || (PK.page < PK.doc.pages - 1 ? ' Turn the page to add more.' : ''));
+  const which = PK.cut ? (PK.cut.from === PK.cut.to ? ` Staff ${PK.cut.from + 1} of ${nst} only.` : ` Staves ${PK.cut.from + 1}–${PK.cut.to + 1} of ${nst}.`) : '';
+  const how = nst >= 2 ? ' Pull the top or bottom to keep one staff.' : '';
+  $('#pkHint').textContent = `${nb} ${nb === 1 ? 'bar' : 'bars'} on this page — pull the ends to change.` + which + (PK.cut ? '' : how) + (elsewhere || (PK.page < PK.doc.pages - 1 ? ' Turn the page to add more.' : ''));
 }
 function barsChosen() {
   let n = 0;
@@ -269,6 +305,27 @@ function barsChosen() {
   return n;
 }
 function wireTray() {
+  for (const [id, end] of [['#pkHandleT', 'top'], ['#pkHandleB', 'bottom']]) {
+    const h = $(id);
+    h.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation(); try { h.setPointerCapture(e.pointerId); } catch {}
+      const move = (ev) => {
+        const n = staffCount(PK.lines, PK.sel); if (n < 2) return;
+        const L = PK.lines[end === 'top' ? PK.sel[0] : PK.sel[PK.sel.length - 1]];
+        const r = $('#pkDraw').getBoundingClientRect(), fy = (ev.clientY - r.top) / r.height;
+        const cut = PK.cut ? { ...PK.cut } : { from: 0, to: n - 1 };
+        // the nearest gap between staves (or the very edge) to the finger
+        const edges = [L.y0, ...L.staves.slice(1).map((q, k) => (L.staves[k][1] + q[0]) / 2), L.y1];
+        let best = 0, bd = 1e9; edges.forEach((y, k) => { const d = Math.abs(y - fy); if (d < bd) { bd = d; best = k; } });
+        if (end === 'top') cut.from = Math.max(0, Math.min(best, cut.to)); else cut.to = Math.min(n - 1, Math.max(best - 1, cut.from));
+        PK.cut = cut; fitCut();
+        savePick(); drawSel(); drawTray();
+      };
+      const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    });
+  }
   for (const [id, end] of [['#pkHandleL', 'a'], ['#pkHandleR', 'b']]) {
     const h = $(id);
     h.addEventListener('pointerdown', (e) => {
@@ -310,7 +367,7 @@ async function linesOut() {
     pick.sel.forEach((i, k) => {
       const L = lines[i];
       const a = k === 0 ? pick.trim.a : 0, b = k === pick.sel.length - 1 ? pick.trim.b : L.cuts.length - 1;
-      const y0 = Math.floor(L.y0 * H), y1 = Math.ceil(L.y1 * H);
+      const [sy0, sy1] = lineSpan(L, pick.cut); const y0 = Math.floor(sy0 * H), y1 = Math.ceil(sy1 * H);
       const pieces = [];
       const pad = 0.004 * W;
       if (a > 0) pieces.push([L.x0 * W, L.cuts[0] * W]);       // keep the clef and key of the line
@@ -348,7 +405,10 @@ function drawSel() {
         if (k === 0 && PK.trim.a > 0) xa = L.cuts[PK.trim.a];
         if (k === PK.sel.length - 1 && PK.trim.b < L.cuts.length - 1) xb = L.cuts[PK.trim.b];
       }
-      const y = L.y0 * H, h = (L.y1 - L.y0) * H, r = Math.min(18, h * 0.18);
+      const [sy0, sy1] = on ? lineSpan(L, PK.cut) : [L.y0, L.y1];
+      const y = sy0 * H, h = (sy1 - sy0) * H, r = Math.min(18, h * 0.18);
+      // the staves left out stay visible but pale
+      if (on && (sy0 > L.y0 || sy1 < L.y1)) { g.fillStyle = 'rgba(255,255,255,0.6)'; if (sy0 > L.y0) g.fillRect(L.x0 * W, L.y0 * H, (L.x1 - L.x0) * W, (sy0 - L.y0) * H); if (sy1 < L.y1) g.fillRect(L.x0 * W, sy1 * H, (L.x1 - L.x0) * W, (L.y1 - sy1) * H); }
       g.setLineDash([]);
       if (on) {
         // the bars left out stay visible but pale
@@ -456,7 +516,7 @@ async function cropOut() {
       if (i >= 0) selectRange(drawing.range.i, drawing.range.j, i, barIdx(PK.lines[i], fx));
       return;
     }
-    if (!drawing.moved) { drawing.moved = true; PK.box = null; PK.sel = []; PK.trim = null; PK.picks.clear(); syncDone(); drawTray(); }
+    if (!drawing.moved) { drawing.moved = true; PK.box = null; PK.sel = []; PK.trim = null; PK.cut = null; PK.picks.clear(); syncDone(); drawTray(); }
     const list = (e.getCoalescedEvents && e.getCoalescedEvents()) || []; for (const ev of (list.length ? list : [e])) PK.pts.push(rel(ev)); drawSel();
   });
   const end = (e) => {
@@ -473,7 +533,7 @@ async function cropOut() {
     PK.box = box; syncDone(); drawSel();
   };
   $('#pkAll').addEventListener('click', () => { if (!PK.lines || !PK.lines.length) return; PK.box = null; selectRange(0, 0, PK.lines.length - 1, PK.lines[PK.lines.length - 1].cuts.length - 2); savePick(); drawTray(); });
-  $('#pkClear').addEventListener('click', () => { PK.picks.clear(); PK.sel = []; PK.trim = null; PK.box = null; syncDone(); drawSel(); drawTray(); });
+  $('#pkClear').addEventListener('click', () => { PK.picks.clear(); PK.sel = []; PK.trim = null; PK.cut = null; PK.box = null; syncDone(); drawSel(); drawTray(); });
   wireTray();
   d.addEventListener('pointerup', end); d.addEventListener('pointercancel', end);
   d.style.touchAction = 'none';
