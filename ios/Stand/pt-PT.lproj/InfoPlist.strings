@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "O Stand ouve o seu instrumento para o afinador, os harmónicos, o bordão que segue a tonalidade, o virar de páginas enquanto toca e as suas gravações. O som é analisado neste dispositivo e não é enviado.";
+"NSCameraUsageDescription" = "O Stand usa a câmara para filmar o seu estudo, digitalizar partituras, deixar o iPhone filmar para o iPad e (só se o ligar) ver quando pisca o olho para virar a página. A deteção da piscadela é feita neste dispositivo; nenhuma imagem do seu rosto é guardada ou enviada.";
+"NSLocalNetworkUsageDescription" = "O Stand liga o seu iPad e o seu iPhone depois de os ligar com um código, para o iPhone filmar para o iPad e mostrar o seu estudo e as suas partituras.";
+"NSPhotoLibraryAddUsageDescription" = "O Stand guarda na sua fototeca os vídeos e as imagens que escolher exportar.";

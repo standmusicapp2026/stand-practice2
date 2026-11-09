@@ -145,6 +145,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private var pending: [[String: Any]] = []
     private let face = FaceTurner()
     private let tapper = StandTapper()
+    private let hold = HoldSensor()
     private let video = NativeVideo()
     private let files = StandFiles()
 
@@ -154,7 +155,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion"] {
             config.userContentController.add(self, name: name)
         }
         let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
@@ -381,6 +382,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.65)
             face.test = body["test"] as? Bool ?? false
             if body["on"] as? Bool == true { face.start() } else { face.stop() }
+        case "standMotion":
+            // how the iPhone is held (for the camera for the iPad), even with the screen locked upright
+            if body["on"] as? Bool == true {
+                hold.onAngle = { [weak self] a in self?.webView.evaluateJavaScript("window.standTilt && window.standTilt(\(a))", completionHandler: nil) }
+                hold.start()
+            } else { hold.stop() }
         case "standTap":
             tapper.sensitivity = body["sensitivity"] as? Double ?? 0.6
             if body["on"] as? Bool == true { tapper.start() } else { tapper.stop() }
@@ -657,6 +664,30 @@ final class IMSLPBrowser: UIViewController, WKNavigationDelegate, WKUIDelegate, 
 // A firm, short knock on the iPad or its music stand turns to the next page. The sound of playing
 // and the steady vibration of bowing are ignored: a tap must be a sharp spike that is quiet
 // both just before it and just after it.
+// MARK: - How the device is held
+// From the accelerometer, so it works with the screen's rotation lock on: 0 upright, 90 turned
+// to the left (top to the left), -90 turned to the right, 180 upside down. Lying flat, or half
+// way between two, keeps the last answer.
+final class HoldSensor {
+    var onAngle: ((Int) -> Void)?
+    private let motion = CMMotionManager()
+    private var angle: Int?
+    func start() {
+        guard motion.isAccelerometerAvailable, !motion.isAccelerometerActive else { if let a = angle { onAngle?(a) }; return }
+        motion.accelerometerUpdateInterval = 1.0 / 8
+        motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+            guard let self = self, let g = data?.acceleration else { return }
+            let x = g.x, y = g.y, z = g.z
+            if abs(z) > 0.85 { return }
+            var next: Int?
+            if abs(x) > abs(y) + 0.3 { next = x < 0 ? 90 : -90 }
+            else if abs(y) > abs(x) + 0.3 { next = y < 0 ? 0 : 180 }
+            if let n = next, n != self.angle { self.angle = n; self.onAngle?(n) }
+        }
+    }
+    func stop() { if motion.isAccelerometerActive { motion.stopAccelerometerUpdates() }; angle = nil }
+}
+
 final class StandTapper: NSObject {
     static var supported: Bool { CMMotionManager().isDeviceMotionAvailable }
     var onEvent: (([String: Any]) -> Void)?

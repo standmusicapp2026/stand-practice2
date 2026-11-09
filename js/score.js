@@ -403,7 +403,7 @@ const tidy = (s) => s.replace(/\s+/g, ' ').replace(/^[\s.,:;-]+|[\s.,:;-]+$/g, '
 const titleCase = (s) => (s === s.toUpperCase() && /[A-Z]{3}/.test(s) ? s.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase())
   .replace(/\b(Bwv|Hwv|Twv|Rv|Kv|Hob|Woo|Sz)\b/g, (w) => w.toUpperCase()).replace(/\b(I{2,3}|Iv|Vi{0,3}|Ix|Xi{0,3}|Xiv|Xv)\b\.?/g, (w) => w.toUpperCase()) : s);
 
-function findComposer(text, composers) {
+export function findComposer(text, composers) {
   const f = ' ' + fold(text) + ' ';
   let best = null, score = 0;
   for (const c of composers) for (const k of c.k) {

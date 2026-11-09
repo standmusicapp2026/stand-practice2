@@ -61,7 +61,7 @@ export function openPair() {
         cancel.textContent = 'Done'; cancel.classList.add('primary'); again.hidden = true;
         setTimeout(() => finish(true), 4000);
       } else if (type === 'lost') {
-        if (title.textContent === 'Linked') return;
+        if ((title.dataset.en || title.textContent) === 'Linked') return;
         intro(); say.textContent = 'The other device went away. Keep both open on this screen, near each other.';
       } else if (type === 'timeout') {
         find.hidden = true; code.hidden = true; input.hidden = true; again.hidden = false;

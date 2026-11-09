@@ -13,7 +13,7 @@ import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_
 import { usableFiles, filesAsPictures } from './addpages.js';
 import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes.js';
 import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
-import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
+import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findComposer, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
@@ -31,7 +31,7 @@ import { placeWords } from './textplace.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks } from './imslp.js';
 import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
-import { findMarks } from './tempo.js';
+import { findMarks, resolveMarks, metroFor } from './tempo.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
 import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch, pairList } from './link.js';
@@ -41,7 +41,23 @@ import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
 import { initNowPlaying } from './nowplaying.js';
 import { startTour } from './tour.js';
-import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange, makeMirror, restoreMirror, mirrorSig } from './backup.js';
+import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange, makeMirror, restoreMirror, mirrorSig, restoreSources, zipBackupSource } from './backup.js';
+import { loadLang, translatePage, tr, LANG, LANGS, chosenLang, setChosenLang } from './i18n.js';
+// (the words of the app in the iPad's language, before anything is shown)
+await loadLang();
+translatePage();
+window.__tr = tr;   // (tests)
+// Settings > Language: the iPad's own (Automatic) or one chosen; the app starts again in it
+{
+  const sel = document.getElementById('appLang');
+  if (sel) {
+    const auto = document.createElement('option'); auto.value = 'auto'; auto.textContent = 'Automatic (the language of this device)'; sel.append(auto);
+    for (const [code, name] of LANGS) { const o = document.createElement('option'); o.value = code; o.textContent = name; o.translate = false; o.setAttribute('translate', 'no'); sel.append(o); }
+    sel.value = chosenLang();
+    if (![...sel.options].some((o) => o.value === sel.value)) sel.value = 'auto';
+    sel.addEventListener('change', () => { setChosenLang(sel.value); location.reload(); });
+  }
+}
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -820,6 +836,22 @@ async function readTopOfPage(doc) {
     text: String(l.s).replace(/\s+/g, ' ').trim(), y: (l.y + l.h) * top, size: l.h * top * 0.85 * ((l.y + l.h) * top > staffAt - 0.6 * l.h * top ? 0.6 : 1), x: l.x * W, right: (l.x + l.w) * W, H, W,
   }));
 }
+// A file's own name as its title, when it is a real name ("Bach - Cello Suite No. 1", "Elgar
+// Concerto") and not one a scanner or camera gave it ("IMG_2041", "Scan 3", "document"). A first
+// part that is a composer ("Bach - …") becomes the composer.
+const JUNK_NAME = /^(img|image|dsc|dscn|pxl|photo|foto|scan|scanned|scansione|escaneo|digitaliza\w*|doc|document|documento|untitled|sem t[ií]tulo|sin t[ií]tulo|sans titre|unbenannt|file|ficheiro|archivo|download|score|page|p[áa]gina|pdf|new|novo|nuevo|copy|c[oó]pia|\d+)[\s_\-.()]*\d*[\s_\-.()]*\d*$/i;
+async function nameMeta(name) {
+  const base = niceTitle(name);
+  if (!base || base === 'Untitled' || base.length < 3 || JUNK_NAME.test(base) || !/\p{L}{2}/u.test(base)) return null;
+  const parts = base.split(/\s+[-–—]\s+/);
+  if (parts.length > 1) {
+    const c = findComposer(parts[0], await loadComposers());
+    if (c && parts[0].split(/\s+/).length <= 5) return { title: parts.slice(1).join(' - ').trim(), composer: c.n };
+  }
+  // ("Elgar Concerto": the composer named in it is the composer, the name stays the title)
+  const c = findComposer(base, await loadComposers());
+  return { title: base, composer: c ? c.n : '' };
+}
 // Add a PDF to the library; title and composer come from IMSLP (when downloaded through Stand)
 // or are read from the first page.
 async function addPdf(data, name, meta, opt = {}) {
@@ -828,8 +860,10 @@ async function addPdf(data, name, meta, opt = {}) {
   const thumb = await makeThumb(doc);
   meta = meta || await imslpMetaFor(name);
   const info = await readScoreInfo(doc, name, await loadComposers(), meta && meta.title ? {} : { ocr: readTopOfPage });
-  const composer = (meta && meta.composer) || info.composer || '';
-  const title = (meta && meta.title) || info.title || titleFromName(name, composer);
+  let composer = (meta && meta.composer) || info.composer || '';
+  let title = (meta && meta.title) || info.title || titleFromName(name, composer);
+  // brought from another app or a folder: the name the person gave the file is the title
+  if (opt.nameTitle && !(meta && meta.title)) { const nm = await nameMeta(name); if (nm) { title = nm.title; composer = nm.composer || composer; } }
   const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
   if (opt.from) { score.importedFrom = opt.from; if (opt.app) score.source = opt.app; }
   doc.destroy();
@@ -843,7 +877,8 @@ async function addImages(blobs, name, opt = {}) {
   // (the title and composer printed at the top of the first page, read as on a PDF; else the name)
   let info = { title: '', composer: '' };
   try { info = await readScoreInfo(doc, name, await loadComposers(), { ocr: readTopOfPage }); } catch (e) { console.warn(e); }
-  const score = { id: uid(), fileId: file.id, title: info.title || niceTitle(name), composer: info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
+  const nm = opt.nameTitle ? await nameMeta(name) : null;
+  const score = { id: uid(), fileId: file.id, title: (nm && nm.title) || info.title || niceTitle(name), composer: (nm && nm.composer) || info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
   if (opt.from) score.importedFrom = opt.from;
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
@@ -929,10 +964,19 @@ $('#importInput').addEventListener('change', async (e) => {
 // Each file is read, added and let go before the next, so thousands of scores never sit in memory
 // together. A score brought in before (same place, same size) is not brought twice.
 const BR = { busy: false };
-const BR_PLAIN = /^(documents?|scores?|pdfs?|files?|library|inbox|backups?|archives?|forscore|mobilesheets|piascore|newzik|sheet ?music|music|noten|partituras?|__macosx)$/i;
+// folder names that are only where an app keeps things, not a folder of the library
+const BR_PLAIN = /^(documents?|inbox|backups?|archives?|forscore|mobilesheets|piascore|newzik|__macosx|pdfs?|files?)$/i;
+// ("Scores" is Stand's own top folder, and a usual name for the top of a library: only at the top)
+const BR_TOP = /^(scores?|library|my scores|sheet ?music|music|partituras?|noten)$/i;
 function brFolderName(rel) {
   const parts = String(rel).split('/').filter(Boolean); parts.pop();
-  for (let i = parts.length - 1; i >= 0; i--) if (!BR_PLAIN.test(parts[i]) && !parts[i].startsWith('.')) return parts[i].slice(0, 40);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (BR_PLAIN.test(p) || p.startsWith('.')) continue;
+    if (i === 0 && BR_TOP.test(p) && parts.length > 1) continue;
+    if (i === 0 && BR_TOP.test(p) && /^scores?$/i.test(p)) continue;
+    return p.slice(0, 60);
+  }
   return '';
 }
 function brFolderId(name) {
@@ -941,27 +985,55 @@ function brFolderId(name) {
   if (!f) { f = { id: uid(), name, created: Date.now() }; FOLD.list.push(f); saveFolders(); }
   return f.id;
 }
+// pictures named as pages ("01.jpg", "Page 2.png", "p3.jpg") in one folder are the pages of one score
+const PAGE_NAME = /^(?:(?:page|p[áa]gina|seite|pagina|p\.?|pg\.?)[\s_-]*)?\d{1,3}$/i;
+const isPdfRel = (r) => /\.pdf$/i.test(r), isImgRel = (r) => /\.(jpe?g|png|heic|heif|tiff?)$/i.test(r);
 // items: [{ rel, size, read: () => Promise<Blob> }]
-async function bringItems(items, app) {
+async function bringItems(items, app, opts = {}) {
   if (BR.busy) { toast('Still bringing the last ones in…', 2500); return; }
   BR.busy = true; hidePanel(); setHomeTab('mine');
   const have = new Set((await db.all('scores')).map((x) => x.importedFrom).filter(Boolean));
-  const isPdf = (r) => /\.pdf$/i.test(r), isImg = (r) => /\.(jpe?g|png|heic|heif|tiff?)$/i.test(r);
-  const todo = items.filter((it) => (isPdf(it.rel) || isImg(it.rel)) && !/(^|\/)(__MACOSX|\.)/.test(it.rel));
+  let todo = items.filter((it) => (isPdfRel(it.rel) || isImgRel(it.rel)) && !/(^|\/)(__MACOSX|\.)/.test(it.rel));
+  // the pages of one score, kept together, in order
+  const groups = new Map();
+  for (const it of todo) {
+    if (!isImgRel(it.rel)) continue;
+    const base = it.rel.split('/').pop().replace(/\.[^.]+$/, '');
+    const dir = it.rel.slice(0, it.rel.lastIndexOf('/') + 1);
+    if (!PAGE_NAME.test(base.trim()) || !dir) continue;
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(it);
+  }
+  for (const [dir, list] of groups) {
+    if (list.length < 2 && !/^0*1$/.test(list[0].rel.split('/').pop().replace(/\D/g, ''))) { groups.delete(dir); continue; }
+    list.sort((x, y) => +(x.rel.split('/').pop().match(/\d+/) || [0])[0] - +(y.rel.split('/').pop().match(/\d+/) || [0])[0]);
+  }
+  const inGroup = new Set([...groups.values()].flat());
+  todo = [...todo.filter((it) => !inGroup.has(it)), ...[...groups.entries()].map(([dir, list]) => ({ rel: dir.replace(/\/$/, ''), size: list.reduce((n, x) => n + (x.size || 0), 0), pages: list }))];
+  todo.sort((x, y) => x.rel.localeCompare(y.rel, undefined, { numeric: true }));
+  // a copy of a score already here (Stand's own copies of its scores next to its backup)
+  const skip = opts.skip || (() => false);
   let added = 0, same = 0, failed = [], full = false, done = 0;
   const prevFolder = FOLD.current;
   try {
     for (const it of todo) {
       done++;
       const sig = (app || '') + ':' + it.rel + ':' + (it.size || 0);
-      if (have.has(sig)) { same++; continue; }
+      if (have.has(sig) || skip(it)) { same++; continue; }
       const name = it.rel.split('/').pop();
       toast(`Bringing in ${done} of ${todo.length}: ${niceTitle(name)}…`, 120000);
       try {
-        const blob = await it.read();
-        const folder = brFolderId(brFolderName(it.rel));
-        if (isPdf(it.rel)) await addPdf(await blob.arrayBuffer(), name, null, { folder, from: sig, app });
-        else await addImages([blob.type ? blob : new Blob([blob], { type: 'image/jpeg' })], name, { folder, from: sig });
+        if (it.pages) {
+          const blobs = [];
+          for (const pg of it.pages) { const b = await pg.read(); blobs.push(b.type ? b : new Blob([b], { type: /png$/i.test(pg.rel) ? 'image/png' : 'image/jpeg' })); }
+          // (the score's name is its folder's; the folder it is in, the one above)
+          await addImages(blobs, name, { folder: brFolderId(brFolderName(it.rel)), from: sig, nameTitle: true });
+        } else {
+          const blob = await it.read();
+          const folder = brFolderId(brFolderName(it.rel));
+          if (isPdfRel(it.rel)) await addPdf(await blob.arrayBuffer(), name, null, { folder, from: sig, app, nameTitle: true });
+          else await addImages([blob.type ? blob : new Blob([blob], { type: 'image/jpeg' })], name, { folder, from: sig, nameTitle: true });
+        }
         added++; have.add(sig);
         if (added % 5 === 1) await refreshLibrary();
       } catch (e) {
@@ -977,10 +1049,64 @@ async function bringItems(items, app) {
   if (full) parts.push('the iPad is full: free some space and choose it again to bring the rest');
   else if (failed.length) parts.push(`${failed.length} could not be opened (${failed.slice(0, 2).join(', ')}${failed.length > 2 ? '…' : ''})`);
   if (!todo.length) parts.splice(0, parts.length, 'There are no PDFs or pictures of scores in there.');
-  toast(parts.join(' · ') + '.', 7000);
+  if (!opts.quiet) toast(parts.join(' · ') + '.', 7000);
+  return { added, same, failed: failed.length, full, none: !todo.length };
 }
-// a .zip or forScore archive: its PDFs (and any .zip inside it, one level down)
-async function bringArchive(file) {
+// ---- Stand's own backups, wherever they turn up ----
+// The Stand folder of another Stand (Files › Stand, or a copy of it), a backup .zip, or a backup
+// that Files unzipped into a folder: brought back whole — folders, titles, markings, notebooks,
+// recordings and videos — and never as loose PDFs and pictures (a video's cover picture is not a score).
+// rels: the paths in what was chosen; get(rel) gives that file as a Blob.
+function standBackupsIn(rels) {
+  const mirrors = [], sets = [];
+  for (const rel of rels) {
+    if (/(^|\/)__MACOSX\//.test(rel)) continue;
+    if (/(^|\/)Stand library\.json$/.test(rel)) mirrors.push(rel.slice(0, rel.length - 'Stand library.json'.length));
+    else if (/(^|\/)Stand data\/backup\.json$/.test(rel)) sets.push(rel.slice(0, rel.length - 'Stand data/backup.json'.length));
+  }
+  // what Stand keeps around its backup: the whole Stand folder (its Scores are copies)
+  const roots = [...mirrors.map((m) => m.replace(/(^|\/)Backup\/$/, '$1')), ...sets];
+  return { mirrors, sets, roots, any: mirrors.length + sets.length > 0 };
+}
+const underAny = (rel, roots) => roots.some((r) => rel.startsWith(r));
+// a key for "the same score": its name, without what file names cannot hold
+const scoreKey = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\(\d+\)\s*$/, '').replace(/[^a-z0-9]+/g, '');
+async function restoreStandBackups(found, get, zipSrcs = [], oldFiles = []) {
+  const out = { scores: 0, takes: 0, lost: 0, missing: [] };
+  window.__restoring = true;
+  // (backups made by older Stands: one .standbackup file, or several)
+  if (oldFiles.length) { try { const r = await restoreFiles(oldFiles); out.scores += r.scores; out.takes += r.takes; out.missing.push(...r.missing.filter((m) => m.lack.length)); } catch (e) { console.warn('restore', e); } }
+  for (const m of found.mirrors) {
+    try { const r = await restoreMirror((p) => get(m + p)); out.scores += r.scores; out.takes += r.takes; out.lost += r.lost || 0; } catch (e) { console.warn('restore mirror', e); }
+  }
+  const srcs = [...found.sets.map((t) => ({ get: (p) => get(t + p) })), ...zipSrcs];
+  if (srcs.length) { const r = await restoreSources(srcs); out.scores += r.scores; out.takes += r.takes; out.missing.push(...r.missing.filter((m) => m.lack.length)); }
+  return out;
+}
+// after a backup came back: what else was chosen comes in too (not the copies of the same scores),
+// then Stand starts again with everything in place
+async function afterStandRestore(r, rest, app) {
+  await loadFolders();
+  const all = await db.all('scores');
+  const known = new Set(all.flatMap((x) => [scoreKey((x.composer ? x.composer + ' - ' : '') + x.title), scoreKey(x.title)]));
+  let b = null;
+  if (rest.length) b = await bringItems(rest, app, { quiet: true, skip: (it) => known.has(scoreKey(it.rel.split('/').pop().replace(/\.(pdf|jpe?g|png|heic|heif|tiff?)$/i, ''))) });
+  // (each piece in the app's language, then put together)
+  const T = (x) => (globalThis.__tr ? globalThis.__tr(x) : x);
+  const parts = [T(`Scores brought back from the Stand backup: ${r.scores}`)];
+  if (r.takes) parts.push(T(`Recordings: ${r.takes}`));
+  if (b && b.added) parts.push(T(`More scores brought in: ${b.added}`));
+  if (r.lost) parts.push(T(`Files missing from the backup: ${r.lost}`));
+  let msg = parts.join(' · ') + '. ';
+  if (r.missing.length) msg += T(`Parts of the backup not chosen: ${r.missing.map((m) => `${m.lack.join(', ')} / ${m.count}`).join('; ')}. Choose all its files to bring the rest.`) + ' ';
+  msg += T('Starting again…');
+  await setSetting('backupAt', Date.now());
+  toast(msg, r.missing.length ? 9000 : 3500);
+  setTimeout(() => location.reload(), r.missing.length ? 9000 : 3000);
+}
+// a .zip or forScore archive: its PDFs (and any .zip inside it, one level down); a Stand backup
+// in it is brought back whole
+async function bringArchive(file, opt = {}) {
   try {
     if (!(await isZip(file))) {
       toast('Stand cannot open this kind of archive. Choose the folder of scores instead (in Files), or the PDFs themselves.', 7000);
@@ -988,8 +1114,19 @@ async function bringArchive(file) {
     }
     toast('Opening ' + file.name + '…', 120000);
     const app = /\.4sb$/i.test(file.name) ? 'forScore' : '';
+    const entries = await zipEntries(file);
+    const found = standBackupsIn(entries.map((e) => e.name));
+    if (found.any && !opt.noRestore) {
+      const by = new Map(entries.map((e) => [e.name, e]));
+      const get = async (p) => { const e = by.get(p); return e ? zipRead(file, e) : null; };
+      toast('Bringing back the Stand backup in ' + file.name + '…', 600000);
+      const r = await restoreStandBackups(found, get);
+      const rest = entries.filter((e) => !underAny(e.name, found.roots)).map((e) => ({ rel: e.name, size: e.size, read: () => zipRead(file, e) }));
+      await afterStandRestore(r, rest, app);
+      return 'restored';
+    }
     const items = [];
-    for (const e of await zipEntries(file)) {
+    for (const e of entries) {
       if (/\.zip$/i.test(e.name) && e.size < 2e9) {
         const inner = await zipRead(file, e);
         for (const e2 of await zipEntries(inner).catch(() => [])) items.push({ rel: e.name.replace(/\.zip$/i, '') + '/' + e2.name, size: e2.size, read: () => zipRead(inner, e2) });
@@ -1003,23 +1140,36 @@ window.standFolder = async (msg) => {
   if (!msg || msg.cancelled) return;
   const files = msg.files || [];
   const enc = (rel) => rel.split('/').map(encodeURIComponent).join('/');
-  const items = [];
-  for (const f of files) {
-    if (/\.(zip|4sb)$/i.test(f.rel)) {
-      // (an archive inside the folder: opened in turn)
-      items.push({ rel: f.rel, size: f.size, archive: true });
-      continue;
-    }
-    items.push({ rel: f.rel, size: f.size, read: async () => { const r = await fetch('/__picked/' + enc(f.rel)); if (!r.ok) throw new Error('missing'); return r.blob(); } });
-  }
-  const plain = items.filter((x) => !x.archive);
+  const get = async (rel) => { const r = await fetch('/__picked/' + enc(rel)).catch(() => null); return r && r.ok ? r.blob() : null; };
   if (msg.notHere) toast(`${msg.notHere} file${msg.notHere === 1 ? ' is' : 's are'} only in iCloud: they are downloading now; choose the folder again in a minute to bring ${msg.notHere === 1 ? 'it' : 'them'} too.`, 6000);
-  if (plain.length) await bringItems(plain, msg.name || '');
-  for (const a of items.filter((x) => x.archive)) {
-    const r = await fetch('/__picked/' + enc(a.rel)).catch(() => null);
-    if (r && r.ok) await bringArchive(new File([await r.blob()], a.rel.split('/').pop()));
+  // Stand's own backups in it (its Stand folder, a backup unzipped, backup .zip files)
+  const found = standBackupsIn(files.map((f) => f.rel));
+  const zipSrcs = [], otherZips = [];
+  for (const f of files) {
+    if (!/\.(zip|4sb)$/i.test(f.rel) || underAny(f.rel, found.roots)) continue;
+    // (a Stand backup .zip is read where it is, a piece at a time)
+    if (/\.zip$/i.test(f.rel)) {
+      const b = await get(f.rel);
+      const src = b ? await zipBackupSource(b).catch(() => null) : null;
+      if (src) { zipSrcs.push(src); continue; }
+      if (b) { otherZips.push(new File([b], f.rel.split('/').pop())); continue; }
+    }
+    otherZips.push(f.rel);
   }
-  if (!items.length) toast('There are no PDFs or pictures of scores in that folder.', 5000);
+  const oldFiles = [];
+  for (const f of files) if (/\.standbackup$/i.test(f.rel) && !underAny(f.rel, found.roots)) { const b = await get(f.rel); if (b) oldFiles.push(new File([b], f.rel.split('/').pop())); }
+  const loose = files.filter((f) => !/\.(zip|4sb|standbackup)$/i.test(f.rel)).map((f) => ({ rel: f.rel, size: f.size, read: async () => { const b = await get(f.rel); if (!b) throw new Error('missing'); return b; } }));
+  if (found.any || zipSrcs.length || oldFiles.length) {
+    toast('Bringing back the Stand backup…', 600000);
+    const r = await restoreStandBackups(found, get, zipSrcs, oldFiles);
+    for (const z of otherZips) { const fz = typeof z === 'string' ? await get(z).then((b) => b && new File([b], z.split('/').pop())) : z; if (fz) await bringArchive(fz, { noRestore: true }); }
+    await afterStandRestore(r, loose.filter((it) => !underAny(it.rel, found.roots) || /(^|\/)Scores\//.test(it.rel.slice(found.roots.find((x) => it.rel.startsWith(x)).length))), msg.name || '');
+    return;
+  }
+  const plain = loose.filter((it) => isPdfRel(it.rel) || isImgRel(it.rel));
+  if (plain.length) await bringItems(plain, msg.name || '');
+  for (const z of otherZips) { const fz = typeof z === 'string' ? await get(z).then((b) => b && new File([b], z.split('/').pop())) : z; if (fz) await bringArchive(fz); }
+  if (!plain.length && !otherZips.length) toast('There are no PDFs or pictures of scores in that folder.', 5000);
 };
 $('#brFolder')?.addEventListener('click', () => {
   const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standPickFolder;
@@ -1027,7 +1177,13 @@ $('#brFolder')?.addEventListener('click', () => {
   else { toast('Choosing a whole folder needs the Stand app. Choose the PDFs instead (in Files, tap Select, then Select All).', 6000); $('#importInput').click(); }
 });
 $('#brArchive')?.addEventListener('click', () => $('#brArchiveInput').click());
-$('#brArchiveInput')?.addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { hidePanel(); await bringArchive(f); } });
+$('#brArchiveInput')?.addEventListener('change', async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  hidePanel();
+  // (a backup made by an older Stand: one .standbackup file)
+  if (/\.standbackup$/i.test(f.name)) { toast('Bringing back the Stand backup…', 600000); const r = await restoreStandBackups({ mirrors: [], sets: [] }, async () => null, [], [f]); await afterStandRestore(r, [], ''); return; }
+  await bringArchive(f);
+});
 $('#brFiles')?.addEventListener('click', () => { hidePanel(); $('#importInput').click(); });
 $('#bringBtn')?.addEventListener('click', () => showPanel('bring'));
 $('#bkBring')?.addEventListener('click', () => showPanel('bring'));
@@ -1815,7 +1971,7 @@ async function pageWords(i) {
     got = await new Promise((res) => {
       const timer = setTimeout(() => { OCRWAIT.delete(id); res([]); }, 12000);
       OCRWAIT.set(id, (lines) => { clearTimeout(timer); res(lines); });
-      rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words: ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft'], lines: true });
+      rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words: ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Vivo', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft', 'Più mosso', 'Meno mosso', 'Tempo I', 'Tempo primo', 'a tempo', 'Animato', 'Doppio movimento', 'Sarabande', 'Allemande', 'Courante', 'Menuet', 'Gigue'], lines: true });
     });
   }
   c.width = c.height = 0;
@@ -1826,7 +1982,7 @@ async function tempoKnown(i) {
   const doc = V.doc, sc = V.score; if (!doc || !sc) return null;
   const box = doc.piece ? doc.piece(i) : null;
   const key = (doc.orig ? doc.orig(i) : i) + (box ? '@' + box.y.toFixed(3) : '') + (doc.composite && doc.composite(i) ? '+' : '');
-  const fk = 'tempo2:' + (sc.fileId || sc.id);
+  const fk = 'tempo3:' + (sc.fileId || sc.id);
   let kept = TEMPO.mem.get(fk);
   if (!kept) { kept = (await getSetting(fk, null)) || {}; TEMPO.mem.set(fk, kept); }
   return kept[key] || null;
@@ -1835,7 +1991,7 @@ async function tempoMarksOf(i) {
   const doc = V.doc, sc = V.score; if (!doc || !sc) return [];
   const box = doc.piece ? doc.piece(i) : null;
   const key = (doc.orig ? doc.orig(i) : i) + (box ? '@' + box.y.toFixed(3) : '') + (doc.composite && doc.composite(i) ? '+' : '');
-  const fk = 'tempo2:' + (sc.fileId || sc.id);
+  const fk = 'tempo3:' + (sc.fileId || sc.id);
   let kept = TEMPO.mem.get(fk);
   if (!kept) { kept = (await getSetting(fk, null)) || {}; TEMPO.mem.set(fk, kept); }
   if (kept[key]) return kept[key];
@@ -1875,22 +2031,46 @@ async function showTempoMarks(token, entries) {
       const pad = 0.006;
       b.style.left = ((m.x - pad) * 100) + '%'; b.style.top = ((m.y - pad * 0.7) * 100) + '%';
       b.style.width = ((m.w + pad * 2) * 100) + '%'; b.style.height = ((m.h + pad * 1.4) * 100) + '%';
-      const what = m.word ? `${m.word}, ${m.bpm}` : `${m.bpm}`;
-      b.setAttribute('aria-label', `Metronome at ${what} beats a minute`);
+      if (m.rel) { b.classList.add('rel'); b.setAttribute('aria-label', `Metronome: ${m.word}`); }
+      else b.setAttribute('aria-label', `Metronome at ${m.word ? `${m.word}, ${m.bpm}` : `${m.bpm}`} beats a minute`);
       const gk = e.index + ':' + m.x + ':' + m.y;
       if (TEMPO.glow === sc.id && !TEMPO.glowed.has(gk)) { TEMPO.glowed.add(gk); b.classList.add('glow'); setTimeout(() => b.classList.remove('glow'), 3600); }
-      b.addEventListener('click', (ev) => { ev.stopPropagation(); tempoTapped(m); });
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); tempoTapped(m, e.index); });
       e.inner.append(b);
     }
   }
 }
-function tempoTapped(m) {
-  setBpm(m.bpm);
+// The tempo a change makes ("Più mosso", "a tempo", "Tempo I"): from the marks before it, in this
+// page and the pages before (as far back as 40 pages), in reading order.
+async function tempoOfChange(m, page) {
+  const seq = [];
+  for (let j = Math.max(0, page - 40); j <= page; j++) {
+    let ms = j === page ? await tempoMarksOf(j).catch(() => []) : (await tempoKnown(j)) || (V.doc && V.doc.pdf ? await tempoMarksOf(j).catch(() => []) : []);
+    ms = [...(ms || [])].sort((x, y) => x.y - y.y || x.x - y.x);
+    for (const x of ms) { if (j === page && x === m) { seq.push(x); return resolveMarks(seq, metro.bpm).pop(); } seq.push(x); }
+  }
+  seq.push(m); return resolveMarks(seq, metro.bpm).pop();
+}
+async function tempoTapped(m, page) {
+  let bpm = m.bpm;
+  if (m.rel) bpm = await tempoOfChange(m, page ?? V.page);
+  if (!bpm) bpm = metro.bpm;
+  // the note the mark counts and the metronome's beat: the same speed of music
+  const f = metroFor(bpm, m.unit, $('#meterSel').value);
+  if (f.meter) { const mi = meterInfo(f.meter); $('#meterSel').value = mi.value; if ($('#meterSel').value) { metro.beats = mi.beats; metro.accents = mi.accents.slice(); try { renderBeatDots(); } catch {} } }
+  if (f.sub) { metro.subdiv = f.sub; $('#subSel').value = String(f.sub); }
+  setBpm(f.bpm);
   showPanel('metronome');
   if (!metro.running) startMetro();
-  toast((m.word ? m.word + ' — ' : '') + `♩ = ${m.bpm}` + (m.exact ? '' : ' (about: no number printed)'), 2400);
+  const T = (x) => (globalThis.__tr ? globalThis.__tr(x) : x);
+  const note = m.unit === 1.5 ? '♩.' : m.unit === 2 ? '𝅗𝅥' : m.unit === 3 ? '𝅗𝅥.' : m.unit === 0.5 ? '♪' : '♩';
+  let msg = (m.word ? m.word + ' — ' : '') + `${note} = ${Math.round(bpm)}`;
+  if (m.rel) msg += ' ' + T(m.rel === 'same' || m.rel === 'first' ? '(the tempo from before)' : '(from the tempo before)');
+  else if (!m.exact) msg += ' ' + T('(about: no number printed)');
+  if (f.meter || f.bpm !== Math.round(bpm)) msg += ' · ' + T(`metronome ${f.bpm} in ${$('#meterSel').value.split(':')[0]}`);
+  toast(msg, 2800);
 }
-window.__tempo = { marksOf: tempoMarksOf, TEMPO };   // (tests)
+window.__tempo = { marksOf: tempoMarksOf, TEMPO, tapped: tempoTapped };   // (tests)
 // The next pages (and the ones before) are drawn ahead, after the pages on screen.
 function prefetch(token) {
   if (token !== layoutToken || !V.doc) return;
@@ -6671,7 +6851,7 @@ function persistMetro() {
 }
 function applyMetroSettings(m) {
   if (!m) return;
-  if (m.meter) { $('#meterSel').value = m.meter; metro.beats = meterInfo(m.meter).beats; }
+  if (m.meter) { const mi = meterInfo(m.meter); $('#meterSel').value = mi.value; if (!$('#meterSel').value) $('#meterSel').value = '4/4'; metro.beats = meterInfo($('#meterSel').value).beats; }
   metro.accents = m.accents && m.accents.length === metro.beats ? m.accents.slice() : meterInfo($('#meterSel').value).accents;
   if (m.subdiv) metro.subdiv = m.subdiv;
   if (m.sound) metro.sound = m.sound;
@@ -7697,6 +7877,9 @@ recorder.onGap = (gap) => toast(gap < 0 ? 'The microphone was lost and could not
 const vrec = new VideoRecorder();
 const VW = { t: 0 };
 let recState = null;
+// the time shown while recording: from the clock on the wall, so it runs even when iOS holds the
+// sound back (a camera or a call taking the audio)
+const recClock = (ctx) => { const st = recState; if (st.wall0 == null) st.wall0 = performance.now() + (st.startAt - ctx.currentTime) * 1000; return (performance.now() - st.wall0) / 1000; };
 $('#countIn').addEventListener('change', (e) => { S.countIn = e.target.checked; saveSettings(); });
 $('#clickWhileRec').addEventListener('change', (e) => { S.clickWhileRec = e.target.checked; saveSettings(); });
 $$('#camSeg button').forEach((b) => b.addEventListener('click', () => { S.cam = b.dataset.cam; saveSettings(); $$('#camSeg button').forEach((x) => x.classList.toggle('on', x === b)); syncLink(); }));
@@ -7763,9 +7946,11 @@ $('#linkRetry').addEventListener('click', () => host.start({ code: host.mode !==
 $('#linkOff').addEventListener('click', () => { host.stop(); hideRemotePreview(); drawLink(); });
 function syncRemoteShape() {
   const cam = $('#cam'); if (!cam.classList.contains('remote')) return;
-  const v = $('#camVideo');
-  const portrait = v.videoWidth ? v.videoHeight > v.videoWidth : (host.info || {}).shape === 'portrait';
+  const v = $('#camVideo'), sh = (host.info || {}).shape;
+  // (the iPhone says how it is held; the size of the picture is the fallback)
+  const portrait = sh === 'portrait' || sh === 'landscape' ? sh === 'portrait' : v.videoWidth ? v.videoHeight > v.videoWidth : true;
   cam.classList.toggle('portrait', portrait);
+  cam.classList.toggle('mirror', (host.info || {}).facing === 'user');
 }
 $('#camVideo').addEventListener('resize', syncRemoteShape);
 function showRemotePreview() {
@@ -7796,9 +7981,9 @@ async function startIphoneVideo() {
   let lastTxt = '';
   const loop = () => {
     if (!recState) return;
-    const t = ctx.currentTime - recState.startAt;
+    const t = recClock(ctx);
     const txt = t < 0 ? '–' + Math.ceil(-t) : fmtTime(t);
-    if (txt !== lastTxt) { lastTxt = txt; $('#recTime').textContent = txt; $('#camTime').textContent = txt; }
+    if (txt !== lastTxt) { lastTxt = txt; $('#recTime').textContent = txt; $('#camTime').textContent = txt; $('#cam').classList.add('rec'); }
     mg.clearRect(0, 0, meter.width, meter.height);
     recState.raf = requestAnimationFrame(loop);
   };
@@ -7925,7 +8110,7 @@ async function startNativeVideo() {
   const loop = () => {
     if (!recState) return;
     recState.readLevel();
-    const t = ctx.currentTime - recState.startAt;
+    const t = recClock(ctx);
     const txt = t < 0 ? '–' + Math.ceil(-t) : fmtTime(t);
     if (txt !== lastTxt) { lastTxt = txt; $('#recTime').textContent = txt; }
     const W = meter.width, Hm = meter.height;
@@ -8028,9 +8213,9 @@ async function startRecording(kind) {
   const loop = () => {
     if (!recState) return;
     if (recState.readLevel) recState.readLevel();
-    const t = ctx.currentTime - recState.startAt;
+    const t = recClock(ctx);
     const txt = t < 0 ? '–' + Math.ceil(-t) : fmtTime(t);
-    if (txt !== lastTxt) { lastTxt = txt; $('#recTime').textContent = txt; $('#camTime').textContent = txt; }
+    if (txt !== lastTxt) { lastTxt = txt; $('#recTime').textContent = txt; $('#camTime').textContent = txt; $('#cam').classList.add('rec'); }
     const W = meter.width, Hm = meter.height;
     mg.clearRect(0, 0, W, Hm); mg.fillStyle = MC.s; mg.fillRect(0, 0, W, Hm);
     const dbv = 20 * Math.log10(level + 1e-6); const x = clamp((dbv + 60) / 60, 0, 1) * W;
@@ -8048,6 +8233,7 @@ async function stopRecording() {
   if (st.cancelCount) st.cancelCount();
   if (st.metroByUs && metro.running) stopMetro();
   $('#recPill').hidden = true; $('#recBtn').classList.remove('live'); $('#recBtnLabel').textContent = 'Record';
+  $('#cam').classList.remove('rec'); $('#camTime').textContent = '0:00';
   const existing = st.scoreId ? await db.byIndex('takes', 'score', st.scoreId) : await db.all('takes');
   const name = (st.kind === 'video' ? 'Video ' : 'Take ') + (existing.length + 1);
   let take;
@@ -9304,7 +9490,7 @@ function sendFace() {
   if (!winkSupported()) return;
   // (while the eyes are followed, the camera is in use here, and winks are seen from it)
   let jsCam = false; try { jsCam = !!(eyes.running || EC.on); } catch {}
-  const active = !jsCam && ((S.wink && (!$('#score').hidden || !!(window.__phonePlay && window.__phonePlay.active) || !!(window.__phoneViewer && window.__phoneViewer.active())) && !(recState && recState.kind === 'video')) || wink.testing);
+  const active = !jsCam && !window.__phoneCamOn && ((S.wink && (!$('#score').hidden || !!(window.__phonePlay && window.__phonePlay.active) || !!(window.__phoneViewer && window.__phoneViewer.active())) && !(recState && recState.kind === 'video')) || wink.testing);
   // (the eye levels always come: a wink is checked against them, the other eye clearly open)
   NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing || !!(S.winkGate ?? 1) });
   wink.on = !!active;
@@ -9765,6 +9951,7 @@ function pcDraw(st, f) {
   $('#pcHint').textContent = phone.recording ? (phone.shape === 'portrait' ? 'Recording upright' : 'Recording sideways')
     : (phone.shape === 'portrait' ? 'Vertical. Turn the iPhone sideways for a horizontal video.' : 'Horizontal. Hold it upright for a vertical video.');
   for (const [id, key] of [['#pcBright', 'bright'], ['#pcWarm', 'warm'], ['#pcZoom', 'zoom']]) if (document.activeElement !== $(id)) $(id).value = phone.s[key];
+  pcOrient();
 }
 // the iPad's practice comes along with the camera link
 setInterval(async () => { if (!PHONE && host.state === 'linked' && S.shareIphone !== false) { try { host.sendPractice(await practiceForPhone()); } catch {} } }, 3 * 60000);
@@ -9786,10 +9973,44 @@ phone.onUnsent = async (blob, mirror) => {
 };
 $('#pcResend').addEventListener('click', async () => { $('#pcResend').hidden = true; const ok = await phone.resend(); if (!ok && phone.unsent) $('#pcResend').hidden = false; });
 phone.onLocal = (stream) => { const v = $('#pcVideo'); if (v.srcObject !== stream) { v.srcObject = stream; v.play().catch(() => {}); } };
+// how the iPhone is held, from its motion sensor (the app): the picture turns with it, even with
+// the iPhone's screen locked upright
+window.standTilt = (a) => phone.setTilt(a);
+const phoneMotion = (on) => { try { if (NATIVE && NATIVE.standMotion) NATIVE.standMotion.postMessage({ on }); } catch {} };
+// the picture on this iPhone's screen, turned back so it looks as the iPhone is held
+function pcOrient() {
+  const v = $('#pcVideo'), r = phone.rot || 0, side = r === 90 || r === -90;
+  if (!r) { v.style.cssText = ''; return; }
+  const W = innerWidth, H = innerHeight, w = side ? H : W, h = side ? W : H;
+  v.style.cssText = `inset:auto;left:${(W - w) / 2}px;top:${(H - h) / 2}px;width:${w}px;height:${h}px;transform:${phone.facing === 'user' ? 'scaleX(-1) ' : ''}rotate(${-r}deg)`;
+}
+addEventListener('resize', () => { if (!$('#phonecam').hidden) pcOrient(); });
+// The camera can still be held for a moment by Stand itself (winks seen with the front camera)
+// or just let go by another app: it is asked for again a few times before saying anything.
+async function openPhoneCamera() {
+  let err = null;
+  for (let i = 0; i < 4; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 500 + 400 * i));
+    if ($('#phonecam').hidden) return false;
+    try { await phone.openCamera(); return true; } catch (e) { err = e; if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) break; }
+  }
+  const n = err && err.name;
+  toast(n === 'NotAllowedError' || n === 'SecurityError' ? 'Camera access is off. Turn it on in Settings › Stand › Camera.'
+    : n === 'NotFoundError' || n === 'OverconstrainedError' ? 'This camera could not be found. Try the other camera.'
+      : 'The camera is busy. If FaceTime or another camera app is open, close it, then tap Camera for iPad again.', 6000);
+  return false;
+}
+phone.onCamLost = () => {
+  if ($('#phonecam').hidden || phone.recording) return;
+  setTimeout(async () => { if (!$('#phonecam').hidden && !phone.recording && (!phone.cam || phone.cam.getVideoTracks().every((t) => t.readyState === 'ended'))) { if (await openPhoneCamera()) { phone._route(); phone.sendState(); } } }, 700);
+};
 $('#phoneCamTile').addEventListener('click', async () => {
   if (!await needLink()) return;
   $('#phonecam').hidden = false; $('#pcCodeBox').hidden = true; $('#pcUseCode').hidden = PAIR(); pcDraw('connecting');
-  try { await phone.openCamera(); } catch (e) { toast('Camera access is off. Turn it on in Settings › Stand.', 5000); return; }
+  // (winks are not looked for meanwhile: the front camera is needed here)
+  window.__phoneCamOn = true; try { sendFace(); } catch {}
+  phoneMotion(true);
+  if (!await openPhoneCamera()) { window.__phoneCamOn = false; phoneMotion(false); try { sendFace(); } catch {} phone.leave(); $('#phonecam').hidden = true; return; }
   phone.find();
   setTimeout(() => { if (!$('#phonecam').hidden) sectionTour('phonecam', { force: true }); }, 800);
 });
@@ -9801,7 +10022,7 @@ $('#pcConnect').addEventListener('click', async () => {
   phone.find(code);
 });
 $('#pcCode').addEventListener('input', (e) => { if (e.target.value.replace(/\D/g, '').length === 6) $('#pcConnect').click(); });
-$('#pcClose').addEventListener('click', () => { phone.leave(); $('#phonecam').hidden = true; $('#pcVideo').srcObject = null; });
+$('#pcClose').addEventListener('click', () => { phone.leave(); $('#phonecam').hidden = true; $('#pcVideo').srcObject = null; $('#pcVideo').style.cssText = ''; window.__phoneCamOn = false; phoneMotion(false); try { sendFace(); } catch {} });
 $('#pcFlip').addEventListener('click', () => phone.apply({ facing: phone.facing === 'user' ? 'environment' : 'user' }));
 $('#pcRec').addEventListener('click', () => { if (phone.recording) phone.stopAndSend(); else phone.record(); });
 $('#pcAdjBtn').addEventListener('click', () => { const h = !$('#pcAdjust').hidden; $('#pcAdjust').hidden = h; $('#pcAdjBtn').classList.toggle('on', !h); });

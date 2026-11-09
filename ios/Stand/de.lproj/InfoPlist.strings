@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand hört dein Instrument für das Stimmgerät, die Flageoletts, den Bordun, der der Tonart folgt, das Umblättern beim Spielen und deine Aufnahmen. Der Klang wird auf diesem Gerät analysiert und nicht hochgeladen.";
+"NSCameraUsageDescription" = "Stand nutzt die Kamera, um dein Üben zu filmen, Noten zu scannen, das iPhone für das iPad filmen zu lassen und (nur wenn du es einschaltest) zu sehen, wann du zum Umblättern zwinkerst. Das Zwinkern wird auf diesem Gerät erkannt; kein Bild deines Gesichts wird gespeichert oder gesendet.";
+"NSLocalNetworkUsageDescription" = "Stand verbindet dein iPad und dein iPhone, sobald du sie mit einem Code verknüpft hast, damit das iPhone für das iPad filmt und dein Üben und deine Noten zeigt.";
+"NSPhotoLibraryAddUsageDescription" = "Stand sichert die Videos und Bilder, die du exportieren möchtest, in deiner Fotomediathek.";

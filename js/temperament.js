@@ -1,5 +1,7 @@
 // Tuning systems, note names and instruments shared by the tuner, drone and scale player.
-export const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+import { noteNames } from './i18n.js';
+// (the names as musicians of the app's language say them: C D E…, Dó Ré Mi…, or C… H)
+export const NOTE_NAMES = noteNames();
 
 // Frequency ratios above the key note for each of the 12 semitones.
 export const SYSTEMS = {

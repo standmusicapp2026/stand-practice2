@@ -89,6 +89,10 @@ svg { width: 22px; height: 22px; flex: none; }
   text-decoration: none; color: var(--ink); white-space: nowrap; cursor: pointer;
 }
 .btn svg { width: 18px; height: 18px; }
+/* (in other languages the words are often longer: a button may take two lines rather than run out of its box) */
+html:not([lang="en"]) .btn { white-space: normal; text-align: center; line-height: 1.2; padding-top: 5px; padding-bottom: 5px; }
+html:not([lang="en"]) .btn svg { flex: none; }
+.row-even > * { min-width: 0; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); box-shadow: 0 1px 2px rgba(10, 20, 60, .25); }
 .btn.big { min-height: 52px; font-size: 17px; border-radius: 14px; width: 100%; }
 .btn.small { min-height: 32px; padding: 0 12px; font-size: 14px; border-radius: 9px; }
@@ -284,6 +288,8 @@ svg { width: 22px; height: 22px; flex: none; }
 .cam { position: fixed; z-index: 35; left: max(16px, env(safe-area-inset-left)); bottom: calc(env(safe-area-inset-bottom, 0px) + 110px); width: 220px; aspect-ratio: 16 / 10; border-radius: 16px; overflow: hidden; background: #000; box-shadow: var(--shadow); touch-action: none; cursor: grab; }
 .cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cam.mirror video { transform: scaleX(-1); }
+/* the time runs only while recording: before that the picture alone */
+.cam:not(.rec) .cam-badge { display: none; }
 .cam-badge { position: absolute; left: 8px; top: 8px; display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 20px; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-weight: 600; }
 
 /* ---------- dock ---------- */
@@ -377,8 +383,11 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 .beat.hit { background: var(--accent); transform: scale(1.08); }
 .beat.hit::after { background: var(--accent-ink); opacity: 1; }
 .ramp-graph canvas { width: 100%; height: 70px; display: block; }
-.flash { position: fixed; inset: 0; z-index: 120; background: var(--accent); opacity: 0; pointer-events: none; transition: opacity .25s ease-out; }
-.flash.on { opacity: .2; transition: none; }
+/* (the metronome's flash lights the edges of the screen, never the music in the middle) */
+.flash { position: fixed; inset: 0; z-index: 120; background: none; opacity: 0; pointer-events: none; transition: opacity .3s ease-out;
+  box-shadow: inset 0 0 0 7px var(--accent), inset 0 0 34px 14px color-mix(in srgb, var(--accent) 55%, transparent); }
+.flash.on { opacity: .95; transition: none; }
+@media (prefers-reduced-motion: reduce) { .flash { transition: none; } }
 
 /* tuner */
 .tuner-face { position: relative; text-align: center; padding: 6px 0 4px; border-radius: 20px; background: var(--sunk); overflow: hidden; isolation: isolate; }

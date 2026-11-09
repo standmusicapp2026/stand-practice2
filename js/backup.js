@@ -5,6 +5,7 @@
 //
 // File layout (STANDBK2): 'STANDBK2', u32 header length, header JSON, then the bytes of its pieces.
 // The header of file 1 also carries the library itself (with binaries replaced by keys).
+import { zipEntries, zipRead } from './zipread.js';
 import { db } from './db.js';
 
 // Restoring adds to what is here, never wipes what was done since the backup: markings on a page
@@ -168,27 +169,6 @@ async function makeZip(entries) {
   return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
 }
 // the entries of a zip: name -> { at, size } (stored entries only, as Stand writes them)
-async function readZip(file) {
-  const tailLen = Math.min(file.size, 65557);
-  const tail = new DataView(await file.slice(file.size - tailLen).arrayBuffer());
-  let e = -1; for (let i = tailLen - 22; i >= 0; i--) if (tail.getUint32(i, true) === 0x06054b50) { e = i; break; }
-  if (e < 0) return null;
-  const n = tail.getUint16(e + 10, true), cdSize = tail.getUint32(e + 12, true), cdOff = tail.getUint32(e + 16, true);
-  const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer());
-  const out = new Map(); let p = 0;
-  const dec = new TextDecoder();
-  for (let k = 0; k < n && p + 46 <= cd.byteLength; k++) {
-    if (cd.getUint32(p, true) !== 0x02014b50) break;
-    const method = cd.getUint16(p + 10, true), size = cd.getUint32(p + 20, true);
-    const nl = cd.getUint16(p + 28, true), xl = cd.getUint16(p + 30, true), cl = cd.getUint16(p + 32, true), lo = cd.getUint32(p + 42, true);
-    const name = dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, nl));
-    const lh = new DataView(await file.slice(lo, lo + 30).arrayBuffer());
-    const at = lo + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
-    if (method === 0) out.set(name, { at, size });
-    p += 46 + nl + xl + cl;
-  }
-  return out;
-}
 // 16-bit WAV, so a recording plays anywhere
 function wavOf(f32, sr) {
   const n = f32.length, b = new DataView(new ArrayBuffer(44 + n * 2));
@@ -312,26 +292,40 @@ async function restorePlan(lib) {
   const inkFromBackup = (key) => { const sid = String(key).split(':')[0]; return !lib.scores.some((s) => s.id === sid) || fromBackup.has(sid); };
   return { fromBackup, fileFromBackup, inkFromBackup };
 }
-async function restoreZips(zips) {
+// A zip that holds a Stand backup (as Stand made it, or unzipped and zipped again, maybe inside a
+// folder of its own): a source for restoreSources, or null.
+export async function zipBackupSource(file) {
+  let list; try { list = await zipEntries(file); } catch { return null; }
+  const head = list.find((e) => /(^|\/)Stand data\/backup\.json$/.test(e.name) && !/(^|\/)__MACOSX\//.test(e.name));
+  if (!head) return null;
+  const root = head.name.slice(0, head.name.length - 'Stand data/backup.json'.length);
+  const by = new Map(list.map((e) => [e.name, e]));
+  return { get: async (p) => { const e = by.get(root + p); return e ? zipRead(file, e) : null; } };
+}
+// Backups as sources of files: a zip, or a backup someone unzipped (Files opens a zip into a folder
+// when it is tapped), or one zipped again. get(path) gives a Blob, or null when it is not there.
+export async function restoreSources(srcs) {
   let scores = 0, takes = 0; const missing = [];
   const sets = new Map();
-  for (const { file, dir } of zips) {
-    const h = dir.get('Stand data/backup.json'); if (!h) continue;
-    const head = JSON.parse(await file.slice(h.at, h.at + h.size).text());
+  for (const src of srcs) {
+    const h = await src.get('Stand data/backup.json').catch(() => null); if (!h) continue;
+    let head; try { head = JSON.parse(await h.text()); } catch { continue; }
+    if (!head || (head.magic && head.magic !== 'stand') || !head.set) continue;
     if (!sets.has(head.set)) sets.set(head.set, []);
-    sets.get(head.set).push({ ...head, file, dir });
+    sets.get(head.set).push({ ...head, get: src.get });
   }
   for (const [, hs] of [...sets.entries()].sort((a, b) => a[1][0].made - b[1][0].made)) {
     const count = hs[0].count, have = new Set(hs.map((h) => h.index));
     const lack = []; for (let i = 0; i < count; i++) if (!have.has(i)) lack.push(i + 1);
     const first = hs.find((h) => h.index === 0);
     if (!first) { missing.push({ count, lack }); continue; }
-    const L = first.dir.get('Stand data/library.json');
-    const lib = JSON.parse(await first.file.slice(L.at, L.at + L.size).text());
-    const find = (p) => { for (const h of hs) { const e = h.dir.get(p); if (e) return h.file.slice(e.at, e.at + e.size); } return null; };
+    const L = await first.get('Stand data/library.json');
+    if (!L) { missing.push({ count, lack: [1] }); continue; }
+    const lib = JSON.parse(await L.text());
+    const find = async (p) => { for (const h of hs) { const b = await h.get(p).catch(() => null); if (b) return b; } return null; };
     const unpack = async (v) => {
       if (v && typeof v === 'object' && '$path' in v) {
-        const blob = find(v.$path); if (!blob) return undefined;
+        const blob = await find(v.$path); if (!blob) return undefined;
         if (v.$t === 'blob') return new Blob([blob], { type: v.mime || '' });
         if (v.$t === 'wav') return f32OfWav(blob);
         const ab = await blob.arrayBuffer();
@@ -366,9 +360,9 @@ export async function restoreBackup(fileList) {
   const zips = [];
   for (const f of files) {
     const sig = new Uint8Array(await f.slice(0, 4).arrayBuffer());
-    if (sig[0] === 0x50 && sig[1] === 0x4b) { const dir = await readZip(f).catch(() => null); if (dir && dir.has('Stand data/backup.json')) zips.push({ file: f, dir }); }
+    if (sig[0] === 0x50 && sig[1] === 0x4b) { const src = await zipBackupSource(f); if (src) zips.push(src); }
   }
-  const zr = zips.length ? await restoreZips(zips) : null;
+  const zr = zips.length ? await restoreSources(zips) : null;
   for (const f of files) {
     const pre = await f.slice(0, 12).arrayBuffer();
     const magic = new TextDecoder().decode(new Uint8Array(pre, 0, 8));

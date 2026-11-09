@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand 会聆听你的乐器，用于调音器、泛音、跟随调性的持续音、演奏时翻页以及你的录音。声音在此设备上分析，不会上传。";
+"NSCameraUsageDescription" = "Stand 使用摄像头拍摄你的练习、扫描乐谱、让 iPhone 为 iPad 拍摄，以及（仅在你开启时）识别你眨眼翻页。眨眼识别在此设备上完成；不会保存或发送你的面部图像。";
+"NSLocalNetworkUsageDescription" = "在你用代码连接 iPad 和 iPhone 后，Stand 会让它们相互连接，以便 iPhone 为 iPad 拍摄并显示你的练习和乐谱。";
+"NSPhotoLibraryAddUsageDescription" = "Stand 会把你选择导出的视频和图片存储到你的照片图库。";

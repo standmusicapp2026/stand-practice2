@@ -29,6 +29,9 @@ targets:
         UIRequiresFullScreen: false
         # (a metronome, drone, scale or recording that is playing keeps playing when you leave Stand)
         UIBackgroundModes: [audio]
+        # (the languages Stand speaks: the web view then reports the device's language to the app)
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, pt-PT, pt-BR, es, fr, de, it, nl, pl, ru, ja, zh-Hans, ko]
         UIStatusBarStyle: UIStatusBarStyleDefault
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

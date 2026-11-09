@@ -4,6 +4,7 @@
 // clefs, keys, times and barlines. Instruments, sound, capture, layout and export live in the
 // top bar.
 import * as M from './model.js';
+import { NOTE_NAMES as NOTE_NAMES_L } from '../temperament.js';
 import { toMidi } from './midi.js';
 import { INST, INSTRUMENTS, FAMILIES, ENSEMBLES, STAFF_SIZES, defaultStaffSize } from './instruments.js';
 import { layoutScore, drawPage, hitTest, timeAtX, xAtTime, drawGhost, HEAD_W, DYNAMICS, GL, clearMetrics, glyph, text, textWidth, gm, drawClef, drawKey, drawTime, drawBarline, drawRepeatStart, drawLine, TEXT_FONT } from './engrave.js';
@@ -741,7 +742,7 @@ function commitWrite(tg) {
   if (!C.tool.rest && inst && inst.range && !inst.unpitched) {
     const f = M.findEvent(C.score, newId);
     const md = f && f.ev.notes ? Math.min(...f.ev.notes.map((q) => M.midiOf(q.s, q.a))) : null, mx = f && f.ev.notes ? Math.max(...f.ev.notes.map((q) => M.midiOf(q.s, q.a))) : null;
-    const name = (x) => ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'][x % 12] + (Math.floor(x / 12) - 1);
+    const name = (x) => NOTE_NAMES_L[x % 12] + (Math.floor(x / 12) - 1);
     if (md !== null && md < inst.range[0]) hint(`Too low for the ${inst.name.toLowerCase()}: its lowest note is ${name(inst.range[0])}.`, 3200);
     else if (mx !== null && mx > inst.range[1]) hint(`Too high for the ${inst.name.toLowerCase()}: its range goes up to ${name(inst.range[1])}.`, 3200);
   }
@@ -903,7 +904,7 @@ function transpose(steps, semis, keyTo = null) {
 // open the palette at Transpose (from the selection bar)
 function openTranspose() {
   C.tab = 'clef'; $('#cpPal').classList.remove('folded'); renderTab();
-  const l = [...document.querySelectorAll('#cpPal .cp-lab')].find((x) => x.textContent.startsWith('Transpose'));
+  const l = [...document.querySelectorAll('#cpPal .cp-lab')].find((x) => (x.dataset.en || x.textContent).startsWith('Transpose'));
   if (l) l.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 // to another key: the nearer way (up or down)
@@ -1298,7 +1299,7 @@ function changeAt(mk, tab) {
   C.tab = tab; $('#cpPal').classList.remove('folded'); relayout(); syncSelBar(); renderTab(); drawHover();
   // the palette opens at the part that changes it (the tempo is further down the words)
   const want = mk.kind === 'tempo' ? /^Tempo/ : mk.kind === 'key' ? /^Key/ : mk.kind === 'time' ? /^Time/ : null;
-  const lb = want && [...$('#cpPalBody').querySelectorAll('.cp-lab')].find((x) => want.test(x.textContent));
+  const lb = want && [...$('#cpPalBody').querySelectorAll('.cp-lab')].find((x) => want.test(x.dataset.en || x.textContent));
   if (lb) try { lb.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch {}
   hint(tab === 'clef' ? 'Choose the new one in the palette.' : 'Change it in the palette.', 2200);
 }
@@ -1867,7 +1868,7 @@ function renderTab() {
     }
     if (!C.selBars && !sel0) body.append(el('p', 'hint', 'Tap a bar (Select mode) to make the change start there, in the middle of a line.'));
     lab('Clef');
-    const cg = cards('three');
+    const cg = cards('three'); cg.dataset.trCtx = 'clef';
     for (const [c, name] of [['treble', 'Treble'], ['bass', 'Bass'], ['alto', 'Alto'], ['tenor', 'Tenor'], ['treble8', 'Treble 8vb'], ['bass8', 'Bass 8vb'], ['treble8va', 'Treble 8va'], ['bass8va', 'Bass 8va'], ['soprano', 'Soprano'], ['mezzo', 'Mezzo'], ['baritoneC', 'Baritone C'], ['baritoneF', 'Baritone F'], ['frenchviolin', 'French violin'], ['perc', 'Percussion']]) {
       if (!M.CLEFS[c]) continue;
       cg.append(card(name, M.clefAt(st, m) === c, () => applySig('clef', c, st, m, C.sigOnly && range ? range[1] : null), (gg, W, H) => { const y = H / 2 - 2; staff5(gg, 1, W - 1, y); drawClef(gg, c, W / 2 - 1.3, y); }, { k: 5.2 }));

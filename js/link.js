@@ -431,6 +431,9 @@ export class CameraPhone {
       try { this.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); } catch { this.mic = null; }
     }
     const track = this.cam.getVideoTracks()[0];
+    // iOS can take the camera away (a call, another app): it is asked for again
+    const cam = this.cam;
+    track.addEventListener('ended', () => { if (this.cam === cam && this.onCamLost) this.onCamLost(); });
     try { this.caps = track.getCapabilities ? track.getCapabilities() : {}; } catch { this.caps = {}; }
     if (!this.src) {
       this.src = document.createElement('video'); this.src.muted = true; this.src.playsInline = true; this.src.setAttribute('playsinline', '');
@@ -445,11 +448,38 @@ export class CameraPhone {
     return this.out;
   }
   // a picture in the shape the iPhone is held; fixed while recording
+  // How the iPhone is held comes from its motion sensor (this.tilt: 0 upright, 90 turned to the
+  // left, -90 to the right, 180 upside down), so the picture turns even when the iPhone's screen
+  // is locked upright. The camera gives its frames upright for the screen; what is left over is
+  // turned in the canvas (this.rot, in degrees, clockwise as drawn).
+  _frameAngle() {
+    const v = this.src, portrait = v.videoHeight > v.videoWidth;
+    let ia = typeof window.orientation === 'number' ? window.orientation : null;
+    if (ia === null) ia = innerWidth > innerHeight ? (this.tilt === 90 || this.tilt === -90 ? this.tilt : 90) : 0;
+    const iaPortrait = ia === 0 || ia === 180;
+    if (iaPortrait === portrait) return ia;
+    return portrait ? 0 : (this.tilt === 90 || this.tilt === -90 ? this.tilt : 90);
+  }
   _shapeFromFrame() {
     const v = this.src; if (!v || !v.videoWidth) return;
-    const shape = v.videoWidth >= v.videoHeight ? 'landscape' : 'portrait';
-    if (shape !== this.shape && !this.recording) { this.shape = shape; this._resize(); this.sendState(); this.onState && this.onState(this.state); }
+    if (this.recording) { this._route(); return; }            // shape and turn are kept for the whole take
+    let shape = v.videoWidth >= v.videoHeight ? 'landscape' : 'portrait', rot = 0;
+    if (this.tilt === 0 || this.tilt === 90 || this.tilt === -90 || this.tilt === 180) {
+      shape = this.tilt === 90 || this.tilt === -90 ? 'landscape' : 'portrait';
+      let d = ((this.tilt - this._frameAngle()) % 360 + 540) % 360 - 180;   // -180..179
+      if (d === -180) d = 180;
+      // the back camera's picture turns against the iPhone; the front one (not mirrored) with it
+      rot = d === 180 ? 180 : d === 0 ? 0 : (this.s.facing === 'user' ? d : -d);
+    }
+    const changed = shape !== this.shape || rot !== (this.rot || 0);
+    this.rot = rot;
+    if (changed) { this.shape = shape; this._resize(); this.sendState(); this.onState && this.onState(this.state); }
     this._route();
+  }
+  setTilt(a) {
+    if (a !== 0 && a !== 90 && a !== -90 && a !== 180) return;
+    if (a === this.tilt) return;
+    this.tilt = a; this._shapeFromFrame();
   }
   _ensureCanvas() {
     if (!this.canvas) {
@@ -473,6 +503,7 @@ export class CameraPhone {
     if (!hwZoom && s.zoom > 1.01) return true;
     if (!hwBright && Math.abs(s.bright) > 0.01) return true;
     if (Math.abs(s.warm) > 0.01) return true;
+    if (this.rot) return true;
     const [W, H] = this._size();
     return Math.abs(v.videoWidth / v.videoHeight - W / H) > 0.02;
   }
@@ -480,10 +511,12 @@ export class CameraPhone {
     if (this.recording || !this.cam) return;            // the picture source never changes mid-take
     const raw = !this._needsCanvas();
     if (!raw && !this.canvasOut) return;               // the canvas is not made yet (a resize can come first)
-    if (raw === this.raw && this.out) return;
+    const out = raw ? this.cam : this.canvasOut;
+    // (the same route with the same camera: nothing to do; a camera opened again is a new track)
+    if (raw === this.raw && this.out === out) return;
     this.raw = raw;
-    const track = raw ? this.cam.getVideoTracks()[0] : this.canvasOut.getVideoTracks()[0];
-    this.out = raw ? this.cam : this.canvasOut;
+    const track = out.getVideoTracks()[0];
+    this.out = out;
     const sender = this.pc && this.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
     if (sender && sender.track !== track) sender.replaceTrack(track).catch(() => {});
     this.onLocal && this.onLocal(this.out);
@@ -496,12 +529,18 @@ export class CameraPhone {
     const W = c.width, H = c.height, s = this.s;
     const hwZoom = this.caps.zoom && this.caps.zoom.max > 1;
     const z = hwZoom ? 1 : Math.max(1, s.zoom);
-    const k = Math.max(W / v.videoWidth, H / v.videoHeight) * z;
+    const rot = this.rot || 0, side = rot === 90 || rot === -90;
+    // (turned a quarter, the frame's width runs up the canvas)
+    const k = (side ? Math.max(W / v.videoHeight, H / v.videoWidth) : Math.max(W / v.videoWidth, H / v.videoHeight)) * z;
     const dw = v.videoWidth * k, dh = v.videoHeight * k;
     g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
-    g.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    const draw = () => {
+      if (!rot) { g.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh); return; }
+      g.save(); g.translate(W / 2, H / 2); g.rotate(rot * Math.PI / 180); g.drawImage(v, -dw / 2, -dh / 2, dw, dh); g.restore();
+    };
+    draw();
     const hwBright = this.caps.exposureCompensation && this.caps.exposureCompensation.max > 0;
-    if (!hwBright && s.bright > 0.01) { g.globalCompositeOperation = 'lighter'; g.globalAlpha = Math.min(1, s.bright); g.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh); }
+    if (!hwBright && s.bright > 0.01) { g.globalCompositeOperation = 'lighter'; g.globalAlpha = Math.min(1, s.bright); draw(); }
     if (!hwBright && s.bright < -0.01) { g.globalCompositeOperation = 'source-over'; g.globalAlpha = Math.min(0.85, -s.bright * 0.6); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); }
     if (Math.abs(s.warm) > 0.01) { g.globalCompositeOperation = 'soft-light'; g.globalAlpha = Math.min(0.6, Math.abs(s.warm) * 0.45); g.fillStyle = s.warm > 0 ? '#ff9a3c' : '#3c8cff'; g.fillRect(0, 0, W, H); }
     g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
@@ -621,11 +660,13 @@ export class CameraPhone {
       // while recording the iPhone's work goes to the video: a smaller, calmer picture for the iPad
       if (this.recording && now - sentAt < 160) return;
       const v = this.src; if (!v || !v.videoWidth) return;
-      const long = this.recording ? 360 : 480, k = long / Math.max(v.videoWidth, v.videoHeight);
-      const w = Math.round(v.videoWidth * k), h = Math.round(v.videoHeight * k);
+      // the picture as it is recorded (with the brightness, zoom and turn of the canvas, when it is used)
+      const from = this.raw === false && this.canvas ? this.canvas : v;
+      const fw = from === v ? v.videoWidth : from.width, fh = from === v ? v.videoHeight : from.height;
+      const long = this.recording ? 360 : 480, k = long / Math.max(fw, fh);
+      const w = Math.round(fw * k), h = Math.round(fh * k);
       if (this.pc2.width !== w || this.pc2.height !== h) { this.pc2.width = w; this.pc2.height = h; }
-      // the picture as it is recorded (with the brightness and zoom of the canvas, when it is used)
-      this.pg2.drawImage(this.raw === false && this.canvas ? this.canvas : v, 0, 0, w, h);
+      this.pg2.drawImage(from, 0, 0, w, h);
       this._waitAck = true; sentAt = now;
       this.pc2.toBlob((b) => { if (!b) { this._waitAck = false; return; } const r = new FileReader(); r.onload = () => directFrame(String(r.result).split(',')[1] || ''); r.readAsDataURL(b); }, 'image/jpeg', this.recording ? 0.5 : 0.6);
     }, 66);

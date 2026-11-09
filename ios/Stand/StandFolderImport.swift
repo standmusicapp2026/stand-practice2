@@ -16,7 +16,10 @@ var standPickedRoots: [String: URL] = [:]
 final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
     static let shared = StandFolderImport()
     private var onList: (([String: Any]) -> Void)?
-    private static let kinds: Set<String> = ["pdf", "jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "zip", "4sb", "4sc", "standbackup"]
+    // (and what a Stand backup holds, when the folder is another Stand's: its library, recordings,
+    // videos and the pieces of its markings — the page brings those back whole, never one by one)
+    private static let kinds: Set<String> = ["pdf", "jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "zip", "4sb", "4sc", "standbackup",
+                                             "json", "mov", "mp4", "m4v", "webm", "wav", "m4a", "bin", "f32", "i16", "u8"]
 
     func pick(from vc: UIViewController, onList: @escaping ([String: Any]) -> Void) {
         self.onList = onList

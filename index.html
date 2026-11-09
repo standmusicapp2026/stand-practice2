@@ -599,7 +599,10 @@
         <select id="autoTurn"><option value="0">Never</option><option value="2">Every 2 bars</option><option value="4">Every 4 bars</option><option value="8">Every 8 bars</option><option value="16">Every 16 bars</option></select></label>
       <label class="field"><span>Meter</span>
         <select id="meterSel">
-          <option value="1">1/4</option><option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option><option value="5">5/4</option><option value="6">6/8</option><option value="7">7/8</option><option value="9">9/8</option><option value="12">12/8</option>
+          <optgroup label="Half notes"><option value="2/2">2/2 (alla breve)</option><option value="3/2">3/2</option><option value="4/2">4/2</option></optgroup>
+          <optgroup label="Quarter notes"><option value="1/4">1/4</option><option value="2/4">2/4</option><option value="3/4">3/4</option><option value="4/4" selected>4/4</option><option value="5/4">5/4</option><option value="6/4">6/4</option><option value="7/4">7/4</option></optgroup>
+          <optgroup label="Eighth notes"><option value="3/8">3/8</option><option value="5/8:23">5/8 (2+3)</option><option value="5/8:32">5/8 (3+2)</option><option value="6/8">6/8</option><option value="7/8:223">7/8 (2+2+3)</option><option value="7/8:322">7/8 (3+2+2)</option><option value="7/8:232">7/8 (2+3+2)</option><option value="8/8:332">8/8 (3+3+2)</option><option value="9/8">9/8</option><option value="12/8">12/8</option></optgroup>
+          <optgroup label="Sixteenth notes"><option value="3/16">3/16</option><option value="5/16:23">5/16 (2+3)</option><option value="6/16">6/16</option><option value="7/16:223">7/16 (2+2+3)</option><option value="9/16">9/16</option><option value="12/16">12/16</option></optgroup>
         </select></label>
       <label class="field"><span>Subdivision</span>
         <select id="subSel"><option value="1">None</option><option value="2">Eighths</option><option value="3">Triplets</option><option value="4">Sixteenths</option></select></label>
@@ -1057,6 +1060,7 @@
 <aside class="panel" id="panel-app" hidden aria-label="Settings">
   <div class="panel-head"><h2>Settings</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
+    <label class="field"><span>Language</span><select id="appLang"></select></label>
     <div class="ctl-head"><span>Colour</span></div>
     <div class="seg full" id="accentSeg"><button data-accent="blue" class="on"><span class="acc-dot blue"></span>Blue</button><button data-accent="black"><span class="acc-dot black"></span>Black</button></div>
     <div class="ctl-head"><span>Appearance</span></div>
@@ -1212,17 +1216,20 @@
     <div class="bring-list">
       <button class="rec-choice wide-choice" id="brFolder"><svg><use href="#i-folder"/></svg><b>Choose a folder</b><span>The other app’s folder in Files (On My iPad or iCloud Drive), or any folder of PDFs</span></button>
       <p class="hint br-how">Tapping a folder only opens it. To choose it: open the folder, then tap <b>Open</b> at the top right. Or tap <b>Select</b>, tap one or more folders, then <b>Open</b>. Everything inside comes in, and its folders become folders here.</p>
-      <button class="rec-choice wide-choice" id="brArchive"><svg><use href="#i-cloud"/></svg><b>Choose a backup or archive</b><span>A forScore archive (.4sb) or any .zip of scores</span></button>
+      <button class="rec-choice wide-choice" id="brArchive"><svg><use href="#i-cloud"/></svg><b>Choose a backup or archive</b><span>A Stand backup, a forScore archive (.4sb) or any .zip of scores</span></button>
       <button class="rec-choice wide-choice" id="brFiles"><svg><use href="#i-pdf"/></svg><b>Choose PDFs</b><span>One or many at once (in Files, tap Select)</span></button>
     </div>
     <details class="set-more"><summary>How to get them out of forScore</summary>
       <p class="hint">In forScore, open the <b>Backup</b> panel and make an <b>Archive</b> (it holds all your scores). Save it in Files, then choose it here with <b>Choose a backup or archive</b>. If your forScore folder shows in Files (On My iPad › forScore), you can also choose that folder.</p>
     </details>
+    <details class="set-more"><summary>From another Stand</summary>
+      <p class="hint">Choose its Stand folder (Files › On My iPad › Stand, or a copy of it) or a Stand backup (.zip) with the buttons above. Everything comes back as it was: folders, titles, markings, notebooks, recordings and videos.</p>
+    </details>
     <details class="set-more"><summary>Other apps</summary>
       <p class="hint">Most score apps can save or share their PDFs to Files (often as a folder, or a .zip of the whole library). Put them in a folder in Files, then choose it here. Markings drawn in the other app come in when the app saved them into its PDFs.</p>
     </details>
     <p class="hint" id="brStatus" hidden></p>
-    <input type="file" id="brArchiveInput" accept=".zip,.4sb,application/zip,application/octet-stream" hidden>
+    <input type="file" id="brArchiveInput" accept=".zip,.4sb,.standbackup,application/zip,application/octet-stream" hidden>
   </div>
 </aside>
 <aside class="panel" id="panel-backup" hidden aria-label="Backup">
@@ -1528,7 +1535,7 @@
       <div class="ctl-head"><span>Recognised</span><span class="num" id="capInfo"></span></div>
       <canvas class="cap-preview" id="capPreview"></canvas>
       <div class="field-grid">
-        <label class="field"><span>Clef</span><select id="capClef"><option value="treble">Treble</option><option value="bass">Bass</option><option value="alto">Alto</option><option value="tenor">Tenor</option></select></label>
+        <label class="field"><span>Clef</span><select id="capClef" data-tr-ctx="clef"><option value="treble">Treble</option><option value="bass">Bass</option><option value="alto">Alto</option><option value="tenor">Tenor</option></select></label>
         <label class="field"><span>Key of the music</span><select id="capKey"></select></label>
         <label class="field"><span>Transpose to</span><select id="capTo"><option value="">No, keep it</option></select></label>
         <label class="field"><span>Time</span><select id="capTime"><option value="4/4">4/4</option><option value="3/4">3/4</option><option value="2/4">2/4</option><option value="2/2">2/2</option><option value="6/8">6/8</option><option value="3/8">3/8</option><option value="9/8">9/8</option><option value="12/8">12/8</option><option value="5/4">5/4</option><option value="6/4">6/4</option><option value="3/2">3/2</option></select></label>

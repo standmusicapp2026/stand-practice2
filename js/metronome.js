@@ -50,16 +50,25 @@ const MARKS = [[40, 'Grave'], [60, 'Largo'], [66, 'Larghetto'], [76, 'Adagio'], 
   [120, 'Moderato'], [140, 'Allegretto'], [168, 'Allegro'], [200, 'Vivace'], [240, 'Presto'], [999, 'Prestissimo']];
 export function tempoMarking(bpm) { for (const [lim, name] of MARKS) if (bpm < lim) return name; return 'Prestissimo'; }
 
-// Meter values: beats per bar; compound meters (6/8 etc.) group in 3.
+// Meter values: "3/4", "6/8", "7/8:223" (the groups of a bar), or the older plain numbers ("4" was 4/4, "6" 6/8).
+// One click is one note of the bottom number: 6/8 clicks six quavers, accented in two groups of three.
+const OLD = { 1: '1/4', 2: '2/4', 3: '3/4', 4: '4/4', 5: '5/4', 6: '6/8', 7: '7/8:223', 9: '9/8', 12: '12/8' };
 export function meterInfo(v) {
-  const n = +v;
-  if (n === 6) return { beats: 6, label: '6/8', accents: [2, 1, 1, 2, 1, 1] };
-  if (n === 9) return { beats: 9, label: '9/8', accents: Array.from({ length: 9 }, (_, i) => (i % 3 === 0 ? 2 : 1)) };
-  if (n === 12) return { beats: 12, label: '12/8', accents: Array.from({ length: 12 }, (_, i) => (i % 3 === 0 ? 2 : 1)) };
-  if (n === 7) return { beats: 7, label: '7/8', accents: [2, 1, 2, 1, 2, 1, 1] };
-  return { beats: n, label: n + '/4', accents: Array.from({ length: n }, (_, i) => (i === 0 ? 2 : 1)) };
+  let s = String(v == null ? '4/4' : v).trim();
+  if (/^\d+$/.test(s)) s = OLD[+s] || (s + '/4');
+  const m = s.match(/^(\d+)\/(\d+)(?::(\d+))?$/);
+  if (!m) return meterInfo('4/4');
+  const beats = Math.max(1, Math.min(32, +m[1])), unit = +m[2];
+  let groups = null;
+  if (m[3]) { const g = m[3].split('').map(Number); if (g.reduce((a, b) => a + b, 0) === beats && g.every((x) => x > 0)) groups = g; }
+  // (compound meters in eighths and sixteenths: groups of three)
+  if (!groups && (unit === 8 || unit === 16) && beats % 3 === 0 && beats > 3) groups = Array(beats / 3).fill(3);
+  const accents = [];
+  if (groups) { groups.forEach((n, gi) => { for (let i = 0; i < n; i++) accents.push(i === 0 ? 2 : 1); }); }
+  else for (let i = 0; i < beats; i++) accents.push(i === 0 ? 2 : 1);
+  const label = beats + '/' + unit + (m[3] && groups ? ' (' + groups.join('+') + ')' : '');
+  return { beats, unit, groups, label, accents, value: beats + '/' + unit + (m[3] && groups ? ':' + m[3] : '') };
 }
-
 export class Metronome {
   constructor() {
     this.bpm = 80;

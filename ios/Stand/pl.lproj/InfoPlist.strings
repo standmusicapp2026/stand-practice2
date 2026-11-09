@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand słucha twojego instrumentu dla stroika, flażoletów, burdonu podążającego za tonacją, przewracania stron podczas gry i twoich nagrań. Dźwięk jest analizowany na tym urządzeniu i nie jest wysyłany.";
+"NSCameraUsageDescription" = "Stand używa kamery, aby filmować twoje ćwiczenie, skanować nuty, pozwolić iPhone’owi filmować dla iPada oraz (tylko jeśli to włączysz) widzieć, kiedy mrugasz, aby przewrócić stronę. Mrugnięcie jest wykrywane na tym urządzeniu; żaden obraz twojej twarzy nie jest zapisywany ani wysyłany.";
+"NSLocalNetworkUsageDescription" = "Stand łączy twojego iPada i iPhone’a po połączeniu ich kodem, aby iPhone mógł filmować dla iPada i pokazywać twoje ćwiczenie i nuty.";
+"NSPhotoLibraryAddUsageDescription" = "Stand zapisuje w bibliotece zdjęć filmy i obrazy, które zdecydujesz się wyeksportować.";

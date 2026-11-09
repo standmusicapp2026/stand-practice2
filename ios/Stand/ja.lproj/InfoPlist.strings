@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Standはチューナー、ハーモニクス、調に追従するドローン、演奏中のページめくり、録音のために楽器の音を聴きます。音はこのデバイス上で解析され、アップロードされません。";
+"NSCameraUsageDescription" = "Standはカメラを使って練習の撮影、楽譜のスキャン、iPadのためのiPhoneでの撮影、そして（オンにした場合のみ）ページめくりのためのウインクの検出を行います。ウインクの検出はこのデバイス上で行われ、顔の画像は保存も送信もされません。";
+"NSLocalNetworkUsageDescription" = "Standは、コードで接続したiPadとiPhoneをつなぎ、iPhoneがiPadのために撮影し、練習と楽譜を表示できるようにします。";
+"NSPhotoLibraryAddUsageDescription" = "Standは、書き出すことを選んだビデオと画像を写真ライブラリに保存します。";

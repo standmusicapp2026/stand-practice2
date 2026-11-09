@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand escucha tu instrumento para el afinador, los armónicos, el bordón que sigue la tonalidad, pasar páginas mientras tocas y tus grabaciones. El sonido se analiza en este dispositivo y no se envía.";
+"NSCameraUsageDescription" = "Stand usa la cámara para grabar tu estudio, escanear partituras, dejar que el iPhone grabe para el iPad y (solo si lo activas) ver cuándo guiñas para pasar la página. El guiño se detecta en este dispositivo; no se guarda ni se envía ninguna imagen de tu cara.";
+"NSLocalNetworkUsageDescription" = "Stand conecta tu iPad y tu iPhone una vez que los vinculas con un código, para que el iPhone grabe para el iPad y muestre tu estudio y tus partituras.";
+"NSPhotoLibraryAddUsageDescription" = "Stand guarda en tu fototeca los vídeos y las imágenes que elijas exportar.";

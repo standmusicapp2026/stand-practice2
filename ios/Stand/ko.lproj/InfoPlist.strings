@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand는 튜너, 하모닉스, 조를 따라가는 드론, 연주 중 페이지 넘기기, 녹음을 위해 악기 소리를 듣습니다. 소리는 이 기기에서 분석되며 업로드되지 않습니다.";
+"NSCameraUsageDescription" = "Stand는 카메라로 연습을 촬영하고, 악보를 스캔하고, iPhone이 iPad를 위해 촬영하게 하며, (켠 경우에만) 페이지를 넘기는 윙크를 감지합니다. 윙크 감지는 이 기기에서 이루어지며 얼굴 이미지는 저장되거나 전송되지 않습니다.";
+"NSLocalNetworkUsageDescription" = "코드로 연결한 뒤 Stand는 iPad와 iPhone을 이어, iPhone이 iPad를 위해 촬영하고 연습과 악보를 보여 줄 수 있게 합니다.";
+"NSPhotoLibraryAddUsageDescription" = "Stand는 내보내기로 고른 비디오와 사진을 사진 보관함에 저장합니다.";

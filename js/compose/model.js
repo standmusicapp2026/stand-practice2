@@ -136,7 +136,9 @@ export const CLEFS = {
 // ---------- score creation ----------
 export function newPart(instId) {
   const inst = INST[instId] || INST.piano;
-  return { id: newId(), inst: inst.id, name: inst.name, abbr: inst.abbr, mix: null,
+  // (a new part takes the instrument's name in the language of the app, as it is printed on the score)
+  const T = (x) => (x && globalThis.__tr ? globalThis.__tr(x) : x);
+  return { id: newId(), inst: inst.id, name: T(inst.name), abbr: T(inst.abbr), mix: null,
     staves: inst.clefs.map((clef) => ({ id: newId(), clef, bars: [] })) };
 }
 export function newScore({ title = 'Untitled', composer = '', insts = ['piano'], time = [4, 4], key = 0, bpm = 96, bars = 32, page = 'A4' } = {}) {

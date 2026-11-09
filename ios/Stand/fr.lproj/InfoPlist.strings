@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand écoute votre instrument pour l’accordeur, les harmoniques, le bourdon qui suit la tonalité, la tourne des pages pendant que vous jouez et vos enregistrements. Le son est analysé sur cet appareil et n’est pas envoyé.";
+"NSCameraUsageDescription" = "Stand utilise la caméra pour filmer votre travail, numériser des partitions, permettre à l’iPhone de filmer pour l’iPad et (seulement si vous l’activez) voir quand vous faites un clin d’œil pour tourner la page. La détection se fait sur cet appareil ; aucune image de votre visage n’est enregistrée ni envoyée.";
+"NSLocalNetworkUsageDescription" = "Stand relie votre iPad et votre iPhone une fois que vous les avez associés avec un code, pour que l’iPhone filme pour l’iPad et affiche votre travail et vos partitions.";
+"NSPhotoLibraryAddUsageDescription" = "Stand enregistre dans votre photothèque les vidéos et images que vous choisissez d’exporter.";

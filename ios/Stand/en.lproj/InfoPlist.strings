@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand listens to your instrument for the tuner, harmonics, the drone that follows your key, turning pages as you play, and your recordings. Sound is analysed on this device and is not uploaded.";
+"NSCameraUsageDescription" = "Stand uses the camera to film your practice, to scan sheet music, to let your iPhone film for your iPad, and (only if you turn it on) to see when you wink to turn the page. Wink detection happens on this device; no picture of your face is saved or sent.";
+"NSLocalNetworkUsageDescription" = "Stand connects your iPad and iPhone once you have linked them with a code, so the iPhone can film for the iPad and show your practice and scores.";
+"NSPhotoLibraryAddUsageDescription" = "Stand saves the videos and pictures you choose to export to your photo library.";

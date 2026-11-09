@@ -1,0 +1,4 @@
+"NSMicrophoneUsageDescription" = "Stand luistert naar je instrument voor het stemapparaat, de flageoletten, de bourdon die de toonsoort volgt, het omslaan tijdens het spelen en je opnamen. Het geluid wordt op dit apparaat geanalyseerd en niet geüpload.";
+"NSCameraUsageDescription" = "Stand gebruikt de camera om je studie te filmen, partituren te scannen, de iPhone voor de iPad te laten filmen en (alleen als je het aanzet) te zien wanneer je knipoogt om om te slaan. De knipoog wordt op dit apparaat herkend; er wordt geen beeld van je gezicht bewaard of verstuurd.";
+"NSLocalNetworkUsageDescription" = "Stand verbindt je iPad en je iPhone zodra je ze met een code hebt gekoppeld, zodat de iPhone voor de iPad kan filmen en je studie en partituren kan tonen.";
+"NSPhotoLibraryAddUsageDescription" = "Stand bewaart de video’s en afbeeldingen die je wilt exporteren in je fotobibliotheek.";
