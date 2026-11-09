@@ -1821,6 +1821,16 @@ async function pageWords(i) {
   c.width = c.height = 0;
   return (got || []).filter((l) => l && l.s && (l.c ?? 1) >= 0.3).map((l) => ({ s: String(l.s), x: l.x, y: l.y, w: l.w, h: l.h }));
 }
+// the marks of a page if it was read before (or null)
+async function tempoKnown(i) {
+  const doc = V.doc, sc = V.score; if (!doc || !sc) return null;
+  const box = doc.piece ? doc.piece(i) : null;
+  const key = (doc.orig ? doc.orig(i) : i) + (box ? '@' + box.y.toFixed(3) : '') + (doc.composite && doc.composite(i) ? '+' : '');
+  const fk = 'tempo2:' + (sc.fileId || sc.id);
+  let kept = TEMPO.mem.get(fk);
+  if (!kept) { kept = (await getSetting(fk, null)) || {}; TEMPO.mem.set(fk, kept); }
+  return kept[key] || null;
+}
 async function tempoMarksOf(i) {
   const doc = V.doc, sc = V.score; if (!doc || !sc) return [];
   const box = doc.piece ? doc.piece(i) : null;
@@ -1838,7 +1848,7 @@ async function tempoMarksOf(i) {
   return TEMPO.reading.get(rk);
 }
 async function showTempoMarks(token, entries) {
-  const sc = V.score; if (!sc || !entries || !entries.length || (V.doc && V.doc.paper)) return;
+  const sc = V.score; if (!sc || !entries || !entries.length || (V.doc && V.doc.paper) || globalThis.__noTempo) return;
   // a score opened now: the marks glow this time only if it was never opened before
   if (TEMPO.last !== sc.id) {
     TEMPO.last = sc.id; TEMPO.glowed = new Set();
@@ -1846,8 +1856,15 @@ async function showTempoMarks(token, entries) {
     TEMPO.glow = seen.includes(sc.id) ? null : sc.id;
     if (!seen.includes(sc.id)) { seen.push(sc.id); if (seen.length > 3000) seen.splice(0, seen.length - 3000); saveSettings(); }
   }
-  // (after the page is shown, and quietly: reading never holds up turning)
-  await new Promise((r) => setTimeout(r, 250));
+  // (after the page is shown, and quietly: reading never holds up turning; a page already read is
+  // shown at once, a new one waits until the iPad has a moment and no page is being turned)
+  await new Promise((r) => setTimeout(r, 120));
+  const quick = await Promise.all(entries.map((e) => tempoKnown(e.index)));
+  if (quick.some((k) => !k)) {
+    await new Promise((r) => setTimeout(r, 1500));
+    if (token !== layoutToken) return;
+    await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 2500 }) : setTimeout(r, 300)));
+  }
   for (const e of entries) {
     if (token !== layoutToken || V.score !== sc) return;
     let marks; try { marks = await tempoMarksOf(e.index); } catch (err) { console.warn(err); continue; }
