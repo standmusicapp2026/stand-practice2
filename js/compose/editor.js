@@ -90,12 +90,17 @@ async function closeCompose() {
   C.lyFor = null;
   player.stop(); syncPlay();
   try { D.hidePanel(); } catch {}   // (Layout, Capture, Sound… close with Compose)
-  // (a save that fails never keeps you in Compose)
-  try { await save(true); } catch (err) { console.warn(err); }
+  // (the library comes back at once; the composition, taken as it is now, is written behind it —
+  // a big score on a slow iPad never keeps you waiting in Compose, and a save that fails never
+  // keeps you there either)
+  const saving = save(true).catch((err) => console.warn(err));
   $('#compose').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
   C.score = null; C.lay = null;
   $('#cpPages').textContent = ''; C.pages = [];
   D.refreshLibrary();
+  await saving;
+  // (and once more when it is written: its picture in the library is the new one)
+  if ($('#compose').hidden) D.refreshLibrary();
 }
 function saveSoon(thumb) { clearTimeout(C.saveT); C.saveT = setTimeout(() => save(thumb), 900); }
 // leaving Stand (or iOS closing it) writes the composition at once: the last edit is never left waiting
