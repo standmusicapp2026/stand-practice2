@@ -18,16 +18,21 @@ const copyId = (id) => 'ipadcopy:' + id;
 const toBlob = async (dataUrl) => (dataUrl ? (await fetch(dataUrl)).blob() : null);
 
 export function initPhoneScores({ askIpad, toast, connected }) {
-  const PS = { list: null, at: 0, busy: false, view: null, ink: true, urls: [], removed: new Set(), editing: false, sync: null, folder: null, org: { folders: [], place: {} }, drag: null };
+  const PS = { list: null, at: 0, busy: false, view: null, ink: true, urls: [], removed: new Set(), editing: false, sync: null, folder: null, org: { folders: [], place: {} }, drag: null, own: [] };
+  // every score shown: the iPad's, and the ones added on this iPhone (scanned, from Photos or Files)
+  const allScores = () => [...(PS.list || []), ...PS.own];
+  const ownIds = () => new Set(PS.own.map((x) => x.id));
   const bar = $('#phScoresBar'), pane = $('#phScores'), grid = $('#phsGrid'), viewer = $('#phView');
   const sub = () => {
-    const n = PS.list ? PS.list.length : 0;
-    $('#phsBarSub').textContent = n ? `${n} ${n === 1 ? 'score' : 'scores'} from your iPad` : 'The scores on your iPad, to read';
+    const n = PS.list ? PS.list.length : 0, o = PS.own.length;
+    const fromIpad = n === 1 ? '1 score from your iPad' : `${n} scores from your iPad`, here = o === 1 ? '1 score added on this iPhone' : `${o} scores added on this iPhone`;
+    $('#phsBarSub').textContent = n && o ? `${fromIpad} · ${o} added here` : n ? fromIpad : o ? here : 'Your iPad\'s scores, and your own';
     $('#phsSub').textContent = PS.busy ? 'Looking for your iPad…' : PS.sync ? `Downloading ${Math.min(PS.sync.done + 1, PS.sync.n)} of ${PS.sync.n}${PS.sync.page ? ' · ' + PS.sync.page : '…'}` : PS.at ? 'From your iPad · ' + ago(PS.at) : 'Open Stand on your iPad, on the same Wi-Fi';
   };
   const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
   (async () => {
     const c = await getSetting('ipadScores', null); if (c) { PS.list = c.scores || []; PS.at = c.at || 0; }
+    PS.own = (await getSetting('phoneOwn', [])) || [];
     const FAIL = {};
     const rem = await getSetting('ipadRemoved', [], true).catch(() => FAIL), org = await getSetting('ipadOrg', null, true).catch(() => FAIL);
     if (rem === FAIL || org === FAIL) PS.readOnly = true;   // (never written over with nothing)
@@ -41,15 +46,15 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // the iPad's folders (by their id there) and the iPhone's own; a score is in the folder chosen
   // on the iPhone, or else the one it has on the iPad
   const ipadPlace = (s) => (s.fid ? 'ipad:' + s.fid : s.folder ? 'ipadn:' + s.folder : '');
-  const knownFolder = (id) => PS.org.folders.some((f) => f.id === id) || (PS.list || []).some((s) => ipadPlace(s) === id);
+  const knownFolder = (id) => PS.org.folders.some((f) => f.id === id) || allScores().some((s) => ipadPlace(s) === id);
   // (a folder chosen here that has gone since: the score is back where the iPad has it)
   const folderOf = (s) => { const p = PS.org.place[s.id]; return p !== undefined && (p === '' || knownFolder(p)) ? p : ipadPlace(s); };
   function folders() {
     const map = new Map();
-    for (const s of PS.list || []) if (s.fid || s.folder) map.set(s.fid ? 'ipad:' + s.fid : 'ipadn:' + s.folder, s.folder || 'Folder');
+    for (const s of allScores()) if (s.fid || s.folder) map.set(s.fid ? 'ipad:' + s.fid : 'ipadn:' + s.folder, s.folder || 'Folder');
     for (const f of PS.org.folders) map.set(f.id, f.name);
     for (const [id, name] of Object.entries(PS.org.names || {})) if (map.has(id)) map.set(id, name);
-    const visible = (PS.list || []).filter((s) => !PS.removed.has(s.id));
+    const visible = allScores().filter((s) => !PS.removed.has(s.id));
     return [...map.entries()].map(([id, name]) => ({ id, name, scores: visible.filter((s) => folderOf(s) === id), own: PS.org.folders.some((f) => f.id === id) }))
       .filter((f) => f.own || f.scores.length).sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -83,7 +88,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     });
   }
   async function newFolder(ids) {
-    const list = (PS.list || []).filter((s) => ids.includes(s.id));
+    const list = allScores().filter((s) => ids.includes(s.id));
     const comp = list.length > 1 && list.every((s) => s.composer && s.composer === list[0].composer) ? list[0].composer.split(/\s+/).pop() : '';
     const name = await askName(ids.length ? (ids.length === 2 ? 'New folder for these two' : 'New folder') : 'New folder', comp, 'Create');
     if (!name) return;
@@ -100,7 +105,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   }
   async function deleteFolder(id) {
     // the folder goes; its scores stay, out of any folder
-    for (const s of PS.list || []) if (folderOf(s) === id) PS.org.place[s.id] = '';
+    for (const s of allScores()) if (folderOf(s) === id) PS.org.place[s.id] = '';
     PS.org.folders = PS.org.folders.filter((f) => f.id !== id);
     if (PS.folder === id) PS.folder = null;
     await saveOrg(); render();
@@ -462,7 +467,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
         PS.miss = PS.miss || new Map();
         for (const id of ids) PS.miss.delete(id);
         const keys = (await db.keys('files').catch(() => [])).map(String).filter((k) => k.startsWith('ipadcopy:'));
-        const gone = new Set(keys.map(idOfKey).filter((id) => id && !ids.has(id)));
+        const mine = ownIds();
+        const gone = new Set(keys.map(idOfKey).filter((id) => id && !ids.has(id) && !mine.has(id)));
         for (const id of gone) { const n = (PS.miss.get(id) || 0) + 1; PS.miss.set(id, n); if (n >= 2) { await dropCopy(id); PS.miss.delete(id); } }
         // (and the scores taken off this iPhone that the iPad no longer has are forgotten)
         if (PS.list.length) { let ch = false; for (const id of [...PS.removed]) if (!ids.has(id) && (PS.miss.get(id) || 0) === 0) { PS.removed.delete(id); ch = true; } if (ch) saveRemoved(); }
@@ -480,7 +486,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (seq !== renderSeq) return;   // (a newer drawing of the list is on its way)
     grid.textContent = '';
     const q = $('#phsSearch').value.trim().toLowerCase();
-    const all = PS.list || [];
+    const all = allScores();
     if (PS.folder && !folders().some((f) => f.id === PS.folder)) PS.folder = null;
     $('#phsTitle').textContent = PS.folder ? folderName(PS.folder) : 'My scores';
     $('#phsClose').setAttribute('aria-label', PS.folder ? 'All scores' : 'Back');
@@ -500,7 +506,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       grid.append(b);
     }
     $('#phsEmpty').hidden = list.length > 0 || PS.busy || (!q && !PS.folder && folders().length > 0);
-    $('#phsEmpty').textContent = all.length ? (q ? 'Nothing found.' : 'No scores on this iPhone.') : 'Your scores show here once your iPad has been found: open Stand on it, on the same Wi-Fi.';
+    $('#phsEmpty').textContent = all.length ? (q ? 'Nothing found.' : 'No scores on this iPhone.') : 'Your iPad\'s scores show here once it has been found (open Stand on it, on the same Wi-Fi). Or add your own with +: scan pages, or bring them from Photos or Files.';
     grid.classList.toggle('editing', PS.editing);
     for (const s of list) {
       const b = el('div', 'phs-card'); b.setAttribute('role', 'button'); b.tabIndex = 0; b.dataset.score = s.id;
@@ -511,7 +517,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       th.append(st);
       if (PS.editing) {
         const x = el('button', 'phs-del'); x.setAttribute('aria-label', 'Remove ' + s.title + ' from this iPhone'); x.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 12h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
-        x.addEventListener('click', async (e) => { e.stopPropagation(); if (await askSure(`Remove the download of “${s.title}”?`, 'It stays on your iPad, and can be downloaded again at any time.', 'Remove Download')) removeScore(s); });
+        x.addEventListener('click', async (e) => { e.stopPropagation(); if (s.own ? await askSure(`Delete “${s.title}”?`, 'It was added on this iPhone: it goes for good.', 'Delete') : await askSure(`Remove the download of “${s.title}”?`, 'It stays on your iPad, and can be downloaded again at any time.', 'Remove Download')) removeScore(s); });
         th.append(x);
       }
       b.append(th, el('div', 'phs-t', s.title), el('div', 'phs-c', s.composer || (s.pages + (s.pages === 1 ? ' page' : ' pages'))));
@@ -533,11 +539,13 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     $('#phsEditHint').hidden = !PS.editing;
     $('#phsNewFolder').hidden = PS.editing;
     $('#phsEdit').hidden = !all.length;
+    $('#phsAdd').hidden = PS.editing;
   }
   function openList() { pane.hidden = false; document.body.classList.add('phs-open'); render(); sub(); refresh(true); }
   function closeList() { pane.hidden = true; PS.editing = false; PS.folder = null; document.body.classList.remove('phs-open'); }
   // taken off the iPhone: its copy goes, and it is not downloaded again until brought back
   async function removeScore(s) {
+    if (s.own) { PS.own = PS.own.filter((x) => x.id !== s.id); await setSetting('phoneOwn', PS.own); await dropCopy(s.id); toast(`${s.title} deleted.`); render(); sub(); return; }
     PS.removed.add(s.id); await saveRemoved();
     await dropCopy(s.id);
     toast(`${s.title} taken off this iPhone.`);
@@ -1084,5 +1092,26 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // (iOS stops the app in the background: back in it, the downloads go on from the page they had reached)
   let backAt = 0;
   document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible' || PS.sync || Date.now() - backAt < 30000) return; backAt = Date.now(); setTimeout(() => refresh(true), 800); });
-  return { refresh, openList };
+  // ---------- scores added on this iPhone ----------
+  // A PDF (from Files, or made from scanned pages or photos) kept here as the iPad's scores are, and
+  // read the same way (pages, Play); it never goes to the iPad, and nothing from the iPad replaces it.
+  async function addOwn(buf, name) {
+    const id = 'own' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), stamp = Date.now();
+    const doc = await openDocument({ id: verKey(id, stamp) + 'src', kind: 'pdf', data: buf.slice(0) }, null);
+    let thumb = '';
+    try {
+      const [pw, ph] = doc.sizes[0]; const c = document.createElement('canvas');
+      await doc.render(0, c, 240, Math.round((240 * ph) / pw)); thumb = c.toDataURL('image/jpeg', 0.75); c.width = c.height = 0;
+    } catch {}
+    const n = doc.pages; try { doc.destroy(); } catch {}
+    const title = String(name || 'Score').replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').trim() || 'Score';
+    await db.put('files', { id: srcKey(id, stamp), kind: 'pdf', data: buf });
+    await db.put('files', { id: copyId(id), kind: 'ipadcopy', mode: 'pdf', stamp, title, n, struct: {}, ink: [], at: Date.now(), own: true });
+    const rec = { id, title, composer: '', pages: n, stamp, thumb, own: true, added: Date.now() };
+    PS.own.push(rec); await setSetting('phoneOwn', PS.own);
+    if (PS.folder) { PS.org.place[id] = PS.folder; await saveOrg(); }
+    sub(); if (!pane.hidden) render();
+    return rec;
+  }
+  return { refresh, openList, addOwn, openOwn: (rec) => openScore(rec) };
 }

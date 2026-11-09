@@ -126,3 +126,23 @@ export async function exportPicture({ score, doc, i, withInk, box, long = 2400 }
   c.width = c.height = 0; if (out !== c) out.width = out.height = 0; f.width = f.height = 0;
   return blob;
 }
+
+// Pictures (scanned pages, photos) made into one PDF, a page each, at A4 width (the pictures as they
+// are, made smaller only when very big, and turned upright as the camera saw them).
+export async function imagesToPdf(blobs) {
+  const { PDFDocument } = await pdfLib();
+  const out = await PDFDocument.create();
+  for (const b of blobs) {
+    let bmp = null;
+    try { bmp = await createImageBitmap(b, { imageOrientation: 'from-image' }); } catch { try { bmp = await createImageBitmap(b); } catch { continue; } }
+    const k = Math.min(1, FLAT_LONG / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); try { bmp.close(); } catch {}
+    const jpg = await out.embedJpg(await canvasToBytes(c, 'image/jpeg', 0.9));
+    const W = 595.28, H = W * (c.height / c.width);
+    c.width = c.height = 0;
+    out.addPage([W, H]).drawImage(jpg, { x: 0, y: 0, width: W, height: H });
+  }
+  if (!out.getPageCount()) throw new Error('no pictures');
+  return (await out.save()).buffer;
+}

@@ -66,6 +66,8 @@ while IFS= read -r RT; do
       cp "$PDF" "$C0/Documents/Multi/Sonatas/Brahms Sonata E minor.pdf"
       cp "$PDF" "$C0/Documents/Multi/Studies/Piatti Caprice 1.pdf"
     fi
+    # a short video (pictures and stereo sound) for bringing a video in and making one in Studio
+    [ -n "$C0" ] && mkdir -p "$C0/Documents/VideoTest" && cp "$(dirname "$0")/clip.mov" "$C0/Documents/VideoTest/clip.mov"
     START=$(date +%s)
     # (the iOS 18 simulators cannot find WebKit's Swift library by themselves: a known simulator
     # fault, WebKit bug 293831 — real iPads are not affected; it is shown the way)

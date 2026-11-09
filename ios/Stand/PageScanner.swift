@@ -161,6 +161,11 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
             }
             self.session.addInput(input)
             if self.session.canAddOutput(self.stillOutput) { self.session.addOutput(self.stillOutput) }
+            // (the sharpest, biggest photo the camera can take: small print and bar numbers stay readable)
+            self.stillOutput.maxPhotoQualityPrioritization = .quality
+            if #available(iOS 16.0, *), let biggest = device.activeFormat.supportedMaxPhotoDimensions.max(by: { $0.width * $0.height < $1.width * $1.height }) {
+                self.stillOutput.maxPhotoDimensions = biggest
+            }
             self.videoOutput.alwaysDiscardsLateVideoFrames = true
             self.videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
             self.videoOutput.setSampleBufferDelegate(self, queue: self.videoQueue)
@@ -169,6 +174,9 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
 
             if (try? device.lockForConfiguration()) != nil {
                 if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+                // (a page is close: focus is looked for near first, and found sooner)
+                if device.isAutoFocusRangeRestrictionSupported { device.autoFocusRangeRestriction = .near }
+                if device.isSmoothAutoFocusSupported { device.isSmoothAutoFocusEnabled = false }
                 if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
                 device.unlockForConfiguration()
             }
@@ -202,6 +210,15 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
         if let page = request.results?.first, page.confidence > 0.5,
            page.boundingBox.width * page.boundingBox.height > 0.12 {
             corners = [page.topLeft, page.topRight, page.bottomRight, page.bottomLeft]
+        } else {
+            // (a page on a light table, or half in shadow: its edges looked for as a rectangle instead)
+            let rect = VNDetectRectanglesRequest()
+            rect.minimumAspectRatio = 0.45; rect.maximumAspectRatio = 1; rect.minimumSize = 0.35
+            rect.minimumConfidence = 0.6; rect.quadratureTolerance = 25; rect.maximumObservations = 1
+            try? handler.perform([rect])
+            if let r = rect.results?.first, r.boundingBox.width * r.boundingBox.height > 0.15 {
+                corners = [r.topLeft, r.topRight, r.bottomRight, r.bottomLeft]
+            }
         }
         // upright image: the buffer is turned a quarter turn
         let upright = CGSize(width: h, height: w)
@@ -226,10 +243,12 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
         noPageSince = nil
 
         let moved = quad.map { distance($0, c) } ?? 1
-        quad = c
+        // (the outline follows the page smoothly, without trembling)
+        let shown: [CGPoint] = (quad != nil && moved < 0.08) ? zip(quad!, c).map { CGPoint(x: $0.x * 0.55 + $1.x * 0.45, y: $0.y * 0.55 + $1.y * 0.45) } : c
+        quad = shown
 
         let path = UIBezierPath()
-        let points = c.map(toView)
+        let points = shown.map(toView)
         path.move(to: points[0])
         for p in points.dropFirst() { path.addLine(to: p) }
         path.close()
@@ -284,9 +303,13 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
         guard !inFlight, session.isRunning else { return }
         inFlight = true
         work.enter()
+        shotFrom = outline.path?.boundingBox
         flashNow()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        stillOutput.capturePhoto(with: AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg]), delegate: self)
+        let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+        if #available(iOS 16.0, *) { settings.maxPhotoDimensions = stillOutput.maxPhotoDimensions }
+        settings.photoQualityPrioritization = .balanced
+        stillOutput.capturePhoto(with: settings, delegate: self)
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
@@ -297,6 +320,7 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
                 self.inFlight = false
                 if let url {
                     self.pages.append(url)
+                    self.showPage(url)
                     self.counter.isHidden = false
                     self.counter.text = self.pages.count == 1 ? "1 page" : "\(self.pages.count) pages"
                     self.doneButton.isEnabled = true
@@ -312,8 +336,18 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
         guard var image = CIImage(data: data, options: [.applyOrientationProperty: true]) else { return nil }
         let box = image.extent
         let request = VNDetectDocumentSegmentationRequest()
-        try? VNImageRequestHandler(ciImage: image, options: [:]).perform([request])
-        if let page = request.results?.first, page.confidence > 0.3,
+        let handler = VNImageRequestHandler(ciImage: image, options: [:])
+        try? handler.perform([request])
+        var found: VNRectangleObservation? = request.results?.first.flatMap { $0.confidence > 0.3 ? $0 : nil }
+        if found == nil {
+            // (the page's edges as a rectangle, when the page itself was not made out)
+            let rect = VNDetectRectanglesRequest()
+            rect.minimumAspectRatio = 0.45; rect.maximumAspectRatio = 1; rect.minimumSize = 0.35
+            rect.minimumConfidence = 0.6; rect.quadratureTolerance = 25; rect.maximumObservations = 1
+            try? handler.perform([rect])
+            found = rect.results?.first
+        }
+        if let page = found,
            let filter = CIFilter(name: "CIPerspectiveCorrection") {
             func at(_ p: CGPoint) -> CIVector {
                 CIVector(x: box.minX + p.x * box.width, y: box.minY + p.y * box.height)
@@ -326,15 +360,49 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
             if let out = filter.outputImage { image = out }
         }
         let longest = max(image.extent.width, image.extent.height)
-        let k = min(1, 2400 / longest)
+        let k = min(1, 3200 / longest)
         if k < 1 { image = image.transformed(by: CGAffineTransform(scaleX: k, y: k)) }
         guard let jpeg = ciContext.jpegRepresentation(
             of: image,
             colorSpace: CGColorSpaceCreateDeviceRGB(),
-            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.9]
+            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.92]
         ) else { return nil }
         let url = incomingDir.appendingPathComponent(UUID().uuidString + "-scan.jpg")
         do { try jpeg.write(to: url); return url } catch { return nil }
+    }
+
+    // The page just scanned, straightened, pops up small in the middle for a moment (to see that it
+    // came out well), then flies down to the page count and is gone.
+    private var shotFrom: CGRect?
+    private func showPage(_ url: URL) {
+        guard let img = UIImage(contentsOfFile: url.path), img.size.width > 0 else { return }
+        let b = view.bounds
+        let s = min(b.width * 0.46 / img.size.width, b.height * 0.42 / img.size.height)
+        let size = CGSize(width: img.size.width * s, height: img.size.height * s)
+        let mid = CGRect(x: (b.width - size.width) / 2, y: (b.height - size.height) / 2 - 20, width: size.width, height: size.height)
+        let card = UIView(frame: shotFrom.flatMap { $0.width > 20 ? $0 : nil } ?? mid.insetBy(dx: size.width * 0.3, dy: size.height * 0.3))
+        card.layer.shadowColor = UIColor.black.cgColor; card.layer.shadowOpacity = 0.45; card.layer.shadowRadius = 18; card.layer.shadowOffset = CGSize(width: 0, height: 8)
+        card.isUserInteractionEnabled = false
+        let iv = UIImageView(image: img)
+        iv.frame = card.bounds; iv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        iv.contentMode = .scaleAspectFill; iv.clipsToBounds = true
+        iv.layer.cornerRadius = 8; iv.layer.borderWidth = 3; iv.layer.borderColor = UIColor.white.cgColor
+        card.addSubview(iv)
+        view.insertSubview(card, belowSubview: flash)
+        card.alpha = 0.2
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.72, initialSpringVelocity: 0.6, options: [.curveEaseOut]) {
+            card.frame = mid; card.alpha = 1
+            card.transform = CGAffineTransform(rotationAngle: -0.035)
+        } completion: { _ in
+            UIView.animate(withDuration: 0.5, delay: 1.0, options: [.curveEaseIn]) {
+                let end = self.counter.isHidden ? CGPoint(x: b.midX, y: b.maxY - 140) : self.counter.center
+                card.center = end
+                card.transform = CGAffineTransform(scaleX: 0.12, y: 0.12).rotated(by: -0.2)
+                card.alpha = 0
+            } completion: { _ in card.removeFromSuperview() }
+        }
+        // (a gentle tick when the page is kept)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     private func flashNow() {

@@ -1198,7 +1198,7 @@
 </div>
 
 <div class="phs" id="phScores" hidden>
-  <div class="phs-head"><button class="icon-btn" id="phsClose" aria-label="Back"><svg><use href="#i-back"/></svg></button><div class="phs-ht"><h2 id="phsTitle">My scores</h2><small id="phsSub"></small></div><button class="icon-btn" id="phsNewFolder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 9.7v7.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5M9.5 13.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button><button class="btn small ghost" id="phsEdit">Edit</button><button class="icon-btn" id="phsRefresh" aria-label="Get the latest from the iPad"><svg><use href="#i-refresh"/></svg></button></div>
+  <div class="phs-head"><button class="icon-btn" id="phsClose" aria-label="Back"><svg><use href="#i-back"/></svg></button><div class="phs-ht"><h2 id="phsTitle">My scores</h2><small id="phsSub"></small></div><button class="icon-btn" id="phsAdd" aria-label="Add scores: scan, Photos or Files"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button><input type="file" id="phsPhotos" accept="image/*" multiple hidden><input type="file" id="phsFiles" accept="application/pdf,.pdf,image/*" multiple hidden><button class="icon-btn" id="phsNewFolder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 9.7v7.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5M9.5 13.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button><button class="btn small ghost" id="phsEdit">Edit</button><button class="icon-btn" id="phsRefresh" aria-label="Get the latest from the iPad"><svg><use href="#i-refresh"/></svg></button></div>
   <div class="phs-search"><input id="phsSearch" type="search" placeholder="Search" autocomplete="off"></div>
   <p class="hint phs-edit-hint" id="phsEditHint" hidden>Tap − to remove a score's download from this iPhone (it stays on your iPad), or to delete a folder (its scores stay). Tap a folder to rename it.</p>
   <div class="phs-out" id="phsOut" hidden>Drop here to take it out of the folder</div>
@@ -1642,7 +1642,7 @@
   <div class="st-timeline" id="stTimeline">
     <div class="st-ruler" id="stRuler"></div>
     <div class="st-tracks" id="stTracks">
-      <div class="st-track st-media"><span class="st-tlabel"><svg><use href="#i-video"/></svg></span><canvas id="stWave"></canvas><div class="st-trim l" id="stTrimL"></div><div class="st-trim r" id="stTrimR"></div></div>
+      <div class="st-track st-media"><span class="st-tlabel"><svg><use href="#i-video"/></svg></span><canvas id="stWave"></canvas><div class="st-trimbox" id="stTrimBox"></div><div class="st-trim l" id="stTrimL"><i></i></div><div class="st-trim r" id="stTrimR"><i></i></div><div class="st-trimtip" id="stTrimTip" hidden></div></div>
       <div class="st-track st-scoretrack" id="stScoreTrack"><span class="st-tlabel"><svg><use href="#i-passage"/></svg></span><div class="st-lane" id="stScoreLane"></div></div>
       <div class="st-track st-imgtrack" id="stImgTrack"><span class="st-tlabel"><svg><use href="#i-image"/></svg></span><div class="st-lane" id="stImgLane"></div></div>
       <div class="st-head" id="stHead"></div>

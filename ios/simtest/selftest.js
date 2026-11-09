@@ -288,9 +288,49 @@ async function run() {
   });
   await shot('13-after-turns');
   await home();
+  await videoRun();
   await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);
   say(`SELFTEST DONE ok=${R.ok} fail=${R.fail} errors=${(window.__standErrors || []).length}`);
+}
+// A video brought in through iOS (as from Files or Photos), then made into a film in Studio by iOS:
+// every picture, at the video's own rate and size, with its sound, played back to check.
+async function videoRun() {
+  await closePanels();
+  let got = null;
+  await step('video in: whole, with its sound', async () => {
+    window.__videoIn = null;
+    if (!window.webkit.messageHandlers.standVideoIn) throw new Error('no standVideoIn');
+    window.webkit.messageHandlers.standVideoIn.postMessage({ cmd: 'test', path: 'VideoTest/clip.mov' });
+    got = await waitFor(() => window.__videoIn, 60000);
+    if (!got || got.error) throw new Error('not in: ' + JSON.stringify(got));
+    return got.pcm && got.dur > 2.5 && got.dur < 3.5 ? `${got.dur.toFixed(2)} s, ${Math.round(got.size / 1000)} kB, sound read` : false;
+  }, 90000);
+  await shot('v1-video-in');
+  if (!got || got.error) return;
+  await step('studio export: the film made by iOS', async () => {
+    await closePanels();
+    const S = await import('/js/studio.js');
+    await S.openStudio(got.id); await sleep(1500);
+    S._studio.P.trim = { a: 0, b: 2 };
+    window.__studioExport = null;
+    const ok = await S._exportNative({ share: false });
+    const r = window.__studioExport;
+    if (!ok || !r) throw new Error('not made');
+    // the film itself, played: its length and size
+    const { db } = await import('/js/db.js');
+    const takes = (await db.all('takes')).sort((x, y) => y.created - x.created);
+    const f = await db.get('files', 'video:' + takes[0].id);
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(f.data);
+    await new Promise((res) => { v.onloadedmetadata = res; v.onerror = res; setTimeout(res, 8000); });
+    const ok2 = Math.abs(v.duration - 2) < 0.2 && v.videoWidth === r.w && v.videoHeight === r.h && r.frames >= 50 && r.audio !== 'none';
+    $('#stBack') && $('#stBack').click(); await sleep(800);
+    const msg = `${r.frames} pictures ${r.w}x${r.h} @${r.fps}, ${(v.duration || 0).toFixed(2)} s, ${Math.round(r.size / 1000)} kB, sound ${r.audio}, ${JSON.stringify(r.seeks)} ${JSON.stringify(r.ms)}`;
+    if (!ok2) throw new Error(msg);
+    return msg;
+  }, 180000);
+  await shot('v2-exported');
+  await closePanels();
 }
 // the iPhone: its own home, the tools in the pocket, the linking screen, sideways and back
 async function phoneRun() {
@@ -305,6 +345,7 @@ async function phoneRun() {
   await step('iPhone: metronome plays', async () => { await open('metronome'); $('#metroToggle').click(); await sleep(2500); $('#metroToggle').click(); await sleep(300); await closePanels(); return true; });
   await step('iPhone: linking screen', async () => { await open('app'); const c = $('#pairCard'); c && c.scrollIntoView(); await sleep(400); const n = $('#pairNew'); if (!n) return 'no button'; n.click(); await sleep(1500); const ok = !!$('.pair'); const x = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); x && x.click(); await sleep(400); await closePanels(); return ok; });
   await shot('p-end');
+  await videoRun();
   await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);
   say(`SELFTEST DONE ok=${R.ok} fail=${R.fail} errors=${(window.__standErrors || []).length}`);

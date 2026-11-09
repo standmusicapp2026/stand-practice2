@@ -67,7 +67,8 @@ export async function openStudio(takeId) {
   ST.media.currentTime = ST.P.trim.a;
   // (a picture of the first frame to show, and to draw the looks with)
   if (ST.media.readyState < 2) await new Promise((res) => { const done = () => { ST.media.removeEventListener('loadeddata', done); ST.media.removeEventListener('seeked', done); res(); }; ST.media.addEventListener('loadeddata', done); ST.media.addEventListener('seeked', done); setTimeout(done, 2500); });
-  sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
+  ST.tv = null; sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
+  makeStrip();
   ST.media.addEventListener('seeked', () => frame());
   ST.media.addEventListener('ended', () => { ST.playing = false; syncPlay(); lsStop(); });
   // the sound heard as it will be in the video (room, level): played alongside the picture
@@ -171,7 +172,7 @@ async function addScore(opt = {}) {
     stackLines();
     saveSoon(); renderSide(); renderTimeline(); frame();
     // line it up with the playing straight away
-    if (ST.pcm) autoSync(o);
+    if (ST.pcm) { if (second && scoreLines().length === 2) syncBoth(); else autoSync(o); }
     else D.toast(`${o.layout.bars.length} bars. Use Sync › Tap along to line them up with the video.`, 4500);
   } catch (err) { console.error(err); busy(null); D.toast('That part of the score could not be read.'); }
 }
@@ -203,6 +204,30 @@ function stackLines() {
   if (ya - ha / 2 < 0) ya = ha / 2;
   a.pos = { x: a.pos.x, y: ya }; b.pos = { x: a.pos.x, y: ya + ha / 2 + gap + hb / 2 };
   frame();
+}
+// Two lines with the same bars (two parts of one piece): drawn on one grid, each bar as wide as the
+// wider of the two, so bar 10 of one part stands right over bar 10 of the other, and the page moves
+// for both together. (Not when the bars differ in number: then each line goes its own way.)
+function jointOf(o) {
+  const ls = scoreLines(); if (ls.length !== 2 || !ls.includes(o)) return null;
+  const [a, b] = ls, n = a.layout.bars.length;
+  if (n !== b.layout.bars.length || a.mode !== 'scroll' || b.mode !== 'scroll' || !a.times || !b.times) return null;
+  const hOf = (L) => { const hs = L.segs.map((s) => s.h).sort((p, q) => p - q); return hs[hs.length >> 1] || L.height; };
+  const rb = hOf(a.layout) / hOf(b.layout);           // the second line's pixels in the first one's
+  const key = `${a.id}|${b.id}|${n}|${a.layout.width}|${b.layout.width}`;
+  let J = ST._joint;
+  if (!J || J.key !== key) {
+    const cw = a.layout.bars.map((q, k) => Math.max(q.x1 - q.x0, (b.layout.bars[k].x1 - b.layout.bars[k].x0) * rb));
+    const cx = []; let s = 0; for (const w2 of cw) { cx.push(s); s += w2; }
+    J = ST._joint = { key, cw, cx, width: s };
+  }
+  J.r = (x) => (x === b ? rb : 1);
+  // a place in a line (its own pixels, in bar k) on the shared grid
+  J.toCommon = (x, pos, k) => { const q = x.layout.bars[k]; return J.cx[k] + clamp((pos - q.x0) / Math.max(1, q.x1 - q.x0), 0, 1) * J.cw[k]; };
+  // where both are at time t, by the first line's bars (evenly through each bar: the page glides)
+  const at = (t) => { const { b: k, f } = barAt(a, t); return k < 0 ? 0 : k >= n ? J.width : J.cx[k] + f * J.cw[k]; };
+  J.viewAt = (t) => { let s2 = 0; for (let k = -2; k <= 2; k++) s2 += at(t + k * 0.08); return s2 / 5; };
+  return J;
 }
 // a change to how a line looks: both lines, so the two read as one system
 function sharedChange(o, fn) { const ls = scoreLines(); for (const x of ls.length > 1 && ls.includes(o) ? ls : [o]) fn(x); }
@@ -406,7 +431,7 @@ function alignChords(evs, ons) {
     const r = { good: good / n, cost: bc / n, shift: sh, match };
     if (!best || r.good - (sh ? 0.08 : 0) > best.good - (best.shift ? 0.08 : 0)) best = r;
   }
-  best.evs = evs.map((e, i) => ({ bar: e.bar, x: e.x, t: best.match[i] >= 0 ? ons[best.match[i]].t : null }));
+  best.evs = evs.map((e, i) => ({ bar: e.bar, x: e.x, src: e.src, t: best.match[i] >= 0 ? ons[best.match[i]].t : null }));
   best.how = 'chords';
   return best;
 }
@@ -461,7 +486,10 @@ function alignFrames(evs, frames) {
     const r = { good: good / n, cost: bc / Math.max(1, n), shift: sh, start };
     if (!best || r.good - (sh ? 0.06 : 0) > best.good - (best.shift ? 0.06 : 0)) best = r;
   }
-  best.evs = evs.map((e, q) => ({ bar: e.bar, x: e.x, t: best.start[q] >= 0 ? frames[best.start[q]].t : null }));
+  // (a note on the same pitches as the one before cannot be told from it by the harmony: where it
+  // starts is a guess, and is not used for moving the line through the bar)
+  const same = (p, q) => p.length === q.length && p.every((x) => q.includes(x));
+  best.evs = evs.map((e, q) => ({ bar: e.bar, x: e.x, src: e.src, rep: q > 0 && same(e.pcs, evs[q - 1].pcs), t: best.start[q] >= 0 ? frames[best.start[q]].t : null }));
   best.how = 'harmony';
   return best;
 }
@@ -494,7 +522,7 @@ async function autoSync(o, { from = 0 } = {}) {
           if (!best || score < best.score) best = { ...r, score, clef, shift };
         }
       }
-      best.evs = L.notes.map((nt, i) => ({ bar: nt.bar, x: nt.x, t: best.match[i] >= 0 ? played[best.match[i]].t : null }));
+      best.evs = L.notes.map((nt, i) => ({ bar: nt.bar, x: nt.x, src: nt.src, t: best.match[i] >= 0 ? played[best.match[i]].t : null }));
       best.how = 'notes';
     }
     if (L.events && L.events.length >= 3 && (!best || best.good < 0.8 || L.events.some((e) => e.pcs.length > 1))) {
@@ -523,7 +551,7 @@ async function autoSync(o, { from = 0 } = {}) {
     const nb = L.bars.length;
     const first = new Array(nb).fill(null);
     const byBar = Array.from({ length: nb }, () => []);
-    for (const e of best.evs) byBar[e.bar].push({ x: e.x, t: e.t });
+    for (const e of best.evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
     let prevLast = null;
     for (let k = 0; k < nb; k++) {
       const ns = byBar[k].sort((a, b) => a.x - b.x), hit = ns.filter((n) => n.t !== null);
@@ -563,15 +591,8 @@ async function autoSync(o, { from = 0 } = {}) {
     const allTimes = from ? [...o.times.slice(0, from), ...newTimes] : newTimes;
     // inside each bar: where each heard note is, as a share of the bar's width and of its time,
     // so the line moves note by note with the playing (and still fits if bars are moved by hand)
-    const newKnots = byBar.map((ns, k) => {
-      const T0 = newTimes[k], T1 = newTimes[k + 1], b = L.bars[k];
-      const out = []; let lx = 0, lt = 0;
-      for (const n of ns.filter((q) => q.t !== null).sort((p, q) => p.x - q.x)) {
-        const fx = (n.x - b.x0) / Math.max(1, b.x1 - b.x0), ft = (n.t - T0) / Math.max(0.01, T1 - T0);
-        if (fx > lx + 0.02 && ft > lt + 0.02 && fx < 0.98 && ft < 0.98) { out.push([ft, fx]); lx = fx; lt = ft; }
-      }
-      return out;
-    });
+    const newKnots = knotsOf(byBar, newTimes, L.bars);
+    o._evs = from ? null : best.evs;
     o.times = allTimes;
     // (the bars kept keep their own; one that had none gets none: the line then moves evenly in it)
     o.knots = from ? [...Array.from({ length: from }, (_, k) => (o.knots && o.knots[k]) || []), ...newKnots] : newKnots;
@@ -580,6 +601,95 @@ async function autoSync(o, { from = 0 } = {}) {
     saveSoon(); renderSide(); renderTimeline(); frame();
     D.toast(best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
+}
+// inside each bar: where each heard note is, as a share of the bar's width and of its time
+function knotsOf(byBar, times, bars) {
+  return byBar.map((ns, k) => {
+    const T0 = times[k], T1 = times[k + 1], b = bars[k];
+    const out = []; let lx = 0, lt = 0;
+    for (const n of ns.filter((q) => q.t !== null && !q.rep).sort((p, q) => p.x - q.x)) {
+      const fx = (n.x - b.x0) / Math.max(1, b.x1 - b.x0), ft = (n.t - T0) / Math.max(0.01, T1 - T0);
+      if (fx > lx + 0.02 && ft > lt + 0.02 && fx < 0.98 && ft < 0.98) { out.push([ft, fx]); lx = fx; lt = ft; }
+    }
+    return out;
+  });
+}
+// A steady pace: a bar whose start sits well off the pace of the bars around it (a note heard in the
+// wrong place, a bar where nothing clear was heard) is put back on it. Only clear slips are moved, so
+// a real slowing down or speeding up stays.
+function steadyTimes(times, known = null) {
+  const T = times.slice(), n = T.length;
+  if (n < 6) return T;
+  const ok = T.map((_, k) => !known || known[k] !== false);
+  // where bar k would start by the pace of the bars around it (the middle of their slopes and
+  // offsets, so one slip among them does not move it; a bar where nothing was heard does not count)
+  const want = (k, least) => {
+    const ks = []; for (let q = Math.max(0, k - 3); q <= Math.min(n - 1, k + 3); q++) if (q !== k && ok[q]) ks.push(q);
+    if (ks.length < 4) for (let q = Math.max(0, k - 6); q <= Math.min(n - 1, k + 6); q++) if (Math.abs(q - k) > 3 && ok[q]) ks.push(q);
+    if (ks.length < least) return null;
+    const sl = []; for (let i = 0; i < ks.length; i++) for (let j = i + 1; j < ks.length; j++) sl.push((T[ks[j]] - T[ks[i]]) / (ks[j] - ks[i]));
+    sl.sort((p, q) => p - q); const pace = sl[sl.length >> 1];
+    if (!(pace > 0.05)) return null;
+    const off = ks.map((q) => T[q] - pace * q).sort((p, q) => p - q);
+    return { t: (off[(off.length - 1) >> 1] + off[off.length >> 1]) / 2 + pace * k, pace };
+  };
+  // bars where nothing was heard: on the pace of the ones around them
+  for (let k = 0; k < n; k++) if (!ok[k]) { const w = want(k, 2); if (w) T[k] = w.t; }
+  // then the clearest slip first, and look again (each one put right helps to see the next)
+  for (let it = 0; it < n; it++) {
+    let worst = -1, by = 0.25, to = 0;
+    for (let k = 0; k < n; k++) { const w = want(k, 4); if (!w) continue; const r = Math.abs(T[k] - w.t) / w.pace; if (r > by) { by = r; worst = k; to = w.t; } }
+    if (worst < 0) break;
+    T[worst] = to;
+  }
+  for (let k = 1; k < n; k++) if (T[k] < T[k - 1] + 0.12) T[k] = T[k - 1] + 0.12;
+  return T;
+}
+// Two parts of one piece (a duet: often one plays while the other rests): followed together, as one
+// score, so whoever is playing keeps the time for both, and both lines get the same bar times.
+async function syncBoth() {
+  const ls = scoreLines();
+  const [a, b] = ls;
+  if (!b || a.layout.bars.length !== b.layout.bars.length) { for (const x of ls) await autoSync(x); return; }
+  if (!ST.pcm) { D.toast('This recording has no sound to follow. Use Tap along.'); return; }
+  const A = a.layout, B = b.layout;
+  const mapX = (x, k) => { const p = A.bars[k], q = B.bars[k]; return p.x0 + ((x - q.x0) / Math.max(1, q.x1 - q.x0)) * (p.x1 - p.x0); };
+  const near = (k) => (A.bars[k].x1 - A.bars[k].x0) * 0.02;
+  const merge = (xs, add) => {
+    xs.sort((p, q) => p.bar - q.bar || p.x - q.x);
+    const out = [];
+    for (const e of xs) { const l = out[out.length - 1]; if (l && l.bar === e.bar && Math.abs(l.x - e.x) < near(e.bar)) { add(l, e); l.src.push(...e.src); } else out.push(e); }
+    return out;
+  };
+  // the notes of both (when both are read the same way: the same clef and key)
+  const sameRead = (A.clef || null) === (B.clef || null) && (A.key || 0) === (B.key || 0);
+  const notes = merge([
+    ...A.notes.map((nt) => ({ ...nt, ps: [...nt.ps], src: [{ line: 0, x: nt.x }] })),
+    ...(sameRead ? B.notes.map((nt) => ({ ...nt, x: mapX(nt.x, nt.bar), ps: [...nt.ps], src: [{ line: 1, x: nt.x }] })) : []),
+  ], (l, e) => { for (const q of e.ps) if (!l.ps.some((r) => r.p === q.p)) l.ps.push(q); });
+  const events = merge([
+    ...(A.events || []).map((e) => ({ ...e, pcs: [...e.pcs], src: [{ line: 0, x: e.x }] })),
+    ...(B.events || []).map((e) => ({ ...e, x: mapX(e.x, e.bar), pcs: [...e.pcs], src: [{ line: 1, x: e.x }] })),
+  ], (l, e) => { for (const pc of e.pcs) if (!l.pcs.includes(pc)) l.pcs.push(pc); });
+  const j = { id: a.id, layout: { ...A, notes, events }, times: null, knots: null };
+  await autoSync(j);
+  if (!j.times || !j._evs) return;
+  try { window.__jointRaw = j.times.slice(); } catch {}
+  // (a bar start pushed against the start of the recording was not heard there: it starts before)
+  const A0 = ST.P.trim.a, known = j.times.map((t, k) => !(t <= A0 + 0.02 && k < j.times.length - 1 && j.times[k + 1] - t < 1.2 * ((j.times[j.times.length - 1] - j.times[0]) / (j.times.length - 1))));
+  const T = steadyTimes(j.times, known);
+  // the end of the last bar is not heard (the next one is not on the page): at the pace of the bars
+  // before it, unless the playing clearly stopped sooner
+  { const m = T.length - 1, d = []; for (let k = Math.max(1, m - 4); k < m; k++) d.push(T[k] - T[k - 1]); d.sort((p, q) => p - q);
+    const pace = d[d.length >> 1]; if (pace > 0) T[m] = Math.min(ST.P.trim.b + pace, Math.max(T[m], T[m - 1] + pace)); }
+  // each line moves note by note with its own notes, on the shared bar times
+  ls.forEach((x, li) => {
+    const byBar = Array.from({ length: x.layout.bars.length }, () => []);
+    for (const e of j._evs) for (const s of e.src || []) if (s.line === li) byBar[e.bar].push({ x: s.x, t: e.t, rep: e.rep });
+    x.times = T.slice(); x.knots = knotsOf(byBar, T, x.layout.bars);
+    x.synced = 'auto'; x.syncInfo = { ...j.syncInfo, both: true };
+  });
+  saveSoon(); renderSide(); renderTimeline(); frame();
 }
 // Tap along: a tap on each bar's first beat. A tap lands a little off the beat it means (the finger,
 // and the sound reaching the ear a moment after the picture's clock), so each tap is then drawn to
@@ -715,9 +825,13 @@ function softBack(m, W, H) {
 function drawFrame(g, W, H, t, forExport) {
   const P = ST.P, m = ST.media;
   g.save();
-  g.fillStyle = P.bg || '#14171f'; g.fillRect(0, 0, W, H);
+  // (only what is drawn over the video, on a clear picture: for putting it over the original video
+  // elsewhere, at the original's own quality)
+  const onlyOver = !!globalThis.__studioOverlaysOnly;
+  if (onlyOver) g.clearRect(0, 0, W, H); else { g.fillStyle = P.bg || '#14171f'; g.fillRect(0, 0, W, H); }
   const isVideo = ST.take.kind === 'video' && m.videoWidth;
-  if (isVideo) {
+  if (onlyOver) { /* nothing under the overlays */ }
+  else if (isVideo) {
     const vw = m.videoWidth, vh = m.videoHeight;
     const cover = Math.max(W / vw, H / vh), contain = Math.min(W / vw, H / vh);
     if (P.fit === 'fit') {
@@ -822,6 +936,17 @@ function drawScore(g, W, H, o, t) {
     paint(v0, v1, 1, null, fullW);
     return;
   }
+  const J = o.mode === 'scroll' ? jointOf(o) : null;
+  if (J) {
+    // two parts as one system: the same bar over the same bar, the page moving for both together
+    const per = Math.max(1, o.perView), vw = Math.min(J.width, (J.width / n) * per);
+    const smooth = J.viewAt(t);
+    vx0 = clamp(smooth - vw * (o.band ? 0.22 : 0.32), 0, Math.max(0, J.width - vw)); vx1 = vx0 + vw;
+    if (b >= 0 && b < n) cursor = J.toCommon(o, posAt(o, t), cb);
+    else if (b >= n) cursor = J.width - 1;   // (at the end it stays on the last barline)
+    paint(vx0, vx1, 1, cursor, null, 1, J);
+    return;
+  }
   if (o.mode === 'static') { vx0 = 0; vx1 = L.width; }
   else if (o.mode === 'bars') {
     const per = Math.max(1, o.perView | 0); const gidx = Math.floor(cb / per);
@@ -838,16 +963,26 @@ function drawScore(g, W, H, o, t) {
     if (b >= 0 && b < n) cursor = pos;
   }
   paint(vx0, vx1, 1, cursor, null);
-  function paint(vx0, vx1, alpha, cursor, fullW, inkA = 1) {
+  function paint(vx0, vx1, alpha, cursor, fullW, inkA = 1, joint = null) {
   const vw = vx1 - vx0, vh = L.height;
   const band = !!o.band && o.mode === 'scroll';
-  const boxW0 = band ? W : W * o.size, scale = boxW0 / (fullW || vw), boxW = vw * scale, boxH = vh * scale * (band ? o.size / 0.96 : 1);
+  const boxW0 = band ? W : W * o.size, scale = boxW0 / (fullW || vw), boxW = vw * scale, boxH = vh * scale * (joint ? joint.r(o) : 1) * (band ? o.size / 0.96 : 1);
   const pad = band ? Math.round(boxH * 0.06) : o.look === 'lines' ? 0 : Math.round(boxW * 0.025);
   const cx = band ? W / 2 : clamp(o.pos.x * W, boxW / 2 + pad, W - boxW / 2 - pad), cy = clamp(o.pos.y * H, boxH / 2 + pad, H - boxH / 2 - pad);
   const x = cx - boxW / 2, y = cy - boxH / 2;
   // only the part of the strip that exists (an endless line starts and ends in blank paper)
   const sx0 = Math.max(0, vx0), sx1 = Math.min(L.width, vx1);
-  const blit = (img) => { if (sx1 > sx0 && inkA > 0.001) { const a0 = g.globalAlpha; g.globalAlpha = a0 * inkA; g.drawImage(img, sx0, 0, sx1 - sx0, vh, x + (sx0 - vx0) * scale, y, (sx1 - sx0) * scale, boxH); ; g.globalAlpha = a0; } };
+  const blit = joint ? (img) => {
+    // bar by bar, each into its place on the shared grid (cut at the edges of the view)
+    const ja = g.globalAlpha; g.globalAlpha = ja * inkA;
+    bars.forEach((bb, k) => {
+      const c0 = joint.cx[k], c1 = c0 + joint.cw[k], d0 = Math.max(c0, vx0), d1 = Math.min(c1, vx1);
+      if (d1 <= d0) return;
+      const s0 = bb.x0 + ((d0 - c0) / (c1 - c0)) * (bb.x1 - bb.x0), s1 = bb.x0 + ((d1 - c0) / (c1 - c0)) * (bb.x1 - bb.x0);
+      if (s1 - s0 > 0.5) g.drawImage(img, s0, 0, s1 - s0, vh, x + (d0 - vx0) * scale, y, (d1 - d0) * scale, boxH);
+    });
+    g.globalAlpha = ja;
+  } : (img) => { if (sx1 > sx0 && inkA > 0.001) { const a0 = g.globalAlpha; g.globalAlpha = a0 * inkA; g.drawImage(img, sx0, 0, sx1 - sx0, vh, x + (sx0 - vx0) * scale, y, (sx1 - sx0) * scale, boxH); ; g.globalAlpha = a0; } };
   o._box = { x: x - pad, y: y - pad, w: boxW + pad * 2, h: boxH + pad * 2, W, H };
   g.save(); g.globalAlpha = (o.opacity ?? 1) * alpha;
   if (o.look !== 'lines') {
@@ -873,7 +1008,7 @@ function drawScore(g, W, H, o, t) {
     if (band && shade) {
       // a soft band behind the music, fading out above and below (no hard dark strip)
       g.save(); g.shadowBlur = 0;
-      const col = ink === '#ffffff' ? '0,0,0' : '255,255,255', a = ink === '#ffffff' ? 0.32 : 0.34, f = boxH * 0.22;
+      const col = ink === '#ffffff' ? '0,0,0' : '255,255,255', a = ink === '#ffffff' ? 0.45 : 0.55, f = boxH * 0.22;
       const gr = g.createLinearGradient(0, y - pad - f, 0, y + boxH + pad + f);
       const H2 = boxH + pad * 2 + f * 2, e = f / H2;
       gr.addColorStop(0, `rgba(${col},0)`); gr.addColorStop(e, `rgba(${col},${a})`); gr.addColorStop(1 - e, `rgba(${col},${a})`); gr.addColorStop(1, `rgba(${col},0)`);
@@ -932,22 +1067,26 @@ const selected = () => (ST.sel ? ST.P.overlays.find((o) => o.id === ST.sel.id) :
 // =====================================================================
 // Timeline
 // =====================================================================
-function tx(t) { const lane = $('#stScoreLane').getBoundingClientRect(); return ((t - 0) / ST.dur) * lane.width; }
-function tAt(clientX) { const lane = $('#stScoreLane').getBoundingClientRect(); return clamp(((clientX - lane.left) / lane.width) * ST.dur, 0, ST.dur); }
+// (the part of the recording the timeline shows: all of it, or a few seconds around a trim handle held)
+const tview = () => (ST.tv && ST.tv.b > ST.tv.a ? ST.tv : { a: 0, b: ST.dur });
+function tx(t) { const lane = $('#stScoreLane').getBoundingClientRect(); const v = tview(); return ((t - v.a) / (v.b - v.a)) * lane.width; }
+function tAt(clientX) { const lane = $('#stScoreLane').getBoundingClientRect(); const v = tview(); return clamp(v.a + ((clientX - lane.left) / lane.width) * (v.b - v.a), 0, ST.dur); }
 function renderTimeline() {
   const ruler = $('#stRuler'); ruler.textContent = '';
-  const step = ST.dur > 240 ? 30 : ST.dur > 90 ? 10 : ST.dur > 30 ? 5 : 2;
-  const lane = $('#stScoreLane').getBoundingClientRect();
-  for (let s = 0; s <= ST.dur; s += step) { const sp = el('span', '', fmt(s).replace(/\.\d$/, '')); sp.style.left = (s / ST.dur) * lane.width + 'px'; ruler.append(sp); }
+  const V = tview(), span = V.b - V.a;
+  const LW = $('#stScoreLane').getBoundingClientRect().width || 600;
+  // (marks far enough apart to read: about one per 64 points)
+  const step = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((q) => (span / q) * 64 <= LW) || 600;
+  for (let s = Math.ceil(V.a / step) * step; s <= V.b + 1e-6; s += step) { const sp = el('span', '', step < 1 || s % 1 ? fmt(s) : fmt(s).replace(/\.\d$/, '')); sp.style.left = tx(s) + 'px'; ruler.append(sp); }
   const sl = $('#stScoreLane'); sl.textContent = '';
   const o = ST.P.overlays.find((x) => x.kind === 'score');
   if (o && o.times) {
     const { b } = barAt(o, ST.media ? ST.media.currentTime : 0);
     o.layout.bars.forEach((bar, k) => {
       const d = el('div', 'st-bar' + (k === b ? ' cur' : ''), String(k + 1));
-      d.style.left = tx(o.times[k]) + 'px'; d.style.width = Math.max(2, tx(o.times[k + 1]) - tx(o.times[k]) - 1) + 'px';
+      const l0 = tx(Math.max(0, o.times[k])); d.style.left = l0 + 'px'; d.style.width = Math.max(2, tx(o.times[k + 1]) - l0 - 1) + 'px';
       const edge = el('span', 'edge'); edge.dataset.k = k; d.append(edge);
-      d.addEventListener('pointerdown', (e) => { if (e.target === edge) return; ST.sel = { id: o.id }; seek(o.times[k] + 0.01); renderSide(); });
+      d.addEventListener('pointerdown', (e) => { if (e.target === edge) return; ST.sel = { id: o.id }; seek(Math.max(0, o.times[k] + 0.01)); renderSide(); });
       sl.append(d);
     });
     // the end of the last bar
@@ -967,9 +1106,8 @@ function renderTimeline() {
     il.append(d);
     void bmp;
   }
-  // trim handles
-  $('#stTrimL').style.left = (40 + tx(ST.P.trim.a) - 7) + 'px';
-  $('#stTrimR').style.left = (40 + tx(ST.P.trim.b) - 7) + 'px';
+  // trim handles, and the yellow frame between them
+  placeTrim();
   updateHead();
 }
 function updateHead() {
@@ -984,28 +1122,112 @@ function updateHead() {
     bars.forEach((d, k) => d.classList.toggle('cur', k === b));
   }
 }
+function placeTrim() {
+  const W = $('#stScoreLane').getBoundingClientRect().width;
+  const xa = tx(ST.P.trim.a), xb = tx(ST.P.trim.b);
+  const L = $('#stTrimL'), R = $('#stTrimR'), box = $('#stTrimBox');
+  L.style.left = (40 + xa) + 'px'; R.style.left = (40 + xb) + 'px';
+  L.style.visibility = xa >= -8 && xa <= W + 8 ? '' : 'hidden'; R.style.visibility = xb >= -8 && xb <= W + 8 ? '' : 'hidden';
+  const c0 = clamp(xa, 0, W), c1 = clamp(xb, 0, W);
+  box.style.left = (40 + c0) + 'px'; box.style.width = Math.max(0, c1 - c0) + 'px';
+}
+// The strip under the trim handles: small pictures of the video along it (as in Photos), with the
+// sound's waveform over their lower part; what is trimmed away is dimmed.
+const STRIP = { pics: [], key: '', busy: false };
+async function makeStrip() {
+  if (ST.take.kind !== 'video' || !ST.url) return;
+  const key = ST.take.id; if (STRIP.key === key || STRIP.busy) return;
+  STRIP.busy = true; STRIP.key = key; STRIP.pics = [];
+  try {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = ST.url;
+    await new Promise((res) => { v.onloadeddata = res; v.onerror = res; setTimeout(res, 4000); });
+    const ar = (v.videoWidth || 9) / (v.videoHeight || 16);
+    const h = 56, w = Math.max(16, Math.round(h * ar));
+    const n = clamp(Math.round(ST.dur * 2), 12, 120);   // (two a second, enough to open out a little)
+    for (let k = 0; k < n; k++) {
+      if (STRIP.key !== key) return;
+      const t = ((k + 0.5) / n) * ST.dur;
+      await new Promise((res) => { const done = () => { v.removeEventListener('seeked', done); res(); }; v.addEventListener('seeked', done); v.currentTime = t; setTimeout(done, 1200); });
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      try { c.getContext('2d').drawImage(v, 0, 0, w, h); } catch {}
+      STRIP.pics.push({ t, c });
+      if (k % 6 === 5) drawWave();
+    }
+    v.removeAttribute('src'); v.load();
+  } finally { STRIP.busy = false; drawWave(); }
+}
 function drawWave() {
   const c = $('#stWave'); const r = c.getBoundingClientRect(); const dpr = Math.min(2, devicePixelRatio || 1);
   c.width = Math.max(10, r.width * dpr); c.height = Math.max(10, r.height * dpr);
   const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
+  const V = tview(), span = V.b - V.a;
+  const X = (t) => ((t - V.a) / span) * c.width;
+  const ax = X(ST.P.trim.a), bx = X(ST.P.trim.b);
+  const pics = STRIP.key === (ST.take && ST.take.id) ? STRIP.pics : [];
+  if (pics.length) {
+    // the pictures, side by side, each the one nearest its place in time
+    const ph = c.height, pw = Math.max(4, Math.round(ph * (pics[0].c.width / pics[0].c.height)));
+    g.save(); rr(g, 0, 0, c.width, c.height, 9 * dpr); g.clip();
+    for (let x = 0; x < c.width; x += pw) {
+      const t = V.a + ((x + pw / 2) / c.width) * span;
+      let best = pics[0]; for (const p of pics) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+      g.drawImage(best.c, x, 0, pw, ph);
+    }
+    g.restore();
+  }
   const peaks = ST.take.peaks;
-  // dim what is trimmed away
-  const ax = (ST.P.trim.a / ST.dur) * c.width, bx = (ST.P.trim.b / ST.dur) * c.width;
   if (peaks && peaks.length) {
     let max = 0.0001; for (const p of peaks) max = Math.max(max, p);
     const n = Math.floor(c.width / (3 * dpr));
+    const H = pics.length ? c.height * 0.42 : c.height - 10 * dpr, base = pics.length ? c.height - 3 * dpr : c.height / 2;
     for (let i = 0; i < n; i++) {
-      const a = Math.floor((i / n) * peaks.length), b = Math.max(a + 1, Math.floor(((i + 1) / n) * peaks.length));
-      let m = 0; for (let j = a; j < b; j++) m = Math.max(m, peaks[j]);
-      const h = Math.max(1.5 * dpr, Math.pow(m / max, 0.8) * (c.height - 10 * dpr));
+      const t0 = V.a + (i / n) * span, t1 = V.a + ((i + 1) / n) * span;
+      const a = Math.floor((t0 / ST.dur) * peaks.length), b = Math.max(a + 1, Math.floor((t1 / ST.dur) * peaks.length));
+      let m = 0; for (let j = Math.max(0, a); j < Math.min(peaks.length, b); j++) m = Math.max(m, peaks[j]);
+      const h = Math.max(1.5 * dpr, Math.pow(m / max, 0.8) * H);
       const x = i * 3 * dpr;
-      g.fillStyle = css('--accent-text'); g.globalAlpha = x >= ax && x <= bx ? 0.75 : 0.22;
-      g.fillRect(x, (c.height - h) / 2, 2 * dpr, h);
+      if (pics.length) { g.fillStyle = '#ffffff'; g.globalAlpha = 0.85; g.fillRect(x, base - h, 2 * dpr, h); }
+      else { g.fillStyle = css('--accent-text'); g.globalAlpha = x >= ax && x <= bx ? 0.75 : 0.22; g.fillRect(x, (c.height - h) / 2, 2 * dpr, h); }
     }
   }
   g.globalAlpha = 1;
+  // (what is cut away, dimmed)
+  if (pics.length) { g.fillStyle = 'rgba(0,0,0,0.55)'; if (ax > 0) g.fillRect(0, 0, Math.min(c.width, ax), c.height); if (bx < c.width) g.fillRect(Math.max(0, bx), 0, c.width - Math.max(0, bx), c.height); }
 }
 function seek(t) { ST.media.currentTime = clamp(t, 0, ST.dur); frame(); }
+// the time over a trim handle while it is moved (to the hundredth when opened out)
+function trimTip(side) {
+  const tip = $('#stTrimTip'), t = ST.P.trim[side];
+  tip.hidden = false; tip.style.left = (40 + tx(t)) + 'px';
+  const s2 = ST.tv ? (Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0')) : fmt(t);
+  tip.innerHTML = ''; tip.append(s2); const sm = document.createElement('small'); sm.textContent = '· ' + fmt(ST.P.trim.b - ST.P.trim.a); tip.append(sm);
+}
+// opening the strip out around a handle held still, and closing it again (a short glide each way)
+function zoomTrim(drag, open) {
+  const from = tview(), full = { a: 0, b: ST.dur };
+  let to = full;
+  if (open) {
+    const span = clamp(ST.dur / 8, 2, 8), h = ST.P.trim[drag.side];
+    if (span >= ST.dur * 0.8) return;
+    // (the handle stays under the finger while the strip opens out around it)
+    const frac = (h - from.a) / Math.max(0.001, from.b - from.a);
+    const a2 = clamp(h - frac * span, 0, ST.dur - span); to = { a: a2, b: a2 + span };
+    drag.zoomed = true; try { navigator.vibrate && navigator.vibrate(8); } catch {}
+  }
+  $('#stTrim' + (drag.side === 'a' ? 'L' : 'R')).classList.toggle('zoom', open);
+  $('.st-media').classList.toggle('zoomed', open);
+  const t0 = performance.now(), ms = 220;
+  cancelAnimationFrame(ST.zoomRaf);
+  const stepZ = () => {
+    const f = Math.min(1, (performance.now() - t0) / ms), e2 = 1 - Math.pow(1 - f, 3);
+    const v = { a: from.a + (to.a - from.a) * e2, b: from.b + (to.b - from.b) * e2 };
+    ST.tv = open || f < 1 ? v : null;
+    renderTimeline(); drawWave();
+    if (f < 1) ST.zoomRaf = requestAnimationFrame(stepZ);
+    else if (open) { drag.off = ST.P.trim[drag.side] - tAt(drag.lastX ?? drag.x0); trimTip(drag.side); }
+  };
+  stepZ();
+}
 function wireTimeline() {
   const tracks = $('#stTracks');
   let drag = null;
@@ -1015,7 +1237,12 @@ function wireTimeline() {
     const trim = e.target.closest('.st-trim');
     const img = e.target.closest('[data-img]');
     try { tracks.setPointerCapture(e.pointerId); } catch {}
-    if (trim) { drag = { kind: 'trim', side: trim.id === 'stTrimL' ? 'a' : 'b' }; pause(); return; }
+    if (trim) {
+      // (held still for a moment: the strip opens out around the handle, for the exact moment)
+      const side = trim.id === 'stTrimL' ? 'a' : 'b';
+      drag = { kind: 'trim', side, x0: e.clientX, off: ST.P.trim[side] - t, hold: setTimeout(() => { if (drag && drag.kind === 'trim' && !drag.moved) zoomTrim(drag, true); }, 380) };
+      trimTip(side); pause(); return;
+    }
     if (edge && edge.dataset.k !== undefined) { drag = { kind: 'bar', k: +edge.dataset.k }; pause(); return; }
     if (img) { const o = ST.P.overlays.find((x) => x.id === img.dataset.img); drag = { kind: 'img', o, side: img.dataset.side, t0: t, a: o.t0, b: o.t1 }; return; }
     drag = { kind: 'seek' }; seek(t);
@@ -1024,11 +1251,22 @@ function wireTimeline() {
     if (!drag) return;
     const t = tAt(e.clientX);
     if (drag.kind === 'seek') seek(t);
-    else if (drag.kind === 'trim') { if (drag.side === 'a') ST.P.trim.a = clamp(t, 0, ST.P.trim.b - 0.5); else ST.P.trim.b = clamp(t, ST.P.trim.a + 0.5, ST.dur); seek(drag.side === 'a' ? ST.P.trim.a : ST.P.trim.b); renderTimeline(); drawWave(); }
+    else if (drag.kind === 'trim') {
+      if (Math.abs(e.clientX - drag.x0) > 6) drag.moved = true;
+      drag.lastX = e.clientX;
+      const want = t + drag.off;
+      if (drag.side === 'a') ST.P.trim.a = clamp(want, 0, ST.P.trim.b - 0.5); else ST.P.trim.b = clamp(want, ST.P.trim.a + 0.5, ST.dur);
+      // (opened out: the view follows the handle when it nears an edge)
+      if (ST.tv && drag.zoomed) { const v = ST.tv, span = v.b - v.a, h = ST.P.trim[drag.side]; if (h < v.a + span * 0.12 || h > v.b - span * 0.12) { const a2 = clamp(h - span / 2, 0, Math.max(0, ST.dur - span)); ST.tv = { a: a2, b: a2 + span }; drag.off = ST.P.trim[drag.side] - tAt(e.clientX); } }
+      seek(ST.P.trim[drag.side]); renderTimeline(); drawWave(); trimTip(drag.side);
+    }
     else if (drag.kind === 'bar') {
       const o = ST.P.overlays.find((x) => x.kind === 'score'); const T = o.times, k = drag.k;
-      T[k] = clamp(t, k > 0 ? T[k - 1] + 0.08 : 0, k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur);
-      o.synced = 'hand'; seek(T[k] + 0.01); renderTimeline();
+      T[k] = clamp(t, k > 0 ? T[k - 1] + 0.08 : Math.min(0, T[0]), k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur);
+      o.synced = 'hand';
+      // (two parts on one grid keep the same bar times: a bar moved is moved in both)
+      const two = scoreLines()[1]; if (two && two.times && two.times.length === T.length) { two.times[k] = T[k]; two.synced = 'hand'; }
+      seek(Math.max(0, T[k] + 0.01)); renderTimeline();
     } else if (drag.kind === 'img') {
       const o = drag.o, d = t - drag.t0;
       if (drag.side === 'a') o.t0 = clamp(drag.a + d, 0, o.t1 - 0.3);
@@ -1037,7 +1275,9 @@ function wireTimeline() {
       renderTimeline(); seek(o.t0 + 0.05);
     }
   });
-  const end = () => { if (drag && drag.kind !== 'seek') saveSoon(); const was = drag && drag.kind; drag = null; if ((was === 'bar' || was === 'seek') && ST.sel && ST.P.overlays.find((x) => x.id === ST.sel.id && x.kind === 'score')) renderSide(); };
+  const end = () => {
+    if (drag && drag.kind === 'trim') { clearTimeout(drag.hold); if (drag.zoomed) zoomTrim(drag, false); $('#stTrimTip').hidden = true; }
+    if (drag && drag.kind !== 'seek') saveSoon(); const was = drag && drag.kind; drag = null; if ((was === 'bar' || was === 'seek') && ST.sel && ST.P.overlays.find((x) => x.id === ST.sel.id && x.kind === 'score')) renderSide(); };
   tracks.addEventListener('pointerup', end); tracks.addEventListener('pointercancel', end);
 }
 // Drag the score or an image on the picture to place it; pinch or the slider to size it.
@@ -1117,7 +1357,7 @@ function renderSide() {
     sync.append(state);
     const row = el('div', 'row-even');
     const auto = el('button', 'btn small primary'); auto.append(el('span', '', 'Follow my playing')); auto.disabled = !ST.pcm;
-    auto.addEventListener('click', () => autoSync(o));
+    auto.addEventListener('click', () => (scoreLines().length === 2 && scoreLines().includes(o) ? syncBoth() : autoSync(o)));
     const tapB = el('button', 'btn small', 'Tap along'); tapB.addEventListener('click', () => startTap(o));
     row.append(auto, tapB); sync.append(row);
     // from the bar where the picture is now (put right by hand first, by dragging its start): the
@@ -1263,6 +1503,15 @@ async function addImage(file) {
 // Export: plays the edit once and records it (real time)
 // =====================================================================
 async function exportVideo() {
+  if (videoOutNative()) {
+    try { if (await exportNative()) return; }
+    catch (err) { console.error(err); try { D.log && D.log('studio export (native): ' + (err && err.message)); } catch {} }
+    if (ST.exportCancelled) { ST.exportCancelled = false; return; }
+    // (if it could not be made that way, it is made the old way: played once and recorded)
+  }
+  return exportRealtime();
+}
+async function exportRealtime() {
   pause();
   const [W, H] = outSize();
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
@@ -1330,7 +1579,10 @@ async function exportVideo() {
   if (cancelled) { D.toast('Export cancelled.'); return; }
   const blob = new Blob(chunks, { type: (type || 'video/mp4').split(';')[0] });
   if (blob.size < 5000) { D.toast('The video could not be made.'); return; }
-  // keep it in Recordings, then share
+  await keepExport(blob, a, b, total);
+}
+// the finished video: kept in Recordings, then shared
+async function keepExport(blob, a, b, total, { share = true } = {}) {
   const id = uid();
   const take = { id, kind: 'video', mime: blob.type, scoreId: ST.take.scoreId, page: ST.take.page, name: (ST.take.name || 'Video') + ' · Studio', created: Date.now(), mirror: false, fav: false, thumb: await videoThumb(blob) };
   await db.put('files', { id: 'video:' + id, data: blob });
@@ -1343,7 +1595,191 @@ async function exportVideo() {
   D.onSaved && D.onSaved(take);
   D.toast('Saved in Recordings.', 2500);
   const ext = blob.type.includes('webm') ? '.webm' : '.mp4';
-  shareChooser(blob, (take.name || 'Studio').replace(/[\\/:*?"<>|]+/g, '') + ext);
+  if (share) shareChooser(blob, (take.name || 'Studio').replace(/[\\/:*?"<>|]+/g, '') + ext);
+  return take;
+}
+
+// ---------- Export in the app: every picture drawn here, the film made by iOS ----------
+// Nothing is played in real time: each picture of the video is drawn exactly (the video's own frame
+// at that moment, the score over it) and handed to iOS, which makes the film at the video's own frame
+// rate and a high quality, with the original sound (or the one Studio makes with its room). Never a
+// picture dropped because the iPad was busy, and the video is only made smaller once.
+const videoOutNative = () => !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standVideoOut && (window.standCaps || {}).videoOut);
+const OUTQ = new Map();   // id -> { evs: [], wake }
+window.standVideoOutEvent = (ev) => { const q = ev && OUTQ.get(ev.id); if (!q) return; q.evs.push(ev); if (q.wake) { const w = q.wake; q.wake = null; w(); } };
+async function outNext(id, types, ms = 120000) {
+  const q = OUTQ.get(id); const t0 = Date.now();
+  for (;;) {
+    const k = q.evs.findIndex((e) => e.type === 'error' || types.includes(e.type));
+    if (k >= 0) { const ev = q.evs.splice(k, 1)[0]; if (ev.type === 'error') throw new Error(ev.message || 'export'); return ev; }
+    if (Date.now() - t0 > ms) throw new Error('no answer from iOS (' + types.join('/') + ')');
+    await new Promise((r) => { q.wake = r; setTimeout(r, 1000); });
+  }
+}
+const toB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+// a file handed to iOS in pieces (never whole in one message)
+async function outUpload(id, op, blob, name) {
+  const post = (m) => window.webkit.messageHandlers.standVideoOut.postMessage({ op, id, ...m });
+  post({ part: 'begin', name }); await outNext(id, ['chunk']);
+  const CH = 3 << 20;
+  for (let o = 0; o < blob.size; o += CH) { post({ part: 'chunk', data: await toB64(blob.slice(o, o + CH)) }); await outNext(id, ['chunk']); }
+  post({ part: 'end' });
+  return op === 'src' ? outNext(id, ['src']) : outNext(id, ['chunk']);
+}
+// the sound as Studio makes it (level and room), worked out at once, not in real time
+async function studioSound(a, b) {
+  const sr = ST.sr, i0 = Math.floor(a * sr), i1 = Math.min(ST.pcm.length, Math.ceil(b * sr));
+  const part = ST.pcm.subarray(i0, i1);
+  const room = ROOMS[ST.P.sound.room];
+  const tail = room ? Math.round(sr * 2) : 0;
+  const oc = new OfflineAudioContext(2, Math.max(1, part.length + tail), sr);
+  const buf = oc.createBuffer(1, Math.max(1, part.length), sr); buf.copyToChannel(part, 0);
+  const src = oc.createBufferSource(); src.buffer = buf;
+  const level = oc.createGain(); const pk = peakOf(part); level.gain.value = ST.P.sound.level !== false && pk > 0.001 ? Math.min(8, 0.89 / pk) : 1;
+  src.connect(level); level.connect(oc.destination);
+  if (room) { const conv = oc.createConvolver(); conv.buffer = makeImpulse(oc, room); const wet = oc.createGain(); wet.gain.value = (ST.P.sound.wet ?? 0.18) * 0.9; level.connect(conv).connect(wet).connect(oc.destination); }
+  src.start(0);
+  const out = await oc.startRendering();
+  const n = part.length;   // (as long as the pictures)
+  return encodeWav([out.getChannelData(0).subarray(0, n), out.getChannelData(1).subarray(0, n)], sr);
+}
+async function exportNative({ share = true } = {}) {
+  pause();
+  const [W, H] = outSize();
+  const a = ST.P.trim.a, b = ST.P.trim.b, total = b - a;
+  const id = 'x' + uid();
+  OUTQ.set(id, { evs: [], wake: null });
+  const post = (m) => window.webkit.messageHandlers.standVideoOut.postMessage({ id, ...m });
+  let cancelled = false; ST.exportCancelled = false;
+  ST.busyCancel = () => { cancelled = true; ST.exportCancelled = true; try { post({ op: 'cancel' }); } catch {} };
+  ST.exporting = true; lsStop();
+  busy('Making the video…', 'Getting the video ready.', 0);
+  const isVideo = ST.take.kind === 'video';
+  try {
+    // the original video goes to iOS first: its frame rate, and its own sound
+    let fps = 30, srcInfo = null;
+    post({ op: 'begin', w: W, h: H, fps: 30 });
+    await outNext(id, ['ready']);
+    if (isVideo) {
+      const vf = await db.get('files', 'video:' + ST.take.id);
+      if (vf && vf.data) {
+        srcInfo = await outUpload(id, 'src', vf.data, ST.take.mime && /mp4/.test(ST.take.mime) ? 'v.mp4' : 'v.mov');
+        if (srcInfo.fps > 1) fps = Math.max(24, Math.min(60, Math.round(srcInfo.fps)));
+      }
+    }
+    if (cancelled) return false;
+    // (the film at the video's own frame rate)
+    if (fps !== 30) { post({ op: 'set', fps }); await outNext(id, ['ready']); }
+    // the sound: the original as it is (only made louder when Studio levels it), unless a room is
+    // added: then the one Studio makes
+    let audio = 'none', gain = 1;
+    const room = ROOMS[ST.P.sound.room];
+    if (isVideo && srcInfo && srcInfo.hasAudio && !room) {
+      audio = 'src';
+      if (ST.P.sound.level !== false && ST.pcm) { const i0 = Math.floor(a * ST.sr), i1 = Math.min(ST.pcm.length, Math.ceil(b * ST.sr)); const pk = peakOf(ST.pcm.subarray(i0, i1)); gain = pk > 0.001 ? Math.min(8, 0.89 / pk) : 1; }
+    } else if (ST.pcm) {
+      busy('Making the video…', 'Making the sound.', 0.01);
+      await outUpload(id, 'wav', await studioSound(a, b));
+      audio = 'wav';
+    }
+    if (cancelled) return false;
+    // every picture, drawn exactly at its moment
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const g = canvas.getContext('2d');
+    const m = ST.media;
+    const N = Math.max(1, Math.round(total * fps));
+    const seekTo = (t) => new Promise((res) => {
+      let ok = false; const done = (how) => { if (ok) return; ok = true; SEEKS[how] = (SEEKS[how] || 0) + 1; res(); };
+      // (the picture shown from i/fps to (i+1)/fps: asking for its middle never lands on the one before)
+      if (m.requestVideoFrameCallback) m.requestVideoFrameCallback(() => done('frame'));
+      m.addEventListener('seeked', () => setTimeout(() => done('seeked'), m.requestVideoFrameCallback ? 120 : 30), { once: true });
+      m.currentTime = t; setTimeout(() => done('late'), 3000);
+    });
+    let pending = null; const t0 = performance.now(); const SEEKS = {}; let tDraw = 0, tJpg = 0, tSeek = 0;
+    let sent = 0, skipped = 0, rate = 0.5;
+    const progress = (tt) => {
+      const f = clamp((tt - a) / Math.max(0.01, total), 0, 1), left = f > 0.03 ? ((performance.now() - t0) / f) * (1 - f) / 1000 : null;
+      busy('Making the video…', `${fmt(tt - a)} of ${fmt(total)}` + (left ? ` · about ${fmt(left)} left` : ''), 0.03 + 0.92 * f);
+    };
+    // one picture to iOS, in order (with its moment in the video, so the film keeps the video's own timing)
+    let chain = Promise.resolve();
+    const hand = (jpgP, t) => { const k = sent++; chain = chain.then(async () => {
+      const data = await toB64(await jpgP);
+      if (pending) await pending;
+      if (cancelled) return;
+      post({ op: 'frame', i: k, t: t - a, data });
+      pending = outNext(id, ['ack'], 60000);
+    }); return chain; };
+    if (isVideo && m.requestVideoFrameCallback) {
+      // The video plays (slowly, silently) and each of its pictures is drawn the moment it is shown:
+      // every picture once, at its own time, without looking for each one again (much faster).
+      await seekTo(a);
+      m.muted = true; m.playbackRate = rate;
+      let last = null, inFlight = 0;
+      await new Promise((resolve, reject) => {
+        let over = false;
+        const finish = () => { if (over) return; over = true; m.pause(); document.removeEventListener('visibilitychange', wake); resolve(); };
+        const wake = () => { if (!document.hidden && !over && m.paused && inFlight < 6) m.play().catch(() => {}); };
+        document.addEventListener('visibilitychange', wake);
+        const onFrame = (now, md) => {
+          if (over) return;
+          if (cancelled) { finish(); return; }
+          const t = md.mediaTime;
+          if (t >= b - 0.25 / fps) { finish(); return; }
+          if (t >= a - 0.5 / fps && (last === null || t > last + 0.001)) {
+            // (a picture missed while the iPad was busy: the video goes on more slowly)
+            if (last !== null && t - last > 1.6 / fps) { skipped++; if (rate > 0.2) { rate = Math.max(0.2, rate * 0.75); m.playbackRate = rate; } }
+            last = t;
+            let q = performance.now();
+            drawFrame(g, W, H, t, true);
+            tDraw += performance.now() - q;
+            const jp = new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+            inFlight++;
+            // (never more than a few pictures waiting: the video waits for them)
+            if (inFlight >= 6) m.pause();
+            hand(jp, t).then(() => { inFlight--; if (m.paused && !over && inFlight < 3 && !document.hidden) m.play().catch(() => {}); }, (e) => { over = true; reject(e); });
+            if (sent % 6 === 0) progress(t);
+          }
+          m.requestVideoFrameCallback(onFrame);
+        };
+        m.requestVideoFrameCallback(onFrame);
+        m.addEventListener('ended', finish, { once: true });
+        m.play().catch(reject);
+      });
+      m.playbackRate = 1; m.muted = false;
+      await chain;
+      if (cancelled) return false;
+      SEEKS.playback = sent; SEEKS.skipped = skipped;
+    } else {
+      // (no way to see each picture as it is shown: each one looked for in turn, or a recording
+      // without pictures)
+      for (let i = 0; i < N; i++) {
+        if (cancelled) return false;
+        const t = a + i / fps;
+        let q = performance.now();
+        if (isVideo) await seekTo(Math.min(b - 0.001, t + 0.5 / fps));
+        tSeek += performance.now() - q; q = performance.now();
+        drawFrame(g, W, H, t, true);
+        tDraw += performance.now() - q;
+        await hand(new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95)), t);
+        if (i % 5 === 0) progress(t);
+      }
+    }
+    if (pending) await pending;
+    busy('Making the video…', 'Putting the sound in.', 0.96);
+    post({ op: 'end', audio, a, b, gain, dur: total });
+    const done = await outNext(id, ['done'], 600000);
+    const res = await fetch(done.path); if (!res.ok) throw new Error('the film is missing');
+    const blob = new Blob([await res.blob()], { type: 'video/mp4' });
+    try { window.webkit.messageHandlers.standDone.postMessage({ path: done.path }); } catch {}
+    busy(null);
+    window.__studioExport = { w: W, h: H, fps, frames: sent, size: blob.size, audio, seeks: SEEKS, ms: { seek: Math.round(tSeek), draw: Math.round(tDraw), jpg: Math.round(tJpg), all: Math.round(performance.now() - t0) } };
+    await keepExport(blob, a, b, total, { share });
+    return true;
+  } finally {
+    ST.exporting = false; OUTQ.delete(id);
+    if (cancelled) { busy(null); D.toast('Export cancelled.'); }
+  }
 }
 // Where the finished video goes: straight to one of the apps people post in (the video is put in
 // Photos and that app opens), or anywhere else with the usual share sheet.
@@ -1396,7 +1832,7 @@ function wire() {
   $('#stAddImage').addEventListener('click', () => $('#stImageInput').click());
   $('#stImageInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) addImage(f); });
   // (each line follows its own player: two lines, one after the other)
-  $('#stSyncBtn').addEventListener('click', async () => { const ls = scoreLines(); if (!ls.length) { addScore(); return; } ST.sel = { id: ls[0].id }; renderSide(); for (const o of ls) await autoSync(o); });
+  $('#stSyncBtn').addEventListener('click', async () => { const ls = scoreLines(); if (!ls.length) { addScore(); return; } ST.sel = { id: ls[0].id }; renderSide(); if (ls.length === 2) await syncBoth(); else for (const o of ls) await autoSync(o); });
   $('#stFormatBtn').addEventListener('click', () => { ST.sel = null; renderSide(); frame(); });
   $('#stExport').addEventListener('click', exportVideo);
   $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); tap(); });
@@ -1425,7 +1861,28 @@ export async function _addScoreFrom(canvas, opt = {}) {
 export const _frame = () => frame();
 // (for the tests: following the playing, and one frame of the export drawn at a time)
 export const _autoSync = (o, opt) => autoSync(o, opt);
+export const _syncBoth = () => syncBoth();
+export const _steady = (t) => steadyTimes(t);
 export const _tapFrom = (o, k) => startTap(o, k);
 export const _finishTap = () => finishTap();
 export function _drawAt(canvas, t) { const [W, H] = outSize(); if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; } drawFrame(canvas.getContext('2d'), W, H, t, true); }
 export const _stack = () => stackLines();
+export const _exportNative = (o) => exportNative(o);
+// A video cut in Recordings, by iOS: what is kept is copied as it is (nothing made again, nothing lost,
+// at once). null where iOS cannot do it (then it is cut the old way).
+export async function cutVideoNative(blob, segs, mime) {
+  if (!videoOutNative()) return null;
+  const ext = /mp4/.test(mime || blob.type || '') ? 'mp4' : 'mov';
+  const id = 'c' + uid(); OUTQ.set(id, { evs: [], wake: null });
+  const post = (m) => window.webkit.messageHandlers.standVideoOut.postMessage({ id, ...m });
+  try {
+    post({ op: 'begin', w: 16, h: 16, fps: 30 }); await outNext(id, ['ready']);
+    await outUpload(id, 'src', blob, 'v.' + ext);
+    post({ op: 'cut', segs: segs.map((q) => [+q[0], +q[1]]) });
+    const done = await outNext(id, ['done'], 600000);
+    const res = await fetch(done.path); if (!res.ok) throw new Error('missing');
+    const out = new Blob([await res.blob()], { type: ext === 'mp4' ? 'video/mp4' : 'video/quicktime' });
+    try { window.webkit.messageHandlers.standDone.postMessage({ path: done.path }); } catch {}
+    return out;
+  } finally { OUTQ.delete(id); }
+}

@@ -25,7 +25,7 @@ import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js'
 import { DuoFollower, shiftOfName } from './duofollow.js';
 import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
-import { exportPicture, exportPdf } from './export.js';
+import { exportPicture, exportPdf, imagesToPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview } from './review.js';
 import * as P from './pomodoro.js';
@@ -35,7 +35,7 @@ import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { findMarks, resolveMarks, metroFor } from './tempo.js';
 import { recognise, recogniseBest } from './omr.js';
-import { initStudio, openStudio } from './studio.js';
+import { initStudio, openStudio, cutVideoNative } from './studio.js';
 import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch, pairList } from './link.js';
 import { openPair, drawLinked, linkedCount } from './pair.js';
 import { PageFollower } from './follow.js';
@@ -1208,6 +1208,46 @@ $('#bringBtn')?.addEventListener('click', () => showPanel('bring'));
 $('#bkBring')?.addEventListener('click', () => showPanel('bring'));
 window.__bring = { bringItems, bringArchive, brFolderName };
 // Files arriving from the iPad app: a PDF caught while browsing IMSLP, or "Open in Stand" from Files.
+// Scores added on the iPhone (My scores): each PDF on its own; pictures (scanned pages, photos)
+// together, in their order, as one score.
+async function phoneAdd(blobs, names, scanned) {
+  const isPdf = (b, n) => /\.pdf$/i.test(n || '') || b.type === 'application/pdf';
+  const pdfs = blobs.map((b, i) => [b, names[i]]).filter(([b, n]) => isPdf(b, n));
+  const pics = blobs.filter((b, i) => !isPdf(b, names[i]));
+  toast(pics.length > 1 || pdfs.length > 1 ? 'Adding your scores…' : 'Adding your score…', 60000);
+  let last = null;
+  try {
+    for (const [b, n] of pdfs) last = await window.__phs.addOwn(await b.arrayBuffer(), n || 'Score');
+    if (pics.length) {
+      const d = new Date();
+      const when = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      // (a picture's own name only when a person gave it one: not IMG_1234)
+      const own = (names[blobs.indexOf(pics[0])] || '').replace(/\.[^.]+$/, '');
+      const nm = scanned === true ? tr('Scan') + ' ' + when : own && !/^(img|image|photo|pxl|dsc|scan)[ _-]?\d+|^[0-9a-f-]{20,}$/i.test(own) && scanned !== 'photos' ? own : tr('Photos') + ' ' + when;
+      last = await window.__phs.addOwn(await imagesToPdf(pics), nm);
+    }
+    $('#toast').hidden = true;
+    window.__phoneAdded = last ? { id: last.id, pages: last.pages } : null;
+    if (last) { window.__phs.openList(); toast(last.pages === 1 ? `Added: ${last.title} (1 page).` : `Added: ${last.title} (${last.pages} pages).`, 3000); }
+  } catch (e) { console.error(e); window.__phoneAdded = { error: String(e && e.message) }; toast('That could not be added.', 3500); }
+}
+// the + in My scores on the iPhone: scan pages, or bring them from Photos or Files
+$('#phsAdd')?.addEventListener('click', async () => {
+  const scan = !!(NATIVE && NATIVE.standScan && (window.standCaps || {}).scan);
+  const how = await choose(tr('Add scores'), [
+    ...(scan ? [{ id: 'scan', title: tr('Scan pages'), sub: tr('With the camera, page after page') }] : []),
+    { id: 'photos', title: tr('From Photos'), sub: tr('Pictures of the pages, in order') },
+    { id: 'files', title: tr('From Files'), sub: tr('PDFs and pictures from iCloud Drive or other apps') },
+  ]);
+  if (how === 'scan') NATIVE.standScan.postMessage({});
+  else if (how === 'photos') $('#phsPhotos').click();
+  else if (how === 'files') $('#phsFiles').click();
+});
+for (const id of ['#phsPhotos', '#phsFiles']) $(id)?.addEventListener('change', async (e) => {
+  const fs = [...e.target.files]; e.target.value = ''; if (!fs.length) return;
+  const blobs = []; for (const f of fs) blobs.push(new Blob([await f.arrayBuffer()], { type: f.type }));
+  await phoneAdd(blobs, fs.map((f) => f.name), id === '#phsPhotos' ? 'photos' : false);
+});
 window.standIncoming = async (msg) => {
   try {
     const paths = msg.paths || [msg.path];
@@ -1215,6 +1255,8 @@ window.standIncoming = async (msg) => {
     for (const p of paths) { const res = await fetch(p); if (!res.ok) throw new Error('missing file'); blobs.push(await res.blob()); }
     // the files are in memory now, so the native copies can go
     if (NATIVE && NATIVE.standDone) for (const p of paths) NATIVE.standDone.postMessage({ path: p });
+    // (the iPhone: scanned pages, a PDF or pictures become scores of its own, in My scores)
+    if (PHONE && window.__phs && window.__phs.addOwn) { await phoneAdd(blobs, paths.map((p, i) => (msg.names && msg.names[i]) || (paths.length === 1 ? msg.name : '') || String(p).split('/').pop()), !!msg.paths); return; }
     if (!$('#score').hidden) await closeScore();
     hidePanel();
     // a backup opened from Files
@@ -8976,19 +9018,68 @@ async function stopRecording() {
 }
 
 // a video from Photos or Files: becomes a recording, ready for Studio
-$('#takeImport').addEventListener('click', () => $('#takeImportFile').click());
+// (in the app: Photos or Files open in iOS's own pickers, and the video comes in as it is, at its own
+// quality, with its sound taken out by iOS; the web view's file box could fail on a big or long video)
+const videoInNative = () => !!(NATIVE && NATIVE.standVideoIn && (window.standCaps || {}).videoIn);
+$('#takeImport').addEventListener('click', async () => {
+  if (!videoInNative()) { $('#takeImportFile').click(); return; }
+  const from = await choose(tr('Import a video'), [
+    { id: 'photos', title: tr('From Photos'), sub: tr('The video as it was filmed') },
+    { id: 'files', title: tr('From Files'), sub: tr('iCloud Drive, a USB drive, other apps') },
+  ]);
+  if (from) NATIVE.standVideoIn.postMessage({ cmd: 'pick', from });
+});
+// a video that came in through iOS (or the self test): kept in Recordings like a video filmed here
+async function keepVideo(blob, audio, name, dur) {
+  const thumb = await videoThumb(blob);
+  const take = { id: uid(), kind: 'video', mime: blob.type || 'video/mp4', scoreId: null, page: 0, name: name || 'Video', created: Date.now(), mirror: false, thumb, fav: false, source: 'Imported' };
+  await db.put('files', { id: 'video:' + take.id, data: blob });
+  if (audio && audio.data.length > audio.sr * 0.3) {
+    take.sr = audio.sr; take.dur = audio.data.length / audio.sr; take.peaks = computePeaks(audio.data); take.peak = peakOf(audio.data); take.pcm = true;
+    await db.put('files', { id: 'audio:' + take.id, data: audio.data });
+  } else {
+    take.pcm = false;
+    take.dur = dur || await new Promise((res) => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => res(v.duration || 0); v.onerror = () => res(0); setTimeout(() => res(0), 8000); v.src = URL.createObjectURL(blob); });
+  }
+  await db.put('takes', take);
+  return take;
+}
+window.standVideoInEvent = async (ev) => {
+  if (!ev || ev.type === 'cancel') return;
+  if (ev.type === 'busy') { toast('Bringing in the video…', 600000); return; }
+  const letGo = () => { for (const p of [ev.video, ev.audio]) if (p) try { NATIVE.standDone.postMessage({ path: p }); } catch {} };
+  if (ev.type !== 'done' || !ev.video) { nlog('video import failed: ' + (ev.message || '?')); toast('That video could not be brought in.', 4000); window.__videoIn = { error: ev.message || 'failed' }; return; }
+  try {
+    const res = await fetch(ev.video); if (!res.ok) throw new Error('missing video');
+    const blob = new Blob([await res.blob()], { type: /\.(mp4|m4v)$/i.test(ev.video) ? 'video/mp4' : 'video/quicktime' });
+    let audio = null;
+    // (a very long video's sound is not read whole at once: the memory iOS gives Stand)
+    const long = (ev.dur || 0) > (PHONE ? 6 * 60 : 10 * 60);
+    if (ev.audio && !long) { const ar = await fetch(ev.audio); if (ar.ok) audio = await decodeVideoAudio(await ar.blob()); }
+    if (long) nlog(`video import: ${Math.round(ev.dur)} s: sound not read (memory)`);
+    const take = await keepVideo(blob, audio, (ev.name || 'Video').replace(/\.[^.]+$/, ''), ev.dur);
+    letGo();
+    $('#toast').hidden = true;
+    takesScope = 'all'; $$('#takesScope button').forEach((b) => b.classList.toggle('on', b.dataset.scope === 'all'));
+    await refreshTakes(); await selectTake(take.id);
+    window.__videoIn = { id: take.id, pcm: take.pcm, dur: take.dur, size: blob.size };
+    toast('Imported. Tap Studio to put the score on it.', 3000);
+  } catch (err) { console.error(err); nlog('video import: ' + (err && err.message)); toast('That video could not be read.', 3000); window.__videoIn = { error: String(err && err.message) }; }
+};
 $('#takeImportFile').addEventListener('change', async (e) => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   toast('Bringing in the video…', 60000);
   try {
-    const blob = f.slice(0, f.size, f.type || 'video/mp4');
+    // (read into Stand at once: a file from the picker may stop being readable later)
+    const blob = new Blob([await f.arrayBuffer()], { type: f.type || 'video/mp4' });
     // (its sound is read for Studio to follow, unless the video is so big or long that reading all of
     // it at once could take the memory iOS gives Stand: then it comes in without, Tap along still works)
     const durOf = () => new Promise((res) => { const v = document.createElement('video'); v.preload = 'metadata'; const u = URL.createObjectURL(blob); const end = (d) => { URL.revokeObjectURL(u); res(d); }; v.onloadedmetadata = () => end(v.duration || 0); v.onerror = () => end(0); setTimeout(() => end(0), 8000); v.src = u; });
     const secs = await durOf();
     const tooBig = blob.size > (PHONE ? 80e6 : 150e6) || secs > (PHONE ? 6 * 60 : 10 * 60);
     if (tooBig) nlog(`video import: ${Math.round(blob.size / 1e6)} MB, ${Math.round(secs)} s: sound not read (memory)`);
-    const audio = tooBig ? null : await decodeVideoAudio(blob);
+    // (never waiting for ever on a sound that cannot be read: the video comes in without it)
+    const audio = tooBig ? null : await Promise.race([decodeVideoAudio(blob), new Promise((r) => setTimeout(() => r(null), 90000))]);
     const thumb = await videoThumb(blob);
     const take = { id: uid(), kind: 'video', mime: blob.type || 'video/mp4', scoreId: null, page: 0, name: f.name.replace(/\.[^.]+$/, '') || 'Video', created: Date.now(), mirror: false, thumb, fav: false, source: 'Imported' };
     await db.put('files', { id: 'video:' + take.id, data: blob });
@@ -9198,8 +9289,15 @@ async function cutTake(mode) {
     const id = uid();
     let take = { id, kind: t.kind, scoreId: t.scoreId, page: t.page, name: t.name + (mode === 'keep' ? ' · selection' : ' · cut'), created: Date.now(), sr: t.sr, dur: pcm.length / t.sr, peaks: computePeaks(pcm), peak: peakOf(pcm), fav: false };
     if (t.kind === 'video') {
-      const blob = await renderVideoCut({ url: videoURL, mirror: !!t.mirror, segs, pcm, sr: t.sr, onProgress: setPct });
-      take = { ...take, mime: blob.type, mirror: false, pcm: true, thumb: await videoThumb(blob) };
+      // (by iOS where it can: copied as it is, at once and without losing anything; else played and recorded)
+      let blob = null, keptMirror = false;
+      try {
+        const vf = await db.get('files', 'video:' + t.id);
+        if (vf && vf.data) { setPct(0.3); blob = await cutVideoNative(vf.data, segs, t.mime); keptMirror = !!blob && !!t.mirror; }
+      } catch (e) { nlog('cut (iOS): ' + (e && e.message)); blob = null; }
+      if (!blob) blob = await renderVideoCut({ url: videoURL, mirror: !!t.mirror, segs, pcm, sr: t.sr, onProgress: setPct });
+      setPct(1);
+      take = { ...take, mime: blob.type, mirror: keptMirror, pcm: true, thumb: await videoThumb(blob) };
       await db.put('files', { id: 'video:' + id, data: blob });
     } else setPct(1);
     await db.put('files', { id: 'audio:' + id, data: pcm });

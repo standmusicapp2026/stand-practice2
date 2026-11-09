@@ -1767,7 +1767,23 @@ function readStaff(s, ctx, header) {
     for (let k = rests.length - 1; k >= 0; k--) if (rests[k].cx > x0 - sp * 0.2 && rests[k].cx < best.x1 + sp * 0.2) rests.splice(k, 1);
   }
   // barlines that only seemed to be stems: of 'heads' read inside a time signature or a clef
+  // (or of a 'head' that is no more than the stroke itself: beside the stroke, where the head would
+  // be, the staff is empty on both sides)
+  const bareBy = (pb) => pb.by.every((hd) => {
+    if (!(hd.cy > 0)) return false;
+    const x0 = Math.round(pb.x - pb.w / 2), x1 = Math.round(pb.x + pb.w / 2);
+    const inkAt = (side) => { let n = 0, tot = 0;
+      for (let yy = Math.round(hd.cy - sp * 0.25); yy <= Math.round(hd.cy + sp * 0.25); yy++) for (let k = 0.25; k <= 0.9; k += 0.1) {
+        const xx = Math.round(side > 0 ? x1 + k * sp : x0 - k * sp); if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue; tot++; n += C[yy * w + xx] || 0; }
+      return tot ? n / tot : 1; };
+    return inkAt(1) < 0.15 && inkAt(-1) < 0.15;
+  });
   for (const pb of pendingBars) {
+    if (pb.by.length && pb.by.every((hd) => heads.includes(hd)) && bareBy(pb) && !merged.some((b) => Math.abs(b.x - pb.x) < sp * 1.0)) {
+      for (const hd of pb.by) { const i = heads.indexOf(hd); if (i >= 0) heads.splice(i, 1); }
+      merged.push({ x: pb.x, w: pb.w, thick: pb.thick }); merged.sort((a, b2) => a.x - b2.x);
+      continue;
+    }
     if (!pb.by.length || pb.by.some((hd) => heads.includes(hd))) continue;
     if (merged.some((b) => Math.abs(b.x - pb.x) < sp * 1.0)) continue;
     if (!signs.some((g) => g.x >= pb.x && g.x - pb.x < sp * 1.6)) continue;

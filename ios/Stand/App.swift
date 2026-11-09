@@ -81,7 +81,7 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "heic": "image/heic", "svg": "image/svg+xml", "pdf": "application/pdf",
         "bcmap": "application/octet-stream", "pfb": "application/octet-stream", "ttf": "font/ttf", "otf": "font/otf",
         "woff2": "font/woff2", "wasm": "application/wasm",
-        "mov": "video/quicktime", "mp4": "video/mp4", "m4a": "audio/mp4",
+        "mov": "video/quicktime", "mp4": "video/mp4", "m4a": "audio/mp4", "wav": "audio/wav",
     ]
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
@@ -155,10 +155,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -185,6 +185,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         tapper.onEvent = { [weak self] event in self?.send("standTapEvent", event) }
         video.onEvent = { [weak self] event in self?.send("standVideoEvent", event) }
         files.send = { [weak self] fn, payload in self?.send(fn, payload) }
+        StandVideoKit.shared.send = { [weak self] fn, payload in self?.send(fn, payload) }
         // a big file (a long video) written in pieces, then shared as the small ones are
         files.share = { [weak self] url, to in
             guard let self = self else { return }
@@ -436,6 +437,15 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 self.deliver(["paths": paths, "name": "Scan " + f.string(from: Date()) + ".jpg"])
             }
             present(scanner, animated: true)
+        case "standVideoIn":
+            // a video brought in from Photos or Files at its own quality (StandVideoKit.swift)
+            if let t = body["path"] as? String, body["cmd"] as? String == "test" {
+                let p = t.hasPrefix("/") ? t : documentsDir.appendingPathComponent(t).path
+                StandVideoKit.shared.bringInForTest(p); return
+            }
+            StandVideoKit.shared.pick(from: body["from"] as? String ?? "photos", on: self)
+        case "standVideoOut":
+            StandVideoKit.shared.out(body)
         case "standVideo":
             switch body["cmd"] as? String {
             case "open":
