@@ -376,6 +376,9 @@ async function linesOut() {
       pieces.push([xa, xb]);
       // each piece is copied now, so the page can be let go
       const cv = pieces.map(([x0, x1]) => { const w = Math.max(1, Math.round(x1 - x0)), h = y1 - y0; const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(full, Math.round(x0), y0, w, h, 0, 0, w, h); return c; });
+      // some of the staves only: the barlines ran on to the staves left out; the pieces of them
+      // sticking out past the kept staves are taken away (the reader would not see them as barlines)
+      if (pick.cut && L.staves && L.staves.length > 1) for (const c of cv) cutStubs(c, (L.staves[Math.min(pick.cut.from, L.staves.length - 1)][0] * H) - y0, (L.staves[Math.min(pick.cut.to, L.staves.length - 1)][1] * H) - y0, pick.cut.from > 0, pick.cut.to < L.staves.length - 1);
       parts.push({ h: y1 - y0, cv, gap: Math.round(0.01 * H) });
     });
     full.width = full.height = 0;
@@ -391,6 +394,30 @@ async function linesOut() {
     y += p.h + p.gap;
   }
   return c;
+}
+// The barlines of a system run from its first staff to its last. Keeping some staves only, what is
+// left of them above or below the kept staves is whitened: a column dark all down the kept staves
+// and on, unbroken, to the cut edge.
+function cutStubs(c, top, bot, above, below) {
+  const g = c.getContext('2d'), W = c.width, H = c.height; if (W < 2 || H < 2) return;
+  const im = g.getImageData(0, 0, W, H), d = im.data;
+  const dark = (x, y) => { const i = (y * W + x) * 4; return d[i] + d[i + 1] + d[i + 2] < 400; };
+  const t = Math.max(0, Math.round(top)), b = Math.min(H - 1, Math.round(bot));
+  if (b - t < 8) return;
+  let changed = false;
+  for (let x = 0; x < W; x++) {
+    let n = 0; for (let y = t; y <= b; y++) if (dark(x, y)) n++;
+    if (n < (b - t + 1) * 0.9) continue;
+    const wipe = (y0, y1) => {
+      let m = 0; for (let y = y0; y <= y1; y++) if (dark(x, y)) m++;
+      if (y1 - y0 < 2 || m < (y1 - y0 + 1) * 0.92) return;
+      for (let y = y0; y <= y1; y++) { const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = 255; }
+      changed = true;
+    };
+    if (below) wipe(b + 3, H - 1);
+    if (above) wipe(0, t - 3);
+  }
+  if (changed) g.putImageData(im, 0, 0);
 }
 function drawSel() {
   const d = $('#pkDraw'), g = d.getContext('2d');

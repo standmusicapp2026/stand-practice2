@@ -1109,6 +1109,16 @@ function readStaff(s, ctx, header) {
   // a 'hollow head' squeezed in beside a filled one, with no proper stem of its own: the gap between
   // that head and an accidental or another sign, not a half note
   heads = heads.filter((hd) => !(hd.ringHead && (!hd.stem || hd.stem.len < sp * 2.8) && heads.some((q) => q !== hd && !q.hollow && Math.abs(q.cx - hd.cx) < sp * 1.4 && Math.abs(q.p - hd.p) <= 1)));
+  // a 'hollow head' at the far end of a filled note's stem, on that same stem: the curl of the
+  // quaver's flag (a stem down ends in a hook that closes into a ring), not a half note
+  const onStemOf = (hd, q) => {
+    if (q === hd || q.hollow || !q.stem || !hd.stem || !(q.beams >= 1) || Math.abs(q.stem.x - hd.stem.x) > sp * 1.2 || Math.abs(q.stem.x - hd.cx) > sp * 1.2 || q.stem.up === hd.stem.up) return false;
+    // (it lies along the quaver's own stem, out to just past its end, and its 'stem' runs back to the quaver's head)
+    const lo = Math.min(q.cy, q.stem.end), hi = Math.max(q.cy, q.stem.end);
+    return hd.cy > lo + sp * 1.2 && hd.cy < hi + sp * 0.9 && Math.abs(hd.stem.end - q.cy) < sp * 1.3;
+  };
+  if (TR) for (const hd of heads) if (hd.kind === 'half') TR.log.push(['curl?', Math.round(hd.cx), heads.some((q) => onStemOf(hd, q))]);
+  heads = heads.filter((hd) => !(hd.kind === 'half' && heads.some((q) => onStemOf(hd, q))));
   // two 'heads' a third apart on one stem, at one place, where there is ink for only one (a head
   // hanging from a ledger line read once with the line and once below it): one head, where its ink is
   {
@@ -1366,6 +1376,9 @@ function readStaff(s, ctx, header) {
     if (isAcc.has(c.id)) continue;
     const k = ctx.best(c, ['sharp', 'flat', 'natural', 'dflat'], sp * 1.8);
     if (k.d > 0.42) continue;
+    // (a crotchet or quaver rest just before a note is not its flat or natural: the shape of a rest,
+    // if it fits better, wins)
+    if (c.h > sp * 1.8 && c.w < sp * 1.3) { const kr = ctx.best(c, ['r4', 'r8'], sp * 1.8); if (kr && kr.d < k.d - 0.02) continue; }
     const a = { sharp: 1, flat: -1, natural: 0, dflat: -2 }[k.cls];
     // which head: sharps and naturals are centred on their note, a flat's bowl is
     const want = k.cls === 'flat' || k.cls === 'dflat' ? c.y1 - sp * 0.55 : (c.y0 + c.y1) / 2;
