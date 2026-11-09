@@ -3012,6 +3012,8 @@ function makeSelection(entry, idx) {
   const loop = Sel.pendingLoop; Sel.pendingLoop = null;
   clearSelection();
   if (!idx.length) return;
+  // (a new selection always starts by resizing: cropping is for the picture it was turned on for)
+  Sel.crop = false;
   Sel.entry = entry; Sel.idx = idx; Sel.box = selectionBox(entry, idx);
   const one = idx.length === 1 ? entry.layer.items[idx[0]] : null;
   Sel.fr = one ? frameOf(one) : null;
