@@ -145,9 +145,12 @@ function close() {
 // =====================================================================
 // The score: from the drawn region to a line of bars
 // =====================================================================
-async function addScore() {
+// (second: another part on a line of its own under the first — a duet, two clarinets — each line
+// following its own player)
+async function addScore(opt = {}) {
+  const second = opt === true || !!(opt && opt.second);
   pause();
-  const region = await D.pickRegion(null, null, { title: 'Choose the lines you play in this video' });
+  const region = await D.pickRegion(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video' });
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
@@ -161,17 +164,48 @@ async function addScore() {
     };
     if (!o.layout.bars.length) { busy(null); D.toast('No bars found there.', 4000); return; }
     o.times = evenTimes(o.layout.bars.length);
-    ST.P.overlays = ST.P.overlays.filter((x) => x.kind !== 'score');   // one score at a time
-    ST.P.overlays.unshift(o);
+    putScore(o, second);
     await prepareOverlay(o);
     ST.sel = { id: o.id };
     busy(null);
+    stackLines();
     saveSoon(); renderSide(); renderTimeline(); frame();
     // line it up with the playing straight away
     if (ST.pcm) autoSync(o);
     else D.toast(`${o.layout.bars.length} bars. Use Sync › Tap along to line them up with the video.`, 4500);
   } catch (err) { console.error(err); busy(null); D.toast('That part of the score could not be read.'); }
 }
+// The score's lines on the video: one, or two (a part on each). A second line looks like the first
+// (the same paper, size and way of moving: one system of two staves) and sits right under it.
+const scoreLines = () => ST.P.overlays.filter((x) => x.kind === 'score');
+const SHARED = ['look', 'ink', 'shade', 'mode', 'band', 'perView', 'size', 'opacity', 'highlight'];
+function putScore(o, second) {
+  const first = scoreLines()[0];
+  if (second && first) {
+    for (const k of SHARED) if (first[k] !== undefined) o[k] = first[k];
+    o.line = 2; first.line = 1;
+    // (never more than two: a second line replaces the second line)
+    ST.P.overlays = ST.P.overlays.filter((x) => x.kind !== 'score' || x === first);
+    ST.P.overlays.splice(ST.P.overlays.indexOf(first) + 1, 0, o);
+  } else {
+    ST.P.overlays = ST.P.overlays.filter((x) => x.kind !== 'score');   // a new score: on its own
+    ST.P.overlays.unshift(o);
+  }
+}
+// the second line right under the first (moved up together when there is no room below)
+function stackLines() {
+  const [a, b] = scoreLines(); if (!a || !b) return;
+  frame();
+  const A = a._box, B = b._box; if (!A || !B || !A.H) return;
+  const ha = A.h / A.H, hb = B.h / B.H, gap = 0.004;
+  let ya = a.pos.y;
+  if (ya + ha / 2 + gap + hb > 1) ya = 1 - hb - gap - ha / 2;
+  if (ya - ha / 2 < 0) ya = ha / 2;
+  a.pos = { x: a.pos.x, y: ya }; b.pos = { x: a.pos.x, y: ya + ha / 2 + gap + hb / 2 };
+  frame();
+}
+// a change to how a line looks: both lines, so the two read as one system
+function sharedChange(o, fn) { const ls = scoreLines(); for (const x of ls.length > 1 && ls.includes(o) ? ls : [o]) fn(x); }
 // Bars in reading order: each system cut at its barlines; later systems without their clef.
 function stripLayout(A, W, H) {
   const sp = A.sp;
@@ -1052,23 +1086,26 @@ function renderSide() {
   $('#stEmpty').hidden = !!ST.P.overlays.find((x) => x.kind === 'score');
   const change = (fn, re = false) => { fn(); saveSoon(); frame(); if (re) renderSide(); };
   if (o && o.kind === 'score') {
-    side.append(el('h3', '', 'Score'));
+    const ls = scoreLines(), two = ls.length > 1;
+    side.append(el('h3', '', two ? 'Score: two lines' : 'Score'));
+    // (two lines: which one these settings are for; the look is the same for both)
+    if (two) side.append(seg(ls.map((x, i) => [x.id, i === 0 ? 'Line 1 (top)' : 'Line 2 (under)']), o.id, (v) => { ST.sel = { id: v }; renderSide(); frame(); }));
     side.append(el('p', 'hint', `${o.title} · ${o.layout.bars.length} bars`));
     const looks = el('div', 'st-looks');
     for (const [k, label] of [['paper', 'Paper'], ['warm', 'Warm'], ['lines', 'Just the lines']]) {
       const b = el('button', o.look === k ? 'on' : ''); const sw = el('i', k); b.append(sw, document.createTextNode(label));
-      b.addEventListener('click', () => change(() => { o.look = k; }, true)); looks.append(b);
+      b.addEventListener('click', () => change(() => { sharedChange(o, (x) => { x.look = k; }); stackLines(); }, true)); looks.append(b);
     }
     side.append(looks);
-    if (o.look === 'lines') side.append(seg([['#ffffff', 'White ink'], ['#000000', 'Black ink']], o.ink, (v) => change(() => { o.ink = v; }, true)));
-    if (o.look === 'lines') side.append(seg([['on', 'Soft shade behind'], ['off', 'No shade']], o.shade === false ? 'off' : 'on', (v) => change(() => { o.shade = v === 'on'; }, true)));
+    if (o.look === 'lines') side.append(seg([['#ffffff', 'White ink'], ['#000000', 'Black ink']], o.ink, (v) => change(() => { sharedChange(o, (x) => { x.ink = v; }); }, true)));
+    if (o.look === 'lines') side.append(seg([['on', 'Soft shade behind'], ['off', 'No shade']], o.shade === false ? 'off' : 'on', (v) => change(() => { sharedChange(o, (x) => { x.shade = v === 'on'; }); }, true)));
     side.append(el('div', 'ctl-head', 'On screen'));
-    side.append(seg([['scroll', 'Endless line'], ['lines', 'Line by line'], ['bars', 'Bars'], ['static', 'All']], o.mode, (v) => change(() => { o.mode = v; }, true)));
-    if (o.mode === 'scroll') { const bl = el('label', 'check'); const bc = el('input'); bc.type = 'checkbox'; bc.checked = !!o.band; bl.append(bc, document.createTextNode(' Full width, sliding under a still line')); bc.addEventListener('change', () => change(() => { o.band = bc.checked; }, true)); side.append(bl); }
-    if (o.mode !== 'static' && o.mode !== 'lines') side.append(slider('Bars', o.perView, 1, Math.min(8, o.layout.bars.length), 1, (x) => String(x), (v) => change(() => { o.perView = v; })));
-    side.append(slider('Size', Math.round(o.size * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { o.size = v / 100; })));
-    side.append(seg([['0.16', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String(o.pos.y), (v) => change(() => { o.pos = { x: 0.5, y: +v }; }, true)));
-    side.append(slider('Opacity', Math.round((o.opacity ?? 1) * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { o.opacity = v / 100; })));
+    side.append(seg([['scroll', 'Endless line'], ['lines', 'Line by line'], ['bars', 'Bars'], ['static', 'All']], o.mode, (v) => change(() => { sharedChange(o, (x) => { x.mode = v; }); stackLines(); }, true)));
+    if (o.mode === 'scroll') { const bl = el('label', 'check'); const bc = el('input'); bc.type = 'checkbox'; bc.checked = !!o.band; bl.append(bc, document.createTextNode(' Full width, sliding under a still line')); bc.addEventListener('change', () => change(() => { sharedChange(o, (x) => { x.band = bc.checked; }); stackLines(); }, true)); side.append(bl); }
+    if (o.mode !== 'static' && o.mode !== 'lines') side.append(slider('Bars', o.perView, 1, Math.min(8, o.layout.bars.length), 1, (x) => String(x), (v) => change(() => { sharedChange(o, (x) => { x.perView = v; }); stackLines(); })));
+    side.append(slider('Size', Math.round(o.size * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { sharedChange(o, (x) => { x.size = v / 100; }); stackLines(); })));
+    side.append(seg([['0.16', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String((two ? ls[0] : o).pos.y), (v) => change(() => { (two ? ls[0] : o).pos = { x: 0.5, y: +v }; stackLines(); }, true)));
+    side.append(slider('Opacity', Math.round((o.opacity ?? 1) * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { sharedChange(o, (x) => { x.opacity = v / 100; }); })));
     const hl = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = o.highlight !== false; hl.append(cb, document.createTextNode(o.mode === 'scroll' ? ' Show where you are (a red line)' : ' Light up the bar being played'));
     cb.addEventListener('change', () => change(() => { o.highlight = cb.checked; })); side.append(hl);
     side.append(el('p', 'hint', 'Drag the score on the picture to move it.'));
@@ -1095,7 +1132,14 @@ function renderSide() {
     }
     sync.append(el('p', 'hint', 'Drag the start of a bar on the timeline to move it. Then “Follow from bar…” follows your playing again from there; the bars before stay as they are.'));
     side.append(sync);
-    const del = el('button', 'btn danger-text', 'Remove the score'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); ST.sel = null; saveSoon(); renderSide(); renderTimeline(); frame(); });
+    // another part, on a line of its own under this one
+    if (!two) {
+      const add2 = el('button', 'btn'); add2.append(el('span', '', 'Add a second line (another part)'));
+      add2.addEventListener('click', () => addScore({ second: true }));
+      side.append(add2);
+      side.append(el('p', 'hint', 'For a duet: the other player’s part under yours, each line following its own player.'));
+    }
+    const del = el('button', 'btn danger-text', two ? 'Remove this line' : 'Remove the score'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); const rest = scoreLines(); if (rest.length === 1) delete rest[0].line; ST.sel = rest[0] ? { id: rest[0].id } : null; saveSoon(); renderSide(); renderTimeline(); frame(); });
     side.append(del);
     return;
   }
@@ -1351,7 +1395,8 @@ function wire() {
   $('#stEmptyAdd').addEventListener('click', addScore);
   $('#stAddImage').addEventListener('click', () => $('#stImageInput').click());
   $('#stImageInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) addImage(f); });
-  $('#stSyncBtn').addEventListener('click', () => { const o = ST.P.overlays.find((x) => x.kind === 'score'); if (!o) { addScore(); return; } ST.sel = { id: o.id }; renderSide(); autoSync(o); });
+  // (each line follows its own player: two lines, one after the other)
+  $('#stSyncBtn').addEventListener('click', async () => { const ls = scoreLines(); if (!ls.length) { addScore(); return; } ST.sel = { id: ls[0].id }; renderSide(); for (const o of ls) await autoSync(o); });
   $('#stFormatBtn').addEventListener('click', () => { ST.sel = null; renderSide(); frame(); });
   $('#stExport').addEventListener('click', exportVideo);
   $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); tap(); });
@@ -1368,13 +1413,13 @@ export const _studio = ST;
 export const _posAt = (o, t) => posAt(o, t);
 export const _alignChords = (e, o) => alignChords(e, o);
 // (for the tests: a score put on the video without the picker)
-export async function _addScoreFrom(canvas) {
+export async function _addScoreFrom(canvas, opt = {}) {
   const A = await analyse(canvas);
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
   const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height), times: null, synced: 'even' };
   o.times = evenTimes(o.layout.bars.length);
-  ST.P.overlays = ST.P.overlays.filter((x) => x.kind !== 'score'); ST.P.overlays.unshift(o);
-  await prepareOverlay(o); ST.sel = { id: o.id }; renderSide(); renderTimeline(); frame();
+  putScore(o, !!opt.second);
+  await prepareOverlay(o); ST.sel = { id: o.id }; stackLines(); renderSide(); renderTimeline(); frame();
   return o;
 }
 export const _frame = () => frame();
@@ -1383,3 +1428,4 @@ export const _autoSync = (o, opt) => autoSync(o, opt);
 export const _tapFrom = (o, k) => startTap(o, k);
 export const _finishTap = () => finishTap();
 export function _drawAt(canvas, t) { const [W, H] = outSize(); if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; } drawFrame(canvas.getContext('2d'), W, H, t, true); }
+export const _stack = () => stackLines();

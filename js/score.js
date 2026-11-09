@@ -474,7 +474,9 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
         }
       }
       const pdfTitle = meta && meta.info && meta.info.Title;
-      if (!out.title && pdfTitle && !/untitled|microsoft|\.pdf|\.mus|sibelius|finale/i.test(pdfTitle)) out.title = tidy(pdfTitle);
+      // (not a name a scanner or a program gave it: "SKM_C300i22020317080", "Scan_0001", "IMG_2041")
+      const machine = (t) => /^[\w.-]+$/.test(t.trim()) && (/\d{5,}/.test(t) || /^(skm|km|img|scan|doc|ccf|mx|bizhub|xerox|canon|epson|hp|brother|ricoh)[_\-\d]/i.test(t.trim()));
+      if (!out.title && pdfTitle && !/untitled|microsoft|\.pdf|\.mus|sibelius|finale/i.test(pdfTitle) && !machine(pdfTitle)) out.title = tidy(pdfTitle);
       const allTop = lines.filter((l) => l.y < l.H * 0.5).map((l) => l.text).join('  ');
       const c = findComposer(allTop, composers) || findComposer((meta && meta.info && meta.info.Author) || '', composers);
       if (c) out.composer = c.n;

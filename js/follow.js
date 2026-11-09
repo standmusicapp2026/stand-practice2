@@ -18,7 +18,7 @@ import { Listener, cosine } from './listen.js';
 // score, the drawing or the listening. Pages go one after another. If the thread cannot be had, or
 // fails, pages are read here as before.
 let W = null, wBroken = false, wSeq = 0; const wWait = new Map();
-function readElsewhere(canvas) {
+export function readElsewhere(canvas) {
   if (wBroken || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return Promise.resolve(null);
   if (!W) {
     try {

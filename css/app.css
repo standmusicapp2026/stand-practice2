@@ -2014,3 +2014,41 @@ body.phone .stat b { font-size: 22px; }
 }
 @keyframes tempo-sweep { 0%, 8% { background-position: -120% 0; } 40% { background-position: 220% 0; } 48% { background-position: -120% 0; } 80% { background-position: 220% 0; } 100% { background-position: 220% 0; } }
 @media (prefers-reduced-motion: reduce) { .tempo-mark.glow, .tempo-mark.glow::after { animation-duration: 2.4s; } .tempo-mark.glow::after { display: none; } }
+
+/* ---------- two parts on one screen ---------- */
+/* (no pages and no paper card: the music of both parts straight on the screen's own paper) */
+.set-row.set-go { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.set-row.set-go .chev { width: 18px; height: 18px; flex: none; transform: rotate(180deg); opacity: .45; }
+.duo-view { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: #fff; touch-action: none; user-select: none; -webkit-user-select: none; padding-top: env(safe-area-inset-top, 0px); }
+#score:not(.chrome-off) .duo-view { padding-top: var(--duo-top, 56px); }
+.duo-half { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; }
+.duo-half canvas { position: absolute; left: 0; top: 0; }
+.duo-name { position: absolute; right: 12px; bottom: 6px; font-size: 12px; font-weight: 600; letter-spacing: .01em; color: rgba(20,24,40,.5); pointer-events: none; font-variant-numeric: tabular-nums; }
+.duo-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: rgba(20,24,40,.5); font-size: 15px; }
+.duo-mid { flex: none; height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 8px; border-top: 1px solid rgba(20,24,40,.12); border-bottom: 1px solid rgba(20,24,40,.12); position: relative; }
+.duo-btn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border: 0; border-radius: 13px; background: rgba(20,24,40,.06); color: rgba(20,24,40,.72); font: 600 12px/1 inherit; font-family: inherit; }
+.duo-btn svg { width: 12px; height: 12px; }
+.duo-read { position: absolute; left: 10px; right: 200px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgba(20,24,40,.6); }
+.duo-read i { display: block; height: 3px; border-radius: 2px; background: var(--accent); width: 0; flex: none; max-width: 30%; transition: width .3s ease; }
+.duo-read span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#score[data-paper="night"] .duo-name, #score[data-paper="night"] .duo-empty, #score[data-paper="night"] .duo-read { color: rgba(233,230,223,.55); }
+#score[data-paper="night"] .duo-mid { border-color: rgba(233,230,223,.14); }
+#score[data-paper="night"] .duo-btn { background: rgba(233,230,223,.1); color: rgba(233,230,223,.8); }
+/* (the page's own controls stay out of the way while two parts are up) */
+#score.duo-on .stage { visibility: hidden; }
+.ask.choose { width: min(440px, 100%); max-height: min(560px, 86vh); }
+.choose-list { display: flex; flex-direction: column; overflow-y: auto; margin: 2px -6px; min-height: 0; }
+.choose-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 0; background: none; color: inherit; font: inherit; padding: 10px 8px; border-radius: 10px; }
+.choose-item:hover, .choose-item:focus-visible { background: var(--sunk); }
+.choose-item + .choose-item { border-top: 1px solid var(--line); }
+.choose-item b { font-weight: 600; font-size: 15px; }
+.choose-item small { color: var(--muted); font-size: 12.5px; }
+.duo-where { margin-right: auto; font-variant-numeric: tabular-nums; }
+.duo-where .chev { transform: rotate(-90deg); opacity: .6; }
+.duo-view:has(.duo-read:not([hidden])) .duo-where { display: none; }
+.duo-view.pairs .duo-half:last-of-type { display: none; }
+.duo-view.pairs .duo-mid { order: 3; border-bottom: 0; }
+.duo-btn .chev { width: 10px; height: 10px; transform: rotate(-90deg); opacity: .6; }
+.duo-listen { display: none; }
+.duo-view.strip .duo-listen { display: inline-flex; }
+.duo-listen.on { background: var(--accent); color: #fff; }

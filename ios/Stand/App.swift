@@ -400,7 +400,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             }
             if body["lines"] as? Bool == true {
                 // (the top of a page: each line with where it is and how tall, for the title and composer)
-                WordReader.readLines(image, words: words) { [weak self] lines in
+                // (plain: numbers and names as printed — bar numbers, 1M2S — not corrected into words)
+                WordReader.readLines(image, words: words, plain: body["plain"] as? Bool == true) { [weak self] lines in
                     self?.send("standRecognized", ["id": id, "text": lines.compactMap { $0["s"] as? String }.joined(separator: " "), "lines": lines])
                 }
                 return
@@ -543,7 +544,7 @@ enum WordReader {
         }
     }
     // Printed lines of text with their boxes, as parts of the picture (0…1, from the top left).
-    static func readLines(_ image: CGImage, words: [String], done: @escaping ([[String: Any]]) -> Void) {
+    static func readLines(_ image: CGImage, words: [String], plain: Bool = false, done: @escaping ([[String: Any]]) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let request = VNRecognizeTextRequest { finished, _ in
                 var out: [[String: Any]] = []
@@ -555,7 +556,9 @@ enum WordReader {
                 DispatchQueue.main.async { done(out) }
             }
             request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
+            request.usesLanguageCorrection = !plain
+            // (small print too: the bar numbers under a staff are about a hundredth of the page high)
+            if plain { request.minimumTextHeight = 0.004 }
             request.recognitionLanguages = ["en-US", "de-DE", "fr-FR", "it-IT", "es-ES", "pt-PT"]
             request.customWords = words
             do {

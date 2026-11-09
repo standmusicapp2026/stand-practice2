@@ -320,6 +320,18 @@
 <!-- ======================= SCORE ======================= -->
 <main id="score" class="view" hidden>
   <div id="stage" class="stage"></div>
+  <div id="duoView" class="duo-view" hidden>
+    <div class="duo-half"><canvas></canvas><span class="duo-name" translate="no"></span><p class="duo-empty" hidden></p></div>
+    <div class="duo-mid">
+      <div class="duo-read" id="duoRead" hidden><i></i><span></span></div>
+      <button class="duo-btn duo-where" id="duoGo" aria-label="Go to a piece"><span translate="no"></span><svg class="chev"><use href="#i-back"/></svg></button>
+      <button class="duo-btn duo-listen" id="duoListen" aria-label="Follow both parts by listening"><svg><use href="#i-ear"/></svg><span>Listen</span></button>
+      <button class="duo-btn" id="duoMode" aria-label="How the two parts are shown"><span>Lines together</span><svg class="chev"><use href="#i-back"/></svg></button>
+      <button class="duo-btn" id="duoSwap" aria-label="Choose the other part">Other part</button>
+      <button class="duo-btn" id="duoClose" aria-label="Back to one part"><svg><use href="#i-close"/></svg><span>One part</span></button>
+    </div>
+    <div class="duo-half"><canvas></canvas><span class="duo-name" translate="no"></span><p class="duo-empty" hidden></p></div>
+  </div>
   <div class="preview-bar" id="previewBar" hidden><span>Preview</span><button class="btn small" id="previewRemove">Remove</button><button class="btn small primary" id="previewKeep">Keep on my stand</button></div>
   <header class="topbar" id="topbar">
     <button class="icon-btn" id="backBtn" aria-label="Library"><svg><use href="#i-back"/></svg></button>
@@ -1351,6 +1363,7 @@
     <p class="hint" id="viewHint"></p>
     <div class="set-rows">
       <label class="set-row"><span><b>Half-page turns</b><small>See the top of the next page early</small></span><span class="switch"><input type="checkbox" id="halfTurn"><span></span></span></label>
+      <button class="set-row set-go" id="duoBtn"><span><b>Two parts</b><small>Your part and your stand partner’s on one screen, the same bars one above the other</small></span><svg class="chev"><use href="#i-back"/></svg></button>
       <label class="set-row"><span><b>Bigger music</b><small>Leave out the white margins</small></span><span class="switch"><input type="checkbox" id="trimMargins"><span></span></span></label>
     </div>
     <div class="ctl-head"><span>Paper</span></div>

@@ -20,7 +20,9 @@ import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
-import { ask } from './dialog.js';
+import { ask, choose } from './dialog.js';
+import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js';
+import { DuoFollower, shiftOfName } from './duofollow.js';
 import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPicture, exportPdf } from './export.js';
@@ -765,9 +767,22 @@ const noImslpNo = (t) => { let a = t, b; do { b = a; a = a.replace(/(^|[\s_-])(I
 function niceTitle(name) {
   return noImslpNo(String(name || '').replace(/\.(pdf|jpe?g|png|heic|heif|webp|tiff?)$/i, '')).replace(/[_]+/g, ' ').replace(/%20/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
 }
+// The part a file's name names beside the piece's title: "06_Clarinet_1_How_to_Train_Your_Dragon_2"
+// with the title "How to Train Your Dragon 2" → "Clarinet 1" (only an instrument, and its number)
+const PART_WORDS = /\b(violin|violino|violine|viola|bratsche|cello|violoncello|bass|contrabass|kontrabass|double bass|flute|flauto|flöte|piccolo|oboe|english horn|cor anglais|clarinet|clarinetto|klarinette|clarinette|bassoon|fagott|fagotto|basson|horn|corno|cor|trumpet|tromba|trompete|trompette|trombone|posaune|tuba|timpani|pauken|percussion|harp|arpa|harfe|piano|celesta|organ|guitar|saxophone|sax|soprano|alto|tenor|baritone|voice|keyboard)\b/i;
+function partFromName(name, title) {
+  const fold = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const n = fold(niceTitle(name)), t = fold(title);
+  if (!t || !n.includes(t) || n === t) return '';
+  const rest = n.replace(t, ' ').replace(/^\s*\d{1,3}\s+/, '').replace(/\s+/g, ' ').trim();
+  if (!rest || rest.split(' ').length > 4 || !PART_WORDS.test(rest)) return '';
+  return rest.replace(/\b\p{L}/gu, (c) => c.toUpperCase()).replace(/\b(In|B|Bb)\b/g, (w) => (w === 'In' ? 'in' : w));
+}
 // A file name like "Bach - Cello Suite No.1" or "Cello_Suite_No.1_(Bach,_Johann_Sebastian)": the
 // composer part comes out, the rest is the title.
 function titleFromName(name, composer) {
+  // (a number the file was put in order by, "06_Clarinet…", is not part of the name: "5 Pieces" is)
+  name = String(name || '').replace(/^\d{1,2}[_-]+(?=\p{L})/u, '');
   let t = niceTitle(name).replace(/\s*\((?:[^()]*,[^()]*)\)\s*$/, '').replace(/\s+(score|parts?|part|solo part|complete|full score)$/i, '');
   t = t.replace(/\bPMLP\d+\b/gi, ' ').replace(/^[\s\-–—]+/, '').replace(/\s+/g, ' ').trim();
   if (composer) {
@@ -862,6 +877,10 @@ async function addPdf(data, name, meta, opt = {}) {
   const info = await readScoreInfo(doc, name, await loadComposers(), meta && meta.title ? {} : { ocr: readTopOfPage });
   let composer = (meta && meta.composer) || info.composer || '';
   let title = (meta && meta.title) || info.title || titleFromName(name, composer);
+  // (a part read from the page, "How to Train Your Dragon 2", whose file says which part it is,
+  // "06_Clarinet_1_How_to_Train_Your_Dragon_2": the part goes with the title, so the parts of one
+  // piece are told apart)
+  if (!(meta && meta.title) && info.title) { const pt = partFromName(name, info.title); if (pt) title = info.title + ' (' + pt + ')'; }
   // brought from another app or a folder: the name the person gave the file is the title
   if (opt.nameTitle && !(meta && meta.title)) { const nm = await nameMeta(name); if (nm) { title = nm.title; composer = nm.composer || composer; } }
   const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
@@ -1551,6 +1570,7 @@ window.standMemoryLow = () => {
   try { if (PH.doc && Date.now() - PH.t > 5000) phoneDocClose(); } catch {}
 };
 async function openScore(id, opts = {}) {
+  if (DUO.on && (!V.score || V.score.id !== id)) closeDuo();
   if (LIB.editing) setLibEditing(false);
   const peek = scores.find((x) => x.id === id) || await db.get('scores', id);
   if (peek && peek.kind === 'comp') { openComposition(id); return; }
@@ -1611,6 +1631,7 @@ async function closeScore() {
   // (a name still being typed in the score's settings is kept: the field is not always told it was left)
   step0(() => { if (sc && META_FOR.id === sc.id) { const t = $('#metaTitle').value.trim(), c = $('#metaComposer').value.trim(); if ((t && t !== sc.title) || c !== (sc.composer || '')) saveScoreMeta(true); } });
   if (RUN.on) endRun();
+  step0(() => closeDuo());
   // (the name under its picture at once, before the rest of the closing is done)
   step0(() => { if (sc) { const c = $(`.card[data-sid="${sc.id}"]`); if (c) { const t = c.querySelector('.ttl'); if (t) t.textContent = sc.title; } } });
   $('#score').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
@@ -1940,8 +1961,11 @@ async function layout(fade) {
 // iPad's own text reader; each page is read once and kept.
 const TEMPO = { last: null, glow: null, glowed: new Set(), mem: new Map(), reading: new Map() };
 const OCRWAIT = new Map();
-async function pageWords(i) {
-  const doc = V.doc; if (!doc) return [];
+const TEMPO_WORDS = ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Vivo', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft', 'Più mosso', 'Meno mosso', 'Tempo I', 'Tempo primo', 'a tempo', 'Animato', 'Doppio movimento', 'Sarabande', 'Allemande', 'Courante', 'Menuet', 'Gigue'];
+function pageWords(i) { return pageWordsOf(V.doc, i, TEMPO_WORDS); }
+// the words of a page of any score (and where they are, as parts of the page)
+async function pageWordsOf(doc, i, words = [], { plain = false, width = 1500, canvas = null } = {}) {
+  if (!doc) return [];
   // 1. the words in the PDF (exact, and at once)
   try {
     if (doc.pdf && !doc.rawSizes && !(doc.composite && doc.composite(i))) {
@@ -1961,9 +1985,10 @@ async function pageWords(i) {
   // 2. read off the page (a scan or a photo): only on the iPad, where it has its own reader
   const rec = NATIVE && NATIVE.standRecognize, fake = globalThis.__readTextTest;
   if (!rec && !fake) return [];
-  const [pw, ph] = doc.sizes[i]; const W = 1500, H = Math.round((W * ph) / pw);
-  const c = document.createElement('canvas');
-  try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return []; }
+  const [pw, ph] = doc.sizes[i]; const W = width, H = Math.round((W * ph) / pw);
+  // (a page already drawn is read as it is)
+  const c = canvas || document.createElement('canvas');
+  if (!canvas) try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return []; }
   let got;
   if (fake) got = await fake(c);
   else {
@@ -1971,10 +1996,10 @@ async function pageWords(i) {
     got = await new Promise((res) => {
       const timer = setTimeout(() => { OCRWAIT.delete(id); res([]); }, 12000);
       OCRWAIT.set(id, (lines) => { clearTimeout(timer); res(lines); });
-      rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words: ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Vivo', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft', 'Più mosso', 'Meno mosso', 'Tempo I', 'Tempo primo', 'a tempo', 'Animato', 'Doppio movimento', 'Sarabande', 'Allemande', 'Courante', 'Menuet', 'Gigue'], lines: true });
+      rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words, lines: true, ...(plain ? { plain: true } : {}) });
     });
   }
-  c.width = c.height = 0;
+  if (!canvas) c.width = c.height = 0;
   return (got || []).filter((l) => l && l.s && (l.c ?? 1) >= 0.3).map((l) => ({ s: String(l.s), x: l.x, y: l.y, w: l.w, h: l.h }));
 }
 // the marks of a page if it was read before (or null)
@@ -2125,6 +2150,7 @@ function goTo(page, fade = true) {
 }
 function turn(dir) {
   if (!V.doc) return;
+  if (DUO.on) { duoTurn(dir); return; }   // (two parts on the screen: both move on)
   // text being typed is kept (and its box closed) before the page changes
   if (typeof tbEdit !== 'undefined' && tbEdit) finishTextBox();
   if (typeof textEdit !== 'undefined' && textEdit) finishText();
@@ -2781,6 +2807,7 @@ function colorFor(tool) { return tool === 'hl' ? INK.hl.c : penColor(); }
 let hintT;
 function inkHint(msg, ms = 3200) { const h = $('#inkHint'); h.textContent = msg; h.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => (h.hidden = true), ms); }
 function setInking(on) {
+  if (on && DUO.on) closeDuo();   // (writing is on the whole page: the two parts make way)
   if (on && V.half) { V.half = false; layout(); }
   V.inking = on;
   if (!on) { finishText(); flushWord(); finishTextBox(); hideRuler(); closeWheel(); }
@@ -6283,6 +6310,7 @@ $('#turnScore').addEventListener('change', (e) => { S.turnScore = e.target.check
 $('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; keepScoreView(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
 $$('#paperSeg button').forEach((b) => b.addEventListener('click', () => {
   S.paper = b.dataset.paper; keepScoreView(); $('#score').dataset.paper = S.paper;
+  if (DUO.on) { $('#duoView').style.background = DUO_PAPER[S.paper] || '#fff'; duoDraw(); }
   setPaperColor(PAPER_COLOR[S.paper] || '#fff'); for (const p of V.pages) p.layer.redraw();
   $$('#paperSeg button').forEach((x) => x.classList.toggle('on', x === b));
 }));
@@ -6580,6 +6608,681 @@ function linesForPhone(id, i) {
     P.t = Date.now();
     return { v: 2, id, i, lines: out };
   });
+}
+// ---------- two parts on one screen ----------
+// Two players at one stand (a first and a second clarinet, each with a part of its own): the screen
+// in two, this score's lines above and the other part's below, at the same bars. A turn (tap, pedal,
+// wink, listening) moves both: each half goes on when its own music on screen is done, so whoever
+// is playing always sees the line being played. Each part is read once (its lines, its bar numbers
+// and cue names) and remembered; a half can be moved on its own by a swipe up or down.
+const DUO_MODES = { pairs: 'Lines together', strip: 'One long line', halves: 'Halves' };
+const DUO = { mode: (() => { try { return localStorage.getItem('standDuoMode') || 'pairs'; } catch { return 'pairs'; } })(), pairNext: null, on: false, parts: [null, null], at: null, nudge: [0, 0], back: [], tops: [0, 0], shown: [0, 0], imgs: new Map(), drawT: 0, readTok: 0, saveT: 0, M: null };
+// a part: { sc, doc, base (to close), pages: [] (read so far), n, map, done }
+window.__duo = DUO;   // (tests)
+window.__duoKey = (sc) => DUO_KEY(sc); window.__duoDraw = () => duoDraw();
+window.__stripGo = (at) => { DUO.at = at; stripLayout(); stripGoTo(at, false); duoDraw(); }; window.__stripListen = (on) => stripListen(on); window.__strip = () => STRIP;
+// (kept by the file and how its pages are laid out: a page cut, moved or glued reads it again)
+const DUO_KEY = (sc) => { let h = 0; const t = JSON.stringify([sc.pageMap || null, sc.cuts || null, sc.glue || null, sc.crops || null]); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return 'duo3:' + (sc.fileId || sc.id) + ':' + h; };
+function duoPartnerOf(sc) { return sc && sc.duo ? scores.find((x) => x.id === sc.duo) || null : null; }
+async function duoOpenPart(sc) {
+  if (V.score && sc.id === V.score.id) return { sc: V.score, doc: V.doc, base: null, pages: [], n: 0, map: null, done: false };
+  const file = await db.get('files', sc.fileId); if (!file) throw new Error('none');
+  scoreFile(sc, file);
+  const base = await openDocument(file, sc.sizes);
+  return { sc, doc: mapDoc(base, sc.pageMap, sc.cuts, sc.glue), base, pages: [], n: 0, map: null, done: false };
+}
+// one page of a part: its lines of music and the words on it (bar numbers, cue names)
+async function duoReadPage(P, i) {
+  const doc = P.doc, [pw, ph] = doc.sizes[i];
+  const W0 = 1700, c0 = document.createElement('canvas'); c0.width = W0; c0.height = Math.round((W0 * ph) / pw);
+  let lines = [], words = [];
+  try {
+    await doc.render(i, c0, c0.width, c0.height);
+    if (!looksBlank(c0)) {
+      // (the lines found in their thread while the words are read off the same drawing)
+      const lp = (async () => {
+        let found = PL_BROKEN ? null : await plFind(c0);
+        if (found === null) { PL_BROKEN = true; try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0, false, false, { stavesOnly: true })); } catch { found = []; } }
+        return cleanLines(found);
+      })();
+      const wp = pageWordsOf(doc, i, [], { plain: true, canvas: c0 }).catch(() => []);
+      lines = await lp;
+      // (each line's barlines: how many bars it holds, and under which bar each number stands)
+      if (lines.length) { try { const img = c0.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, c0.width, c0.height); lines = lines.map((L) => ({ ...L, bars: barsOf(img, L), clef: clefEnd(img, L) })); } catch (err) { console.warn(err); } }
+      words = await wp;
+    }
+  } catch (err) { console.warn('two parts', err); }
+  c0.width = c0.height = 0;
+  if (!lines.length) words = [];
+  return { lines, words: words.map((q) => ({ s: q.s, x: +q.x.toFixed(4), y: +q.y.toFixed(4), w: +q.w.toFixed(4), h: +q.h.toFixed(4) })) };
+}
+// both parts read, a page of each in turn (the halves fill from the start while the rest is read)
+async function duoRead() {
+  const tok = ++DUO.readTok;
+  for (const P of DUO.parts) {
+    const kept = await db.get('files', DUO_KEY(P.sc)).catch(() => null);
+    if (kept && kept.pages && kept.pages.length === P.doc.pages) { P.pages = kept.pages; P.n = P.pages.length; P.done = true; }
+  }
+  duoRemap();
+  const save = (P) => db.put('files', { id: DUO_KEY(P.sc), kind: 'duo', pages: P.pages }).catch(() => {});
+  while (DUO.on && tok === DUO.readTok) {
+    // (the part that is behind, as a share of its pages)
+    const todo = DUO.parts.filter((P) => !P.done);
+    if (!todo.length) break;
+    const P = todo.sort((a, b) => a.n / a.doc.pages - b.n / b.doc.pages)[0];
+    await phoneYield();
+    if (!DUO.on || tok !== DUO.readTok) return;
+    if (P.n >= P.doc.pages) { P.done = true; continue; }
+    P.pages[P.n] = await duoReadPage(P, P.n).catch(() => ({ lines: [], words: [] }));
+    P.n++;
+    if (P.n >= P.doc.pages) { P.done = true; save(P); }
+    else if (P.n % 8 === 0) save(P);
+    duoRemap();
+  }
+}
+// where every line is in the music, both parts matched; the place on screen kept through it
+function duoRemap() {
+  const [A, B] = DUO.parts; if (!A || !B) return;
+  const anchor = DUO.M && DUO.at ? duoAnchor() : null;
+  for (const P of DUO.parts) P.map = partMap(P.pages.slice(0, P.n));
+  DUO.M = makeDuo(DUO.parts[0].map, DUO.parts[1].map);
+  if (anchor) {
+    const L = DUO.parts[anchor.x].map.lines.find((l) => l.p === anchor.p && l.li === anchor.li);
+    DUO.at = L && L.k != null ? { k: L.k, bar: Math.max(L.first, Math.min(L.last, anchor.bar)) } : DUO.at;
+  } else if (!DUO.at && (A.map.lines.length || B.map.lines.length)) DUO.at = duoSavedPlace() || DUO.M.start();
+  duoProgress();
+  duoDrawSoon();
+}
+// (what holds the place: the line at the top of the first half that has one)
+function duoAnchor() {
+  for (let x = 0; x < 2; x++) {
+    const ls = DUO.parts[x].map ? DUO.parts[x].map.lines : [];
+    const L = ls[DUO.tops[x]]; if (L) return { x, p: L.p, li: L.li, bar: DUO.at.bar };
+  }
+  return null;
+}
+function duoSavedPlace() {
+  const s = V.score && V.score.duoAt; if (!s) return null;
+  const ls = DUO.parts[0].map.lines, L = ls.find((l) => l.p === s.p && l.li === s.li);
+  return L && L.k != null ? { k: L.k, bar: Math.max(L.first, Math.min(L.last, s.bar)) } : null;
+}
+function duoKeepPlace() {
+  clearTimeout(DUO.saveT);
+  DUO.saveT = setTimeout(() => {
+    const ls = DUO.parts[0] && DUO.parts[0].map ? DUO.parts[0].map.lines : [], L = ls[DUO.tops[0]];
+    if (!V.score || !L) return;
+    V.score.duoAt = { p: L.p, li: L.li, bar: DUO.at.bar }; db.put('scores', V.score).catch(() => {});
+  }, 1200);
+}
+function duoProgress() {
+  const el = $('#duoRead'); if (!el) return;
+  const tot = DUO.parts.reduce((s, P) => s + P.doc.pages, 0), got = DUO.parts.reduce((s, P) => s + (P.done ? P.doc.pages : P.n), 0);
+  const done = got >= tot;
+  el.hidden = done;
+  if (!done) { el.querySelector('i').style.width = Math.round((100 * got) / tot) + '%'; el.querySelector('span').textContent = tr('Reading the two parts… {0}%').replace('{0}', Math.round((100 * got) / tot)); }
+}
+
+// the ink of a line alone, on no paper: the scan's grey taken away, the print made solid in the
+// colour of the screen's ink (dark on white or warm paper, light at night)
+const DUO_INK = { white: [17, 17, 17], cream: [28, 22, 14], night: [233, 230, 223] };
+const DUO_PAPER = { white: '#ffffff', cream: '#FBF6EA', night: '#141518' };
+function duoInkOnly(g, w, h, rgb) {
+  const id = g.getImageData(0, 0, w, h), d = id.data;
+  for (let q = 0; q < d.length; q += 4) {
+    const l = d[q] * 0.3 + d[q + 1] * 0.59 + d[q + 2] * 0.11;
+    const t = l <= 90 ? 0 : l >= 215 ? 1 : (l - 90) / 125;
+    const a = (1 - t) * 255 * (d[q + 3] / 255);
+    d[q] = rgb[0]; d[q + 1] = rgb[1]; d[q + 2] = rgb[2]; d[q + 3] = a < 10 ? 0 : a;
+  }
+  g.putImageData(id, 0, 0);
+}
+// the lines of one page of a part, cut out at a width, kept for the next screens
+async function duoPageLines(x, p, wantW) {
+  const P = DUO.parts[x], key = x + ':' + p + ':' + wantW + ':' + S.paper;
+  if (DUO.imgs.has(key)) return DUO.imgs.get(key);
+  const job = (async () => {
+    const pg = P.pages[p], lines = pg ? pg.lines : [];
+    if (!lines.length) return [];
+    const doc = P.doc, [pw, ph] = doc.sizes[p];
+    const wl = Math.max(...lines.map((L) => L.x1 - L.x0));
+    const W = Math.min(3200, Math.round(wantW / wl)), H = Math.round((W * ph) / pw);
+    const c = document.createElement('canvas');
+    try { await doc.render(p, c, W, H); } catch { c.width = c.height = 0; return []; }
+    const g = c.getContext('2d', { willReadFrequently: true });
+    // (each line's own edges: never past halfway to the next line — what is under the line above, its
+    // dynamics and bar numbers, stays with it; an edge that would cut a note moves in to clear paper)
+    const edges = cleanEdges(g, W, H, lines);
+    const inkRow = (y, x0, w) => { if (y < 0 || y >= H) return false; const dd = g.getImageData(x0, y, w, 1).data; for (let q = 0; q < dd.length; q += 4) if (dd[q] + dd[q + 1] + dd[q + 2] < 480) return true; return false; };
+    edges.forEach((E, k) => {
+      const L = lines[k], P0 = lines[k - 1], N0 = lines[k + 1];
+      if (L.top == null) return;
+      const sp = (L.sp || 0.006) * H, top = L.top * H, bot = L.bot * H;
+      const upMost = P0 && P0.bot != null ? Math.round(((P0.bot + L.top) / 2) * H) : 0, downMost = N0 && N0.top != null ? Math.round(((L.bot + N0.top) / 2) * H) : H - 1;
+      // the white row nearest the edge it had, on its own side of the halfway line; else the halfway line
+      const clear = (from, to, step) => { for (let y = from; step > 0 ? y <= to : y >= to; y += step) if (!inkRow(y, E.sx, E.sw)) return y; return null; };
+      if (E.a < upMost) { const y = clear(upMost, Math.round(top - sp * 1.2), 1); E.a = y ?? upMost; }
+      if (E.b > downMost) { const y = clear(downMost, Math.round(bot + sp * 1.2), -1); E.b = y ?? downMost; }
+    });
+    // the player's own markings on the page, over the print
+    let k2 = null;
+    try {
+      const ik = doc.composite && doc.composite(p) ? `${doc.orig(p)}+${doc.gluedFrom(p)}` : doc.orig(p);
+      const items = (await loadItems(P.sc.id + ':' + ik).catch(() => [])).filter((q) => q.t !== 'passage' && q.t !== 'note' && !isHiddenItem(q));
+      if (items.length) { await preloadAssets(items); await preloadMasks(items); k2 = document.createElement('canvas'); k2.width = W; k2.height = H; const g2 = k2.getContext('2d'); for (const it of items) drawItem(g2, it, W, H, false); }
+    } catch {}
+    const rgb = DUO_INK[S.paper] || DUO_INK.white;
+    const out = edges.map((E) => {
+      const sw = E.sw, sh = Math.max(1, E.b - E.a);
+      const lc = document.createElement('canvas'); lc.width = sw; lc.height = sh;
+      const lg = lc.getContext('2d', { willReadFrequently: true }); lg.drawImage(c, E.sx, E.a, sw, sh, 0, 0, sw, sh);
+      try { eraseCrossings(lg, sw, sh, g, E.sx, E.a, H); } catch {}
+      duoInkOnly(lg, sw, sh, rgb);
+      if (k2) lg.drawImage(k2, E.sx, E.a, sw, sh, 0, 0, sw, sh);
+      lc.meta = { W, H, sx: E.sx, a: E.a };   // (where it was on the page drawn: for the long line)
+      return lc;
+    });
+    c.width = c.height = 0; if (k2) k2.width = k2.height = 0;
+    return out;
+  })();
+  DUO.imgs.set(key, job);
+  // (a few pages kept: the oldest let go)
+  if (DUO.imgs.size > 14) { const k0 = DUO.imgs.keys().next().value; const old = DUO.imgs.get(k0); DUO.imgs.delete(k0); old.then((ls) => ls.forEach((l) => { l.width = l.height = 0; })).catch(() => {}); }
+  return job;
+}
+function duoDrawSoon() { if (DUO.drawT) return; DUO.drawT = requestAnimationFrame(() => { DUO.drawT = 0; duoDraw(); }); }
+let duoDrawing = null;
+async function duoDraw() {
+  if (!DUO.on) return;
+  if (!DUO.M || !DUO.at) { $$('#duoView .duo-empty').forEach((e) => { e.hidden = false; e.textContent = tr('Reading…'); }); return; }
+  if (duoDrawing) { duoDrawing.again = true; return; }
+  const run = duoDrawing = { again: false };
+  try {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    $('#duoView').classList.toggle('pairs', DUO.mode === 'pairs' || DUO.mode === 'strip');
+    $('#duoView').classList.toggle('strip', DUO.mode === 'strip');
+    $('#duoMode span').textContent = tr(DUO_MODES[DUO.mode]);
+    if (DUO.mode === 'strip') { await duoDrawStrip(); return; }
+    if (DUO.mode === 'pairs') { await duoDrawPairs(run, dpr); return; }
+    for (let x = 0; x < 2; x++) {
+      const P = DUO.parts[x], half = $$('#duoView .duo-half')[x], cv = half.querySelector('canvas');
+      const r = half.getBoundingClientRect(), Wc = Math.max(1, Math.round(r.width)), Hc = Math.max(1, Math.round(r.height));
+      const ls = P.map ? P.map.lines : [];
+      const empty = half.querySelector('.duo-empty');
+      if (!ls.length) {
+        cv.width = cv.height = 1; DUO.shown[x] = 0;
+        empty.hidden = false; empty.textContent = P.done ? tr('No lines of music were found in this part.') : tr('Reading…');
+        continue;
+      }
+      empty.hidden = true;
+      const top = Math.max(0, Math.min(ls.length - 1, DUO.M.lineAt(x, DUO.at) + DUO.nudge[x]));
+      DUO.tops[x] = top;
+      const pad = 10, gap = 4, wantW = Math.round((Wc - pad * 2) * dpr);
+      // the lines that fit, from the top one (always at least one)
+      const pics = []; let used = pad;
+      for (let i = top; i < ls.length; i++) {
+        const L = ls[i], pagePics = await duoPageLines(x, L.p, wantW);
+        if (!DUO.on || run.again) break;
+        const pic = pagePics[L.li]; if (!pic) continue;
+        const hh = (pic.height * (Wc - pad * 2)) / wantW;
+        if (pics.length && used + hh > Hc - pad) break;
+        pics.push({ pic, y: used, h: hh, L, w: (pic.width * (Wc - pad * 2)) / wantW });
+        used += hh + gap;
+      }
+      if (run.again) break;
+      DUO.shown[x] = pics.length;
+      cv.width = Wc * dpr; cv.height = Hc * dpr; cv.style.width = Wc + 'px'; cv.style.height = Hc + 'px';
+      const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, Wc, Hc);
+      // (the lines spread down the half a little when there is room: the half stays even)
+      const spare = Math.max(0, Hc - pad - used), extra = pics.length > 1 ? Math.min(18, spare / (pics.length - 1)) : 0;
+      pics.forEach((q, n) => g.drawImage(q.pic, pad, q.y + n * extra, q.w, q.h));
+      // where this half is: its part, its cue, the first bar on screen
+      const L0 = ls[top];
+      half.querySelector('.duo-name').textContent = duoName(P.sc) + (L0.label ? ' · ' + L0.label : '') + ' · ' + tr('bar {0}').replace('{0}', L0.first);
+    }
+    // the screen after this one, ready before it is asked for
+    if (!run.again) duoWarm();
+    $('#pageLabel').textContent = duoWhere(); $('#duoGo span').textContent = duoWhere();
+  } finally { duoDrawing = null; if (run.again && DUO.on) duoDrawSoon(); }
+}
+// One long line: each part's lines put end to end, straight, one over the other at the same bars
+// (the first part above, the second below, as the two staves of one system), moving along as the
+// music goes. With listening on, the place being played stays in sight by itself, both parts
+// followed at once.
+const STRIP = { cols: null, key: '', x: 0, target: 0, playX: null, raf: 0, staff: 44, units: new Map(), follower: null, lastT: 0, gap: 0 };
+function stripSizes() {
+  const half = $$('#duoView .duo-half')[0], r = half.getBoundingClientRect();
+  // (the staves as big as two of them fit with room around, and never small)
+  const staff = Math.round(Math.max(26, Math.min(48, r.height / 11, r.width / 26)));
+  return { W: Math.max(1, Math.round(r.width)), H: Math.max(1, Math.round(r.height)), staff };
+}
+function stripLayout() {
+  const { W, staff } = stripSizes();
+  const key = staff + ':' + DUO.parts.map((P) => P.map.lines.length).join(',') + ':' + DUO.M.M.length;
+  if (STRIP.key === key && STRIP.cols) return;
+  STRIP.key = key; STRIP.staff = staff;
+  // (how wide the whole page is on screen when this line's staff is the screen's staff)
+  const sizeOf = (x, L) => { const [pw, ph] = DUO.parts[x].doc.sizes[L.p] || [1, 1.414]; const sh = Math.max(0.004, ((L.box.bot ?? 0) - (L.box.top ?? 0)) || 0.02); return (staff / sh) * (pw / ph); };
+  const cols = columns({ M: DUO.M.M, parts: DUO.parts.map((P) => P.map) }, sizeOf);
+  let x = Math.round(W * 0.06);
+  const lead = staff * 1.6;   // (room before a new piece, for its name)
+  for (const c of cols) {
+    if (c.first) x += lead;
+    c.x = x;
+    for (let p = 0; p < 2; p++) {
+      const us = c.units[p], tot = us.reduce((s, u) => s + u.px, 0) || 1, k = c.w / tot;
+      let ux = x; for (const u of us) { u.sx0 = ux; ux += u.px * k; u.sx1 = ux; }
+    }
+    x += c.w;
+  }
+  STRIP.cols = cols; STRIP.width = x + W * 0.5;
+  // (each piece's first bar in the whole music, counted in bars: the follower's measure of where it is)
+  STRIP.off = new Map(); let acc = 0;
+  for (const c of cols) { if (!STRIP.off.has(c.k)) STRIP.off.set(c.k, acc - (c.a - 1)); acc = Math.max(acc, STRIP.off.get(c.k) + c.b); }
+  STRIP.units = new Map();
+}
+// the place of the screen: where a bar is along the long line
+function stripXOf(at) {
+  const cols = STRIP.cols; if (!cols || !at) return 0;
+  let c = cols.find((q) => q.k === at.k && q.a <= at.bar && at.bar <= q.b);
+  if (!c) c = cols.find((q) => q.k > at.k || (q.k === at.k && q.a > at.bar)) || cols[cols.length - 1];
+  const n = c.b - c.a + 1, f = Math.max(0, Math.min(1, ((at.bar - c.a) + (at.frac || 0)) / n));
+  return c.x + c.w * f;
+}
+const stripOrder = (k, bar) => (STRIP.off && STRIP.off.has(k) ? STRIP.off.get(k) : 0) + bar;
+// a place in bars (the follower's) back into a piece and bar
+function stripFromM(m) {
+  let k = null, o = -Infinity; for (const [kk, off] of STRIP.off || []) if (off + 1 <= m + 1e-6 && off >= o) { o = off; k = kk; }
+  if (k === null) return null;
+  const v = m - o; return { k, bar: Math.floor(v), frac: v - Math.floor(v) };
+}
+function stripAtX(x) {
+  const cols = STRIP.cols; if (!cols || !cols.length) return null;
+  let c = cols[0]; for (const q of cols) { if (q.x <= x) c = q; else break; }
+  const n = c.b - c.a + 1, f = Math.max(0, Math.min(0.999, (x - c.x) / (c.w || 1)));
+  return { k: c.k, bar: c.a + Math.floor(f * n) };
+}
+// (a page's lines, cut out at a size: asked for once, drawn as soon as they come)
+function stripCrop(x, p) {
+  const { staff } = stripSizes(), dpr = Math.min(3, window.devicePixelRatio || 1);
+  const ls = DUO.parts[x].map.lines.filter((l) => l.p === p);
+  const sh = Math.max(0.004, Math.min(...ls.map((l) => (l.box.bot - l.box.top) || 0.02)));
+  const [pw, ph] = DUO.parts[x].doc.sizes[p] || [1, 1.414];
+  const wl = Math.max(...DUO.parts[x].pages[p].lines.map((L) => L.x1 - L.x0));
+  // (drawn so the staff is as tall in pixels as on screen, sharp)
+  const pageW = Math.round(Math.min(3600, ((staff * dpr) / sh) * (pw / ph)));
+  const wantW = Math.round(pageW * wl);
+  const key = x + ':' + p + ':' + wantW + ':' + S.paper;
+  const got = STRIP.units.get(key);
+  if (got) return got.v;
+  const rec = { v: null }; STRIP.units.set(key, rec);
+  duoPageLines(x, p, wantW).then((v) => { rec.v = v; stripPaint(); }).catch(() => {});
+  return null;
+}
+function stripPaint() { if (!STRIP.raf) STRIP.raf = requestAnimationFrame(stripFrame); }
+function stripFrame(t) {
+  STRIP.raf = 0;
+  if (!DUO.on || DUO.mode !== 'strip' || !STRIP.cols) return;
+  const dt = Math.min(64, t - (STRIP.lastT || t)); STRIP.lastT = t;
+  // (gliding to where it is going: quick at first, gently at the end)
+  const d = STRIP.target - STRIP.x;
+  if (Math.abs(d) > 0.5) { STRIP.x += d * Math.min(1, dt / 220); STRIP.raf = requestAnimationFrame(stripFrame); } else STRIP.x = STRIP.target;
+  stripDrawNow();
+}
+function stripDrawNow() {
+  const half = $$('#duoView .duo-half')[0], cv = half.querySelector('canvas');
+  const { W, H, staff } = stripSizes(), dpr = Math.min(3, window.devicePixelRatio || 1);
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  // the two staves of the system, in the middle of the screen
+  const band = staff * 3.4, gap = staff * 0.9, y0 = Math.round((H - band * 2 - gap) / 2);
+  const bands = [[y0, y0 + band], [y0 + band + gap, y0 + band * 2 + gap]];
+  const staffY = bands.map(([a]) => a + staff * 1.25);
+  const X = STRIP.x, night = S.paper === 'night', faint = night ? 'rgba(233,230,223,.45)' : 'rgba(20,24,40,.4)';
+  const lines = DUO.parts.map((P) => P.map.lines);
+  for (const c of STRIP.cols) {
+    if (c.x + c.w < X - 40 || c.x > X + W + 40) continue;
+    for (let p = 0; p < 2; p++) {
+      for (const u of c.units[p]) {
+        const L = lines[p][u.line], crops = stripCrop(p, L.p); if (!crops) continue;
+        const lc = crops[L.li]; if (!lc || !lc.meta) continue;
+        const m = lc.meta, sx = u.x0 * m.W - m.sx, sw = (u.x1 - u.x0) * m.W;
+        const s = staff / Math.max(1, (L.box.bot - L.box.top) * m.H);
+        const dy = staffY[p] - (L.box.top * m.H - m.a) * s;
+        g.save(); g.beginPath(); g.rect(u.sx0 - X - 1, bands[p][0], u.sx1 - u.sx0 + 2, band); g.clip();
+        g.drawImage(lc, Math.max(0, sx), 0, Math.max(1, sw), lc.height, u.sx0 - X, dy, u.sx1 - u.sx0, lc.height * s);
+        g.restore();
+      }
+    }
+    // (a new piece: its name over the system)
+    if (c.first) {
+      const L = (c.units[0][0] && lines[0][c.units[0][0].line]) || (c.units[1][0] && lines[1][c.units[1][0].line]);
+      if (L && L.label) { g.fillStyle = night ? '#e9e6df' : '#14182a'; g.font = `700 ${Math.round(staff * 0.42)}px -apple-system, system-ui, sans-serif`; g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillText(L.label, Math.max(W * 0.06, c.x - X - staff * 1.2), bands[0][0] - staff * 0.25); }
+    }
+  }
+  // where the playing is: a line through both staves
+  if (STRIP.playX != null) {
+    const px = STRIP.playX - X;
+    g.fillStyle = night ? 'rgba(120,170,255,.28)' : 'rgba(40,90,220,.16)';
+    g.fillRect(px - 2, bands[0][0] + staff * 0.6, 4, bands[1][1] - bands[0][0] - staff * 1.2);
+  }
+  // whose line is whose, at the left edge
+  const tags = DUO.parts.map((P) => duoShort(duoName(P.sc)));
+  g.font = `600 ${Math.max(11, Math.round(staff * 0.26))}px -apple-system, system-ui, sans-serif`; g.textAlign = 'left'; g.textBaseline = 'middle';
+  const paper = DUO_PAPER[S.paper] || '#fff';
+  for (let p = 0; p < 2; p++) {
+    const yy = staffY[p] + staff / 2;
+    const grd = g.createLinearGradient(0, 0, W * 0.06, 0); grd.addColorStop(0, paper); grd.addColorStop(1, paper + '00');
+    g.fillStyle = grd; g.fillRect(0, bands[p][0], W * 0.06, band);
+    g.fillStyle = faint; g.fillText(tags[p], 8, yy);
+  }
+  // (the bracket of the system)
+  g.strokeStyle = faint; g.lineWidth = 2; g.beginPath(); g.moveTo(W * 0.045, staffY[0]); g.lineTo(W * 0.045, staffY[1] + staff); g.stroke();
+  const at = stripAtX(X + W * 0.3);
+  if (at) {
+    DUO.at = { k: at.k, bar: at.bar };
+    const L = lines[0].find((l) => l.k === at.k && l.label) || lines[1].find((l) => l.k === at.k && l.label);
+    const w = (L ? L.label + ' · ' : '') + tr('bar {0}').replace('{0}', STRIP.place && STRIP.follower ? STRIP.place.bar : at.bar);
+    $('#pageLabel').textContent = w; $('#duoGo span').textContent = w;
+  }
+}
+async function duoDrawStrip() {
+  $$('#duoView .duo-empty').forEach((e) => { e.hidden = true; });
+  stripLayout();
+  clearTimeout(STRIP.raT); STRIP.raT = setTimeout(stripReadAhead, 400);
+  stripDrawNow();
+}
+function stripGoTo(at, glide = true) {
+  const { W } = stripSizes();
+  STRIP.target = Math.max(0, Math.min(STRIP.width - W, stripXOf(at) - W * 0.3));
+  if (!glide) STRIP.x = STRIP.target;
+  stripPaint();
+}
+function stripTurn(dir) {
+  const { W } = stripSizes();
+  STRIP.target = Math.max(0, Math.min(STRIP.width - W, STRIP.target + dir * W * 0.7));
+  stripPaint();
+}
+// (the pages around the place, of both parts: the line before it and the next ten)
+function stripWindow() {
+  return DUO.parts.map((P, x) => { const at = STRIP.place || DUO.at; const i = DUO.M.lineAt(x, at); const ps = new Set(P.map.lines.slice(Math.max(0, i - 1), i + 10).map((l) => l.p)); return { x, pages: [...ps] }; });
+}
+// the notes of those pages read ahead, while the long line is on screen: listening starts at once
+function stripReadAhead() {
+  if (!DUO.on || DUO.mode !== 'strip' || !DUO.M || !DUO.at) return;
+  if (!STRIP.reader) STRIP.reader = new DuoFollower({ parts: stripParts(), window: stripWindow, order: stripOrder });
+  for (const w of stripWindow()) for (const p of w.pages) STRIP.reader.notesOf(w.x, p);
+}
+function stripParts() {
+  return DUO.parts.map((P) => ({
+    render: (p, c, w, h) => P.doc.render(p, c, w, h),
+    lineOf: (p, yn) => { let best = -1, bd = 1; P.map.lines.forEach((L, i) => { if (L.p !== p) return; const d = Math.abs((L.box.top + L.box.bot) / 2 - yn); if (yn >= L.box.y0 - 0.01 && yn <= L.box.y1 + 0.01 && d < bd) { bd = d; best = i; } }); return best; },
+    unitAt: (li, xn) => { const L = P.map.lines[li]; const us = lineUnits(L); const u = us.find((q) => xn >= q.x0 && xn < q.x1) || (xn < us[0].x0 ? us[0] : us[us.length - 1]); const f = Math.max(0, Math.min(0.999, (xn - u.x0) / (u.x1 - u.x0 || 1))), n = u.b - u.a + 1; return { k: L.k, bar: u.a + Math.floor(f * n), frac: (f * n) % 1 }; },
+    store: { get: (p) => db.get('files', 'duofr1:' + (P.sc.fileId || P.sc.id) + ':' + p).then((r) => r && r.r), put: (p, r) => db.put('files', { id: 'duofr1:' + (P.sc.fileId || P.sc.id) + ':' + p, kind: 'duofr', r }) },
+  }));
+}
+// listening: both parts followed, the screen moving with the playing
+function stripListen(on) {
+  if (!on) { if (STRIP.follower) STRIP.follower.stop(); STRIP.follower = null; STRIP.playX = null; $('#duoListen').classList.remove('on'); stripPaint(); return; }
+  const parts = stripParts();
+const F = STRIP.follower = new DuoFollower({
+    parts, shift: shiftOfName(duoName(DUO.parts[0].sc)),
+    // (the pages around the place being played, of both parts)
+    window: () => stripWindow(),
+    order: stripOrder,
+    onPlace: (pl0) => {
+      const pl = (pl0.m != null && stripFromM(pl0.m)) || pl0;
+      STRIP.place = pl;
+      STRIP.playX = stripXOf(pl);
+      const { W } = stripSizes();
+      // (the playing kept at a third of the way across: the music ahead in sight)
+      STRIP.target = Math.max(0, Math.min(STRIP.width - W, STRIP.playX - W * 0.3));
+      stripPaint();
+    },
+    onState: (s) => { if (s === 'No microphone') { toast(tr('Microphone access is off. Allow it in the iPad’s Settings › Stand › Microphone, then try again.'), 3500); stripListen(false); } },
+  });
+  if (STRIP.reader) F.cache = STRIP.reader.cache;
+  window.__duoFollower = F;
+  $('#duoListen').classList.add('on');
+  STRIP.place = { ...DUO.at, frac: 0 };
+  F.start(STRIP.place);
+}
+// Lines together: each line of one part with the other part's line of the same bars right under it,
+// in pairs down the screen, like a little score of the two (for music where the parts answer each
+// other bar by bar)
+async function duoDrawPairs(run, dpr) {
+  const half = $$('#duoView .duo-half')[0], cv = half.querySelector('canvas'), empty = half.querySelector('.duo-empty');
+  const r = half.getBoundingClientRect(), Wc = Math.max(1, Math.round(r.width)), Hc = Math.max(1, Math.round(r.height));
+  const A = DUO.parts[0].map.lines, B = DUO.parts[1].map.lines;
+  if (!A.length && !B.length) { cv.width = cv.height = 1; empty.hidden = false; empty.textContent = tr('Reading…'); return; }
+  empty.hidden = true;
+  const gut = 30, pad = 10, wantW = Math.round((Wc - gut - pad) * dpr), inner = 2, between = 16;
+  let ia = A.length ? Math.max(0, Math.min(A.length - 1, DUO.M.lineAt(0, DUO.at) + DUO.nudge[0])) : 0;
+  let ib = B.length ? Math.max(0, Math.min(B.length - 1, DUO.M.lineAt(1, DUO.at) + DUO.nudge[1])) : 0;
+  DUO.tops = [ia, ib];
+  const before = (p, q) => p.k < q.k || (p.k === q.k && p.first < q.first);
+  const rows = []; let used = pad;
+  const picOf = async (x, L) => { const ps = await duoPageLines(x, L.p, wantW); const pic = ps[L.li]; return pic ? { pic, h: (pic.height * (Wc - gut - pad)) / wantW, w: (pic.width * (Wc - gut - pad)) / wantW } : null; };
+  while (ia < A.length || ib < B.length) {
+    const a = A[ia], b = B[ib];
+    let useA = !!a, useB = !!b;
+    if (a && b) {
+      const meet = a.k === b.k && a.first <= b.last && b.first <= a.last;
+      if (!meet) { if (before(a, b)) useB = false; else useA = false; }
+    }
+    const pa = useA ? await picOf(0, a) : null, pb = useB ? await picOf(1, b) : null;
+    if (!DUO.on || run.again) return;
+    const h = (pa ? pa.h : 0) + (pb ? pb.h : 0) + (pa && pb ? inner : 0);
+    if (rows.length && used + h > Hc - pad) break;
+    rows.push({ a: useA ? a : null, b: useB ? b : null, pa, pb, y: used, h });
+    used += h + between;
+    if (useA) ia++;
+    if (useB) ib++;
+  }
+  // (where the next screen starts: the first line not shown, of either part)
+  const na = A[ia], nb = B[ib];
+  DUO.pairNext = na && nb ? (before(na, nb) ? { k: na.k, bar: na.first } : { k: nb.k, bar: nb.first }) : na ? { k: na.k, bar: na.first } : nb ? { k: nb.k, bar: nb.first } : null;
+  // (a turn brings the last pair to the top: the line being played when you turn stays in sight)
+  const last = rows.length > 1 ? rows[rows.length - 1] : null, lastL = last && (last.a && last.b ? (before(last.a, last.b) ? last.a : last.b) : last.a || last.b);
+  if (lastL && DUO.pairNext) DUO.pairNext = { k: lastL.k, bar: lastL.first };
+  DUO.shown = [rows.filter((q) => q.a).length, rows.filter((q) => q.b).length];
+  cv.width = Wc * dpr; cv.height = Hc * dpr; cv.style.width = Wc + 'px'; cv.style.height = Hc + 'px';
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, Wc, Hc);
+  const spare = Math.max(0, Hc - pad - used + between), extra = rows.length > 1 ? Math.min(24, spare / (rows.length - 1)) : 0;
+  const night = S.paper === 'night', faint = night ? 'rgba(233,230,223,.42)' : 'rgba(20,24,40,.38)';
+  const tags = DUO.parts.map((P) => duoShort(duoName(P.sc)));
+  g.font = '600 11px -apple-system, system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'center';
+  rows.forEach((q, n) => {
+    let y = q.y + n * extra;
+    const y0 = y;
+    for (const [pic, tag] of [[q.pa, tags[0]], [q.pb, tags[1]]]) {
+      if (!pic) continue;
+      g.drawImage(pic.pic, gut, y, pic.w, pic.h);
+      // (whose line it is, in the margin)
+      g.fillStyle = faint; g.fillText(tag, gut / 2 + 1, y + pic.h / 2);
+      y += pic.h + inner;
+    }
+    // (the two lines of a pair held together at the left, as the staves of a score are)
+    if (q.pa && q.pb) { g.strokeStyle = faint; g.lineWidth = 1.5; g.beginPath(); g.moveTo(gut - 3, y0 + q.pa.h * 0.3); g.lineTo(gut - 3, y - inner - q.pb.h * 0.3); g.stroke(); }
+  });
+  half.querySelector('.duo-name').textContent = '';
+  if (!run.again) duoWarm();
+  $('#pageLabel').textContent = duoWhere(); $('#duoGo span').textContent = duoWhere();
+}
+// "Clarinet 1 in B♭" → "Cl. 1"
+function duoShort(name) {
+  const w = String(name || '').trim().split(/\s+/), num = (String(name).match(/\b(\d|I{1,3}|IV)\b/) || [])[1] || '';
+  return (w[0] ? w[0].slice(0, 2) + '.' : '') + (num ? ' ' + num : '');
+}
+// a half's name: the part as its pages print it at the top ("CLARINET 1 in B♭" → "Clarinet 1 in B♭"),
+// else the score's title
+function duoName(sc) {
+  const P = DUO.parts.find((q) => q && q.sc === sc);
+  if (P && P.partName === undefined && P.done) {
+    const seen = new Map();
+    for (const pg of P.pages) {
+      const top = (pg.words || []).filter((q) => q.y < 0.06 && q.x < 0.4).sort((a, b) => a.x - b.x);
+      const t = top.map((q) => q.s).join(' ').replace(/\s+/g, ' ').trim();
+      if (t && PART_WORDS.test(t) && t.length < 40) seen.set(t, (seen.get(t) || 0) + 1);
+    }
+    const best = [...seen].sort((a, b) => b[1] - a[1])[0];
+    P.partName = best && best[1] >= 2 ? best[0].toLowerCase().replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase()).replace(/\bIn\b/, 'in').replace(/\b(B|E|A)b\b/, '$1♭') : null;
+  }
+  return (P && P.partName) || sc.title || '';
+}
+function duoWhere() {
+  const ls = DUO.parts[0].map ? DUO.parts[0].map.lines : [], L = ls[DUO.tops[0]] || (DUO.parts[1].map ? DUO.parts[1].map.lines[DUO.tops[1]] : null);
+  return L ? (L.label ? L.label + ' · ' : '') + tr('bar {0}').replace('{0}', DUO.at ? DUO.at.bar : L.first) : '';
+}
+function duoWarm() {
+  const nx = DUO.mode === 'pairs' ? DUO.pairNext : DUO.M.next(DUO.tops, DUO.shown); if (!nx) return;
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  for (let x = 0; x < 2; x++) {
+    const ls = DUO.parts[x].map ? DUO.parts[x].map.lines : []; if (!ls.length) continue;
+    const half = $$('#duoView .duo-half')[DUO.mode === 'pairs' ? 0 : x], Wc = half.getBoundingClientRect().width, wantW = Math.round((Wc - (DUO.mode === 'pairs' ? 40 : 20)) * dpr);
+    const i = DUO.M.lineAt(x, nx); const pages = new Set(ls.slice(i, i + 8).map((l) => l.p));
+    for (const p of pages) duoPageLines(x, p, wantW).catch(() => {});
+  }
+}
+// a turn: both halves to the next music (or back to where they were)
+function duoTurn(dir) {
+  if (!DUO.M || !DUO.at) return;
+  if (DUO.mode === 'strip') { stripTurn(dir); return; }
+  if (dir > 0) {
+    const nx = DUO.mode === 'pairs' ? DUO.pairNext : DUO.M.next(DUO.tops, DUO.shown);
+    if (!nx) { toast(tr('The end of both parts.'), 1400); return; }
+    DUO.back.push({ at: DUO.at, nudge: DUO.nudge.slice() });
+    if (DUO.back.length > 200) DUO.back.shift();
+    DUO.at = nx; DUO.nudge = [0, 0];
+  } else {
+    const b = DUO.back.pop();
+    if (b) { DUO.at = b.at; DUO.nudge = b.nudge; }
+    else {
+      // (nothing to go back to: a line back in the half that starts later)
+      let best = null;
+      for (let x = 0; x < 2; x++) { const t = DUO.tops[x]; if (t > 0) { const q = DUO.M.placeOf(x, t - 1); if (q.k != null && (!best || DUO.M.before(best, q))) best = q; } }
+      if (!best) return;
+      DUO.at = best; DUO.nudge = [0, 0];
+    }
+  }
+  duoKeepPlace(); duoDraw();
+}
+// one half alone, a line on or back (the two parts read a little differently there)
+function duoNudge(x, d) {
+  const ls = DUO.parts[x].map ? DUO.parts[x].map.lines : [];
+  const t = DUO.tops[x] + d; if (t < 0 || t >= ls.length) return;
+  DUO.nudge[x] += d; duoDraw();
+}
+async function openDuo(other) {
+  if (!V.doc || !V.score || !other) return;
+  closeDuo();
+  setInking(false); hidePanel();
+  DUO.on = true; DUO.at = null; DUO.M = null; DUO.back = []; DUO.nudge = [0, 0]; DUO.tops = [0, 0]; DUO.shown = [0, 0];
+  const view = $('#duoView'); view.hidden = false; $('#score').classList.add('duo-on'); duoSizeSoon();
+  view.style.background = DUO_PAPER[S.paper] || '#fff';
+  $$('#duoView .duo-half canvas').forEach((c) => { c.width = c.height = 1; });
+  try {
+    DUO.parts = [await duoOpenPart(V.score), await duoOpenPart(other)];
+  } catch (err) { console.warn(err); closeDuo(); toast(tr('The other part could not be opened.'), 2600); return; }
+  if (!DUO.on) return;
+  // (each knows the other: next time, Two parts opens straight away from either)
+  if (V.score.duo !== other.id) { V.score.duo = other.id; db.put('scores', V.score).catch(() => {}); }
+  if (other.duo !== V.score.id) { other.duo = V.score.id; db.put('scores', other).catch(() => {}); }
+  duoRead().catch((err) => console.warn('two parts', err));
+}
+function closeDuo() {
+  if (!DUO.on && !DUO.parts[0]) return;
+  DUO.on = false; DUO.readTok++;
+  try { stripListen(false); STRIP.reader = null; STRIP.key = ''; STRIP.cols = null; } catch {}
+  const view = $('#duoView'); if (view) view.hidden = true; $('#score').classList.remove('duo-on');
+  for (const P of DUO.parts) if (P && P.base) try { P.base.destroy(); } catch {}
+  for (const j of DUO.imgs.values()) j.then((ls) => ls.forEach((l) => { l.width = l.height = 0; })).catch(() => {});
+  DUO.imgs.clear(); DUO.parts = [null, null]; DUO.M = null;
+  if (V.doc && !$('#score').hidden) try { layout(false); } catch {}
+}
+// choosing the other part: the scores most like this one first (the same piece, another instrument)
+async function chooseDuo() {
+  const sc = V.score; if (!sc) return;
+  const words = (t) => new Set(String(t || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1));
+  const mine = words(sc.title + ' ' + (sc.composer || ''));
+  const like = (o) => { const w = words(o.title + ' ' + (o.composer || '')); let n = 0; for (const x of w) if (mine.has(x)) n++; return n / Math.max(1, Math.min(w.size, mine.size)); };
+  const others = scores.filter((o) => o.id !== sc.id && !o.preview && o.kind !== 'comp' && !o.paper && !o.notebook).map((o) => ({ o, s: like(o) })).sort((a, b) => b.s - a.s || (b.o.opened || 0) - (a.o.opened || 0)).slice(0, 40);
+  if (!others.length) { toast(tr('Add the other part to your library first.'), 3000); return; }
+  const id = await choose(tr('Which part is on the other half?'), others.map(({ o }) => ({ id: o.id, title: o.title, sub: o.composer || '' })), { sub: tr('This score goes above, the one you choose below.') });
+  const other = id && scores.find((o) => o.id === id);
+  if (other) openDuo(other);
+}
+// to a piece (a cue, a movement): both parts at its start
+async function duoGoTo() {
+  if (!DUO.M) return;
+  const items = [];
+  DUO.M.M.forEach((m, k) => {
+    const L = m.map((sg, x) => (sg == null ? null : DUO.parts[x].map.lines[DUO.parts[x].map.segs[sg].from])).filter(Boolean);
+    if (!L.length) return;
+    const name = L.find((l) => l.label) ? L.find((l) => l.label).label : tr('bar {0}').replace('{0}', Math.min(...L.map((l) => l.first)));
+    const who = m.map((sg, x) => (sg == null ? null : duoName(DUO.parts[x].sc))).filter(Boolean);
+    items.push({ id: String(k), title: name, sub: who.length < 2 ? who[0] || '' : '' });
+  });
+  const id = await choose(tr('Go to a piece'), items);
+  if (id == null) return;
+  const k = +id, firsts = DUO.parts.map((P) => { const l = P.map.lines.find((q) => q.k === k); return l ? l.first : Infinity; });
+  DUO.back.push({ at: DUO.at, nudge: DUO.nudge.slice() });
+  DUO.at = { k, bar: Math.min(...firsts) }; DUO.nudge = [0, 0];
+  if (DUO.mode === 'strip') { stripLayout(); stripGoTo(DUO.at); if (STRIP.follower) { STRIP.place = { ...DUO.at, frac: 0 }; STRIP.follower.at = STRIP.place; STRIP.follower.best = undefined; STRIP.follower.key = ''; STRIP.follower.refresh(); } }
+  duoKeepPlace(); duoDraw();
+}
+function duoButton() {
+  const p = duoPartnerOf(V.score);
+  if (p) openDuo(p); else chooseDuo();
+}
+// the two halves under the fingers: a tap at the right goes on, at the left back, in the middle the
+// toolbar; a swipe sideways turns; a swipe up or down moves that half alone by a line
+{
+  const view = $('#duoView');
+  let g = null;
+  view.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    const half = e.target.closest('.duo-half');
+    g = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), half: half ? $$('#duoView .duo-half').indexOf(half) : -1 };
+  });
+  const end = (e) => {
+    if (!g || g.id !== e.pointerId) return;
+    const d = g; g = null;
+    if (e.type === 'pointercancel') return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y, dt = performance.now() - d.t;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3 && dt < 800) { turn(dx < 0 ? 1 : -1); return; }
+    if (d.half >= 0 && Math.abs(dy) > 40 && Math.abs(dy) > Math.abs(dx) * 1.3 && dt < 900) { if (DUO.mode === 'pairs') turn(dy < 0 ? 1 : -1); else duoNudge(d.half, dy < 0 ? 1 : -1); return; }
+    if (Math.hypot(dx, dy) > 12 || dt > 600) return;
+    const w = window.innerWidth;
+    if ($('#score').classList.contains('chrome-off') && e.clientY < 80) { showChrome(true); duoSizeSoon(); return; }
+    if (e.clientX > w * 0.68) turn(1);
+    else if (e.clientX < w * 0.32) turn(-1);
+    else { showChrome($('#score').classList.contains('chrome-off')); duoSizeSoon(); }
+  };
+  view.addEventListener('pointerup', end); view.addEventListener('pointercancel', end);
+  view.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  $('#duoClose').addEventListener('click', () => closeDuo());
+  $('#duoSwap').addEventListener('click', () => chooseDuo());
+  $('#duoGo').addEventListener('click', () => duoGoTo());
+  $('#duoMode').addEventListener('click', () => {
+    const order = ['pairs', 'strip', 'halves'], from = DUO.mode;
+    DUO.mode = order[(order.indexOf(DUO.mode) + 1) % order.length];
+    try { localStorage.setItem('standDuoMode', DUO.mode); } catch {}
+    DUO.nudge = [0, 0];
+    if (from === 'strip') stripListen(false);
+    if (DUO.mode === 'strip') { STRIP.key = ''; stripLayout(); stripGoTo(DUO.at, false); }
+    duoDraw();
+  });
+  $('#duoListen').addEventListener('click', () => stripListen(!STRIP.follower));
+  $('#duoBtn').addEventListener('click', () => duoButton());
+  addEventListener('resize', () => { if (DUO.on) duoSizeSoon(); });
+}
+// (the halves sized again: the toolbar shown or hidden, the iPad turned)
+function duoSizeSoon() {
+  setTimeout(() => {
+    if (!DUO.on) return;
+    const tb = $('#topbar'); document.documentElement.style.setProperty('--duo-top', (tb ? tb.offsetHeight : 56) + 'px');
+    duoDraw();
+  }, 60);
 }
 const BLANK_ONCE = new Set();
 // a page that is only part of a page (lines moved up onto the page before, a cut page): its box
