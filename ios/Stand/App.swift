@@ -443,7 +443,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 let p = t.hasPrefix("/") ? t : documentsDir.appendingPathComponent(t).path
                 StandVideoKit.shared.bringInForTest(p); return
             }
-            StandVideoKit.shared.pick(from: body["from"] as? String ?? "photos", on: self)
+            var at: CGRect? = nil
+            if let r = body["rect"] as? [Double], r.count == 4 { at = CGRect(x: r[0], y: r[1], width: r[2], height: r[3]) }
+            StandVideoKit.shared.pick(from: body["from"] as? String ?? "photos", on: self, at: at, labels: body["labels"] as? [String] ?? [])
         case "standVideoOut":
             StandVideoKit.shared.out(body)
         case "standVideo":

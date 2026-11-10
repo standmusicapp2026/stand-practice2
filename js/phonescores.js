@@ -506,7 +506,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       grid.append(b);
     }
     $('#phsEmpty').hidden = list.length > 0 || PS.busy || (!q && !PS.folder && folders().length > 0);
-    $('#phsEmpty').textContent = all.length ? (q ? 'Nothing found.' : 'No scores on this iPhone.') : 'Your iPad\'s scores show here once it has been found (open Stand on it, on the same Wi-Fi). Or add your own with +: scan pages, or bring them from Photos or Files.';
+    $('#phsEmpty').textContent = all.length ? (q ? 'Nothing found.' : 'No scores on this iPhone.') : 'Your iPad\'s scores show here once it has been found (open Stand on it, on the same Wi-Fi). Or add your own: Scan, or Import score.';
     grid.classList.toggle('editing', PS.editing);
     for (const s of list) {
       const b = el('div', 'phs-card'); b.setAttribute('role', 'button'); b.tabIndex = 0; b.dataset.score = s.id;
@@ -539,7 +539,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     $('#phsEditHint').hidden = !PS.editing;
     $('#phsNewFolder').hidden = PS.editing;
     $('#phsEdit').hidden = !all.length;
-    $('#phsAdd').hidden = PS.editing;
+    $('#phsActions').hidden = PS.editing;
   }
   function openList() { pane.hidden = false; document.body.classList.add('phs-open'); render(); sub(); refresh(true); }
   function closeList() { pane.hidden = true; PS.editing = false; PS.folder = null; document.body.classList.remove('phs-open'); }

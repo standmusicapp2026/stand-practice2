@@ -28,7 +28,21 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
 
     // MARK: in
 
-    func pick(from: String, on host: UIViewController) {
+    func pick(from: String, on host: UIViewController, at rect: CGRect? = nil, labels: [String] = []) {
+        if from == "ask" {
+            // (as iOS asks everywhere: Photos or Files, in its own menu by the button)
+            let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+            sheet.addAction(UIAlertAction(title: labels.count > 0 ? labels[0] : "Photo Library", style: .default) { _ in self.pick(from: "photos", on: host) })
+            sheet.addAction(UIAlertAction(title: labels.count > 1 ? labels[1] : "Choose File", style: .default) { _ in self.pick(from: "files", on: host) })
+            sheet.addAction(UIAlertAction(title: labels.count > 2 ? labels[2] : "Cancel", style: .cancel) { _ in self.inEvent(["type": "cancel"]) })
+            if let pop = sheet.popoverPresentationController {
+                pop.sourceView = host.view
+                pop.sourceRect = rect ?? CGRect(x: host.view.bounds.midX, y: host.view.bounds.midY, width: 1, height: 1)
+                pop.permittedArrowDirections = rect == nil ? [] : [.up, .down]
+            }
+            host.present(sheet, animated: true)
+            return
+        }
         if from == "files" {
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie], asCopy: true)
             picker.delegate = self

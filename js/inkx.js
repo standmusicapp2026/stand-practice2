@@ -5,19 +5,29 @@ import { db } from './db.js';
 import { drawElement, ELEMENT_BY_KEY } from './elements.js';
 
 export const PEN_KINDS = [
-  { k: 'fountain', label: 'Fountain pen' },
-  { k: 'ball', label: 'Ballpoint' },
-  { k: 'pencil', label: 'Pencil' },
-  { k: 'marker', label: 'Marker' },
-  { k: 'brush', label: 'Brush' },
-  { k: 'calli', label: 'Calligraphy' },
-  { k: 'water', label: 'Watercolour' },
-  { k: 'neon', label: 'Neon' },
-  { k: 'rainbow', label: 'Rainbow' },
-  { k: 'glitter', label: 'Glitter' },
+  { k: 'fountain', label: 'Fountain pen', g: 'Pens' },
+  { k: 'ball', label: 'Ballpoint', g: 'Pens' },
+  { k: 'fine', label: 'Fineliner', g: 'Pens' },
+  { k: 'gel', label: 'Gel pen', g: 'Pens' },
+  { k: 'calli', label: 'Calligraphy', g: 'Pens' },
+  { k: 'pencil', label: 'Pencil', g: 'Pencils & chalk' },
+  { k: 'charcoal', label: 'Charcoal', g: 'Pencils & chalk' },
+  { k: 'crayon', label: 'Crayon', g: 'Pencils & chalk' },
+  { k: 'pastel', label: 'Soft pastel', g: 'Pencils & chalk' },
+  { k: 'marker', label: 'Marker', g: 'Markers' },
+  { k: 'felt', label: 'Felt tip', g: 'Markers' },
+  { k: 'neon', label: 'Neon', g: 'Markers' },
+  { k: 'brush', label: 'Ink brush', g: 'Paint' },
+  { k: 'paint', label: 'Gouache', g: 'Paint' },
+  { k: 'water', label: 'Watercolour', g: 'Paint' },
+  { k: 'air', label: 'Airbrush', g: 'Paint' },
+  { k: 'rainbow', label: 'Rainbow', g: 'Effects' },
+  { k: 'glitter', label: 'Glitter', g: 'Effects' },
 ];
 // how much wider than the plain pen each kind draws, at the same thickness setting
-export const PEN_WIDTH = { fountain: 1, ball: 0.75, pencil: 1.35, marker: 3.4, brush: 3, calli: 2.6, water: 4.2, neon: 1.6, rainbow: 2.4, glitter: 2.2 };
+export const PEN_WIDTH = { fountain: 1, ball: 0.75, fine: 0.7, gel: 1.05, pencil: 1.35, charcoal: 2.6, crayon: 2.3, pastel: 3.2, marker: 3.4, felt: 1.7, brush: 3, paint: 3.4, calli: 2.6, water: 4.2, air: 6, neon: 1.6, rainbow: 2.4, glitter: 2.2 };
+// how much a kind answers the Pencil's pressure (0 none … 1 a lot), unless set otherwise
+export const PEN_PRESSURE = { fountain: 0.55, ball: 0.12, fine: 0, gel: 0.2, pencil: 0.28, charcoal: 0.4, crayon: 0.15, pastel: 0.3, marker: 0, felt: 0.1, brush: 0.82, paint: 0.35, calli: 0.5, water: 0.5, air: 0.6, neon: 0.05, rainbow: 0.05, glitter: 0.2 };
 
 export const PALETTE = [
   '#16181d', '#3d4350', '#7a808c', '#b9bec7', '#ffffff',
@@ -47,47 +57,186 @@ export function metalGradient(ctx, metal, x0, y0, x1, y1) {
   st.forEach((c, i) => g.addColorStop(i / (st.length - 1), c)); return g;
 }
 
-// ---------- pencil grain ----------
+// ---------- textures: paper tooth for pencils, chalk and crayon ----------
+// Made once (always the same: a page looks the same every time it is drawn), in the colour asked,
+// and laid on the page at the page's own scale (s: canvas pixels per 1000th of the page), so the
+// grain is the same whether the page is drawn small or zoomed in.
 const grains = new Map();
-let grainNoise = null;
-function grainPattern(ctx, color) {
-  let p = grains.get(color);
-  if (p) return p;
-  if (!grainNoise) {
-    grainNoise = document.createElement('canvas'); grainNoise.width = grainNoise.height = 96;
-    const g = grainNoise.getContext('2d'), d = g.createImageData(96, 96);
-    let s = 7;
-    for (let i = 0; i < 96 * 96; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; const r = s / 0x7fffffff; d.data[i * 4 + 3] = r < 0.18 ? 40 : r < 0.5 ? 150 : 235; }
-    g.putImageData(d, 0, 0);
+const noiseOf = new Map();
+function noise(kind) {
+  if (noiseOf.has(kind)) return noiseOf.get(kind);
+  const N = 128, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), d = g.createImageData(N, N);
+  let seed = { pencil: 7, charcoal: 11, crayon: 23, pastel: 31, water: 43 }[kind] || 5;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  // a little smooth value noise (the paper's hills), plus fine speckle
+  const G = kind === 'water' ? 8 : 32, grid = Array.from({ length: (G + 1) * (G + 1) }, () => rnd());
+  const at = (x, y) => { const gx = (x / N) * G, gy = (y / N) * G, x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0, sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy), v = (i, j) => grid[((j % G) * (G + 1)) + (i % G)];
+    return (v(x0, y0) * (1 - sx) + v(x0 + 1, y0) * sx) * (1 - sy) + (v(x0, y0 + 1) * (1 - sx) + v(x0 + 1, y0 + 1) * sx) * sy; };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const hill = at(x, y), sp = rnd();
+    let a;
+    // (the paper's tooth: the tops of its little hills catch the colour, the hollows stay white)
+    if (kind === 'charcoal') a = sp < 0.3 * hill ? 30 : 140 + (1 - hill) * 70 + sp * 45;
+    else if (kind === 'crayon') a = sp * 0.55 + hill * 0.6 > 0.82 ? 10 : 200 + sp * 55;
+    else if (kind === 'pastel') a = sp * 0.5 + hill * 0.65 > 0.8 ? 30 : 150 + sp * 80;
+    else if (kind === 'water') a = 150 + (hill - 0.5) * 160 + (sp - 0.5) * 50;
+    else a = sp < 0.18 ? 40 : sp < 0.5 ? 150 : 235;   // pencil
+    d.data[(y * N + x) * 4 + 3] = Math.max(0, Math.min(255, a));
   }
-  const c = document.createElement('canvas'); c.width = c.height = 96;
-  const g = c.getContext('2d');
-  g.fillStyle = color; g.fillRect(0, 0, 96, 96);
-  g.globalCompositeOperation = 'destination-in'; g.drawImage(grainNoise, 0, 0);
-  p = ctx.createPattern(c, 'repeat');
-  grains.set(color, p);
+  g.putImageData(d, 0, 0);
+  noiseOf.set(kind, c);
+  return c;
+}
+function grainPattern(ctx, color, kind = 'pencil', scale = 1) {
+  const key = kind + color;
+  let c = grains.get(key);
+  if (!c) {
+    c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = color; g.fillRect(0, 0, 128, 128);
+    g.globalCompositeOperation = 'destination-in'; g.drawImage(noise(kind), 0, 0);
+    grains.set(key, c);
+    if (grains.size > 80) grains.delete(grains.keys().next().value);
+  }
+  const p = ctx.createPattern(c, 'repeat');
+  try { if (p.setTransform && scale !== 1) p.setTransform(new DOMMatrix().scale(scale)); } catch {}
   return p;
+}
+const seeded = (pts) => { let seed = (Math.round((pts[0][0] * 7 + pts[0][1] * 13) * 10) % 2147483646) + 1; if (seed <= 0) seed += 2147483646; return () => (seed = (seed * 16807) % 2147483647) / 2147483647; };
+const darken = (c, f) => { const [r, g, b] = hexRgb(c); return `rgb(${Math.round(r * (1 - f))},${Math.round(g * (1 - f))},${Math.round(b * (1 - f))})`; };
+// the line's middle, with how wide it is at each point and which way is across
+function spine(pts, size, pv) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const sp = i ? Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0;
+    out.push({ x: p[0], y: p[1], nx: -dy, ny: dx, w: (size / 2) * (1 - pv + pv * 2 * (p[2] ?? 0.5)), sp });
+  }
+  return out;
+}
+// Hairs of a brush: thin lines along the stroke, across its width; quick parts of the stroke run
+// dry (the hairs part and the paper shows between them)
+function bristles(ctx, sp, color, alpha, n, rnd, opts = {}) {
+  const hairs = Array.from({ length: n }, (_, k) => ({ o: ((k + 0.5) / n) * 2 - 1 + (rnd() - 0.5) * (1.4 / n), a: 0.55 + rnd() * 0.45, w: 0.7 + rnd() * 0.8, gap: rnd() }));
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const h of hairs) {
+    const col = opts.vary ? (h.gap < 0.33 ? lighten(color, opts.vary) : h.gap > 0.7 ? darken(color, opts.vary * 0.6) : color) : color;
+    ctx.strokeStyle = col;
+    let open = false; ctx.beginPath();
+    for (let i = 0; i < sp.length; i++) {
+      const q = sp[i], dry = opts.dry ? Math.min(1, Math.max(0, (q.sp / Math.max(1, q.w * 2) - 0.55) * 1.6)) : 0;
+      // (dry: this hair lifts off here)
+      if (dry > 0 && h.gap < dry * 0.75) { if (open) { ctx.stroke(); ctx.beginPath(); open = false; } continue; }
+      const x = q.x + q.nx * q.w * h.o * 0.92, y = q.y + q.ny * q.w * h.o * 0.92;
+      if (!open) { ctx.moveTo(x, y); open = true; } else ctx.lineTo(x, y);
+    }
+    ctx.globalAlpha = alpha * h.a * (opts.alpha || 1);
+    ctx.lineWidth = Math.max(0.6, (sp.reduce((m, q) => m + q.w, 0) / Math.max(1, sp.length)) * 2 / n * h.w * (opts.thick || 1.5));
+    if (open) ctx.stroke();
+  }
 }
 
 // stroke options for perfect-freehand by kind
-export function strokeOptions(kind, size, hasPressure, live) {
+export function strokeOptions(kind, size, hasPressure, live, pv) {
   // little streamline: the line stays right under the Pencil's tip (it smooths without lagging)
   const base = { size, smoothing: 0.55, streamline: 0.25, easing: (t) => t, start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }, last: !live };
+  let o;
   switch (kind) {
-    case 'ball': return { ...base, thinning: 0.12, simulatePressure: false, streamline: 0.3 };
-    case 'pencil': return { ...base, thinning: hasPressure ? 0.28 : 0.1, simulatePressure: !hasPressure };
-    case 'neon': case 'rainbow': return { ...base, thinning: 0.05, simulatePressure: false, smoothing: 0.6, streamline: 0.5 };
-    case 'glitter': return { ...base, thinning: 0.2, simulatePressure: false };
-    case 'marker': return { ...base, thinning: 0, simulatePressure: false, smoothing: 0.5, streamline: 0.5 };
-    case 'brush': return { ...base, thinning: 0.82, simulatePressure: !hasPressure, smoothing: 0.7, streamline: 0.45, start: { taper: size * 3, cap: true }, end: { taper: size * 4, cap: true } };
-    case 'water': return { ...base, thinning: 0.5, simulatePressure: !hasPressure, smoothing: 0.8, streamline: 0.55 };
-    default: return { ...base, thinning: hasPressure ? 0.55 : 0.3, simulatePressure: !hasPressure };
+    case 'ball': o = { ...base, thinning: 0.12, simulatePressure: false, streamline: 0.3 }; break;
+    case 'fine': o = { ...base, thinning: 0, simulatePressure: false, smoothing: 0.5, streamline: 0.32 }; break;
+    case 'gel': o = { ...base, thinning: hasPressure ? 0.2 : 0.08, simulatePressure: false, smoothing: 0.6, streamline: 0.3 }; break;
+    case 'pencil': o = { ...base, thinning: hasPressure ? 0.28 : 0.1, simulatePressure: !hasPressure }; break;
+    case 'charcoal': o = { ...base, thinning: hasPressure ? 0.4 : 0.2, simulatePressure: !hasPressure, smoothing: 0.65, start: { cap: true, taper: size * 0.6 }, end: { cap: true, taper: size * 0.8 } }; break;
+    case 'crayon': o = { ...base, thinning: 0.15, simulatePressure: false, smoothing: 0.6, streamline: 0.35 }; break;
+    case 'pastel': o = { ...base, thinning: hasPressure ? 0.3 : 0.15, simulatePressure: !hasPressure, smoothing: 0.7, streamline: 0.4 }; break;
+    case 'neon': case 'rainbow': o = { ...base, thinning: 0.05, simulatePressure: false, smoothing: 0.6, streamline: 0.5 }; break;
+    case 'glitter': o = { ...base, thinning: 0.2, simulatePressure: false }; break;
+    case 'marker': o = { ...base, thinning: 0, simulatePressure: false, smoothing: 0.5, streamline: 0.5 }; break;
+    case 'felt': o = { ...base, thinning: 0.1, simulatePressure: false, smoothing: 0.55, streamline: 0.4 }; break;
+    case 'brush': o = { ...base, thinning: 0.82, simulatePressure: !hasPressure, smoothing: 0.7, streamline: 0.45, start: { taper: size * 3, cap: true }, end: { taper: size * 4, cap: true } }; break;
+    case 'paint': o = { ...base, thinning: hasPressure ? 0.35 : 0.2, simulatePressure: !hasPressure, smoothing: 0.75, streamline: 0.5, start: { taper: size * 0.8, cap: true }, end: { taper: size * 1.8, cap: true } }; break;
+    case 'water': o = { ...base, thinning: 0.5, simulatePressure: !hasPressure, smoothing: 0.8, streamline: 0.55 }; break;
+    case 'air': o = { ...base, thinning: 0, simulatePressure: false, smoothing: 0.8, streamline: 0.5 }; break;
+    default: o = { ...base, thinning: hasPressure ? 0.55 : 0.3, simulatePressure: !hasPressure };
   }
+  // the pressure chosen for the pen (0 … 1): how much the line answers it (with the Pencil; with a
+  // finger the speed stands in for it)
+  if (pv !== undefined && pv !== null) { o.thinning = Math.max(0, Math.min(0.9, pv * 0.95)); if (pv === 0) o.simulatePressure = false; }
+  return o;
 }
 // paint a pen outline the way its kind looks
 const hexRgb = (c) => { const m = /^#?([0-9a-f]{6})$/i.exec(c || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16, (n >> 8) & 255, n & 255]; };
 const lighten = (c, f) => { const [r, g, b] = hexRgb(c); return `rgb(${Math.round(r + (255 - r) * f)},${Math.round(g + (255 - g) * f)},${Math.round(b + (255 - b) * f)})`; };
-export function paintKind(ctx, kind, color, alpha, pathFn, size, pts) {
+export function paintKind(ctx, kind, color, alpha, pathFn, size, pts, scale = 1, pv) {
+  const P = pv ?? PEN_PRESSURE[kind] ?? 0.4;
+  if (kind === 'fine') { ctx.globalAlpha = alpha; ctx.fillStyle = color; pathFn(); ctx.fill(); return; }
+  if (kind === 'gel' && pts && pts.length) {
+    // a glossy line: the colour, with a thin light shine along it
+    ctx.globalAlpha = alpha; ctx.fillStyle = color; pathFn(); ctx.fill();
+    if (size >= 2.5 && pts.length > 1) {
+      ctx.save(); ctx.clip();
+      ctx.globalAlpha = alpha * 0.4; ctx.strokeStyle = lighten(color, 0.55); ctx.lineWidth = Math.max(0.6, size * 0.16); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const o = size * 0.2; ctx.beginPath(); ctx.moveTo(pts[0][0] - o * 0.5, pts[0][1] - o); for (const p of pts) ctx.lineTo(p[0] - o * 0.5, p[1] - o); ctx.stroke();
+      ctx.restore();
+    }
+    return;
+  }
+  if ((kind === 'charcoal' || kind === 'crayon' || kind === 'pastel') && pts && pts.length) {
+    // dry media: the colour only where the paper's tooth catches it
+    const col = kind === 'pastel' ? lighten(color, 0.12) : color;
+    if (kind === 'charcoal') {
+      // a little dust round it
+      ctx.save(); ctx.globalAlpha = alpha * 0.12; ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = Math.max(1, size * 0.35); pathFn(); ctx.fill(); ctx.restore();
+    }
+    ctx.globalAlpha = alpha * (kind === 'crayon' ? 0.95 : kind === 'pastel' ? 0.85 : 0.9);
+    ctx.fillStyle = grainPattern(ctx, col, kind, scale); pathFn(); ctx.fill();
+    ctx.globalAlpha = alpha * (kind === 'crayon' ? 0.3 : kind === 'pastel' ? 0.2 : 0.35); ctx.fillStyle = col; ctx.fill();
+    return;
+  }
+  if (kind === 'felt' && pts && pts.length) {
+    // a water-based felt tip: a little darker where the line crosses itself and at its ends
+    ctx.globalAlpha = alpha * 0.86; ctx.fillStyle = color; pathFn(); ctx.fill();
+    ctx.globalAlpha = alpha * 0.25; const a = pts[0], b = pts[pts.length - 1], r = size * 0.45;
+    ctx.beginPath(); ctx.arc(a[0], a[1], r, 0, Math.PI * 2); ctx.arc(b[0], b[1], r, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
+  if (kind === 'brush' && pts && pts.length > 2) {
+    // an ink brush: a body of ink with its hairs showing at the edges, running dry when quick
+    const rnd = seeded(pts), sp = spine(pts, size, P);
+    ctx.globalAlpha = alpha * 0.8; ctx.fillStyle = color; pathFn(); ctx.fill();
+    ctx.save(); ctx.clip(); bristles(ctx, sp, darken(color, 0.25), alpha, Math.max(6, Math.min(16, Math.round(size / 2))), rnd, { dry: true, thick: 0.9, alpha: 0.7 }); ctx.restore();
+    return;
+  }
+  if (kind === 'paint' && pts && pts.length > 2) {
+    // gouache: opaque, with the brush's streaks lighter and darker in it
+    const rnd = seeded(pts), sp = spine(pts, size, P);
+    ctx.globalAlpha = alpha * 0.96; ctx.fillStyle = color; pathFn(); ctx.fill();
+    ctx.save(); ctx.clip(); bristles(ctx, sp, color, alpha, Math.max(10, Math.min(26, Math.round(size / 1.2))), rnd, { vary: 0.18, alpha: 0.35, thick: 0.8 }); ctx.restore();
+    return;
+  }
+  if (kind === 'air' && pts && pts.length) {
+    // spray: soft round puffs along the line, and fine drops round them
+    const rnd = seeded(pts), R = size / 2;
+    let carry = 0;
+    const puff = (x, y, pr) => {
+      const r = R * (0.65 + 0.7 * pr), g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const [cr, cg, cb] = hexRgb(color); g.addColorStop(0, `rgba(${cr},${cg},${cb},0.16)`); g.addColorStop(0.55, `rgba(${cr},${cg},${cb},0.07)`); g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+      ctx.globalAlpha = alpha * (0.5 + pr); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color;
+      for (let k = 0; k < 5; k++) { const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * r * 1.05, s = Math.max(0.5, R * 0.035 * (0.5 + rnd())); ctx.globalAlpha = alpha * (0.15 + rnd() * 0.35); ctx.beginPath(); ctx.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, s, 0, Math.PI * 2); ctx.fill(); }
+    };
+    const step = Math.max(1, R * 0.32);
+    puff(pts[0][0], pts[0][1], pts[0][2] ?? 0.5);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let t = step - carry;
+      while (t <= L) { const f = t / L; puff(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, (a[2] ?? 0.5) + ((b[2] ?? 0.5) - (a[2] ?? 0.5)) * f); t += step; }
+      carry = L - (t - step);
+    }
+    return;
+  }
   if (kind === 'neon') {
     // a glowing tube: the colour shines around a bright core
     ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = Math.max(4, size * 2.2);
@@ -120,17 +269,19 @@ export function paintKind(ctx, kind, color, alpha, pathFn, size, pts) {
     return;
   }
   if (kind === 'pencil') {
+    // graphite: the grain of the paper, a little darker where pressed
+    const pr = pts && pts.length ? pts.reduce((m, p) => m + (p[2] ?? 0.5), 0) / pts.length : 0.5;
     ctx.globalAlpha = alpha * 0.95;
-    ctx.fillStyle = grainPattern(ctx, color);
+    ctx.fillStyle = grainPattern(ctx, color, 'pencil', scale);
     pathFn(); ctx.fill();
-    ctx.globalAlpha = alpha * 0.5; ctx.fillStyle = color; ctx.fill();
+    ctx.globalAlpha = alpha * (0.32 + 0.36 * pr); ctx.fillStyle = color; ctx.fill();
     return;
   }
   if (kind === 'water') {
-    ctx.globalAlpha = alpha * 0.32;
-    ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = Math.max(2, size * 0.5);
-    pathFn(); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.globalAlpha = alpha * 0.18; ctx.fill();
+    // watercolour: a clear wash, its edges darker where the paint dried, a little grain in it
+    ctx.globalAlpha = alpha * 0.3; ctx.fillStyle = color; pathFn(); ctx.fill();
+    ctx.globalAlpha = alpha * 0.16; ctx.fillStyle = grainPattern(ctx, darken(color, 0.1), 'water', scale); ctx.fill();
+    ctx.save(); ctx.clip(); ctx.globalAlpha = alpha * 0.16; ctx.strokeStyle = darken(color, 0.15); ctx.lineWidth = Math.max(1, size * 0.1); ctx.lineJoin = 'round'; ctx.stroke(); ctx.restore();
     return;
   }
   if (kind === 'marker') { ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = color; pathFn(); ctx.fill(); return; }

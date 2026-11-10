@@ -169,7 +169,7 @@ export function drawItem(ctx, s, W, H, live) {
   if (kind === 'calli') { drawNib(ctx, pts, size, s.c, s.a ?? 1); ctx.restore(); return; }
   let opts;
   if (s.t === 'pen') {
-    opts = strokeOptions(kind, size, hasPressure, live);
+    opts = strokeOptions(kind, size, hasPressure, live, s.pv);
     if (s.sh) { opts.smoothing = 0.2; opts.streamline = 0; opts.thinning = Math.min(opts.thinning, 0.2); opts.simulatePressure = false; }
   } else {
     opts = { size, thinning: 0, smoothing: 0.62, streamline: 0.55, simulatePressure: false, easing: (t) => t, start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }, last: !live };
@@ -178,7 +178,7 @@ export function drawItem(ctx, s, W, H, live) {
   if (s.t === 'pen') {
     // a neat shape can be filled with a light wash of its colour
     if (s.sh && s.fill && pts.length > 2) { ctx.save(); ctx.globalAlpha = (s.a ?? 1) * 0.22; ctx.fillStyle = s.c; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (const p of pts) ctx.lineTo(p[0], p[1]); ctx.closePath(); ctx.fill(); ctx.restore(); }
-    paintKind(ctx, kind, s.c, s.a ?? 1, () => outlinePath(ctx, outline), size, pts); ctx.restore(); return;
+    paintKind(ctx, kind, s.c, s.a ?? 1, () => outlinePath(ctx, outline), size, pts, W / 1200, s.pv); ctx.restore(); return;
   }
   ctx.fillStyle = s.t === 'white' ? paperColor : s.c;
   ctx.globalAlpha = s.t === 'white' ? 1 : (s.a ?? 1);

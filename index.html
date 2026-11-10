@@ -386,6 +386,7 @@
     <button class="btn small primary" id="inkDone">Done</button>
   </div>
   <div class="ink-pop" id="inkPop" hidden>
+    <div class="pen-groups" id="penGroups" hidden></div>
     <div class="pen-kinds" id="penKinds" hidden></div>
     <div class="ctl-head"><span id="inkPopTitle">Colour 1</span><label class="custom-col" id="customColWrap" hidden><input type="color" id="inkCustom" aria-label="Any colour"><span>Any colour</span></label></div>
     <div class="swatches" id="swatches"></div>
@@ -393,6 +394,7 @@
     <div class="pal-sets" id="palSets" hidden></div>
     <div class="ctl"><div class="ctl-head"><span>Thickness</span><span class="num" id="inkSizeVal"></span></div><input type="range" id="inkSize" min="1" max="10" step="1"></div>
     <div class="ctl"><div class="ctl-head"><span>Opacity</span><span class="num" id="inkAlphaVal"></span></div><input type="range" id="inkAlpha" min="10" max="100" step="5"></div>
+    <div class="ctl" id="pressRow" hidden><div class="ctl-head"><span>Pressure</span><span class="num" id="pressVal"></span></div><input type="range" id="inkPress" min="0" max="100" step="5"></div>
     <div class="ctl" id="steadyRow"><div class="ctl-head"><span>Steady hand</span><span class="num" id="steadyVal">Off</span></div><input type="range" id="steady" min="0" max="10" step="1" value="0"></div>
     <label class="check" id="shapeFillRow" hidden><input type="checkbox" id="shapeFill"> Fill neat shapes with a light colour</label>
     <canvas class="ink-preview" id="inkPreview" height="54"></canvas>
@@ -1200,7 +1202,8 @@
 </div>
 
 <div class="phs" id="phScores" hidden>
-  <div class="phs-head"><button class="icon-btn" id="phsClose" aria-label="Back"><svg><use href="#i-back"/></svg></button><div class="phs-ht"><h2 id="phsTitle">My scores</h2><small id="phsSub"></small></div><button class="icon-btn" id="phsAdd" aria-label="Add scores: scan, Photos or Files"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button><input type="file" id="phsPhotos" accept="image/*" multiple hidden><input type="file" id="phsFiles" accept="application/pdf,.pdf,image/*" multiple hidden><button class="icon-btn" id="phsNewFolder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 9.7v7.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5M9.5 13.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button><button class="btn small ghost" id="phsEdit">Edit</button><button class="icon-btn" id="phsRefresh" aria-label="Get the latest from the iPad"><svg><use href="#i-refresh"/></svg></button></div>
+  <div class="phs-head"><button class="icon-btn" id="phsClose" aria-label="Back"><svg><use href="#i-back"/></svg></button><div class="phs-ht"><h2 id="phsTitle">My scores</h2><small id="phsSub"></small></div><button class="icon-btn" id="phsNewFolder" aria-label="New folder"><svg viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 9.7v7.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5M9.5 13.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button><button class="btn small ghost" id="phsEdit">Edit</button><button class="icon-btn" id="phsRefresh" aria-label="Get the latest from the iPad"><svg><use href="#i-refresh"/></svg></button></div>
+  <div class="phs-actions" id="phsActions"><button class="btn" id="phsScan"><svg><use href="#i-scan"/></svg><span>Scan</span></button><label class="btn primary" for="phsImport"><svg><use href="#i-plus"/></svg><span>Import score</span></label><input id="phsImport" type="file" accept="application/pdf,.pdf,image/*" multiple hidden></div>
   <div class="phs-search"><input id="phsSearch" type="search" placeholder="Search" autocomplete="off"></div>
   <p class="hint phs-edit-hint" id="phsEditHint" hidden>Tap − to remove a score's download from this iPhone (it stays on your iPad), or to delete a folder (its scores stay). Tap a folder to rename it.</p>
   <div class="phs-out" id="phsOut" hidden>Drop here to take it out of the folder</div>

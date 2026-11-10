@@ -15,7 +15,7 @@ import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes
 import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findComposer, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
-import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
+import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
@@ -924,6 +924,8 @@ $('#scanBtn').addEventListener('click', () => {
 initReview({
   toast,
   async commit(blobs, name) {
+    // (on the iPhone: a score of its own, in My scores)
+    if (PHONE && window.__phs && window.__phs.addOwn) { await phoneAdd(blobs, blobs.map(() => name), { reviewed: true, how: REVIEW_PHONE.how }); return; }
     const sc = await addImages(blobs, name);
     await refreshLibrary(); setHomeTab('mine');
     toast('Added: ' + label(sc), 3000);
@@ -1211,12 +1213,21 @@ window.__bring = { bringItems, bringArchive, brFolderName };
 // Files arriving from the iPad app: a PDF caught while browsing IMSLP, or "Open in Stand" from Files.
 // Scores added on the iPhone (My scores): each PDF on its own; pictures (scanned pages, photos)
 // together, in their order, as one score.
+const REVIEW_PHONE = { how: '' };
 async function phoneAdd(blobs, names, scanned) {
   const isPdf = (b, n) => /\.pdf$/i.test(n || '') || b.type === 'application/pdf';
   const pdfs = blobs.map((b, i) => [b, names[i]]).filter(([b, n]) => isPdf(b, n));
   const pics = blobs.filter((b, i) => !isPdf(b, names[i]));
   toast(pics.length > 1 || pdfs.length > 1 ? 'Adding your scores…' : 'Adding your score…', 60000);
   let last = null;
+  // (pictures go through the review first, as on the iPad: straightened, cleaned and cropped)
+  if (pics.length && !scanned?.reviewed) {
+    for (const [b, n] of pdfs) last = await window.__phs.addOwn(await b.arrayBuffer(), n || 'Score');
+    $('#toast').hidden = true;
+    openReview(pics.map((b) => (b.type ? b : new Blob([b], { type: 'image/jpeg' }))), scanned === true ? 'Scan.jpg' : (names[blobs.indexOf(pics[0])] || 'Photos.jpg'));
+    REVIEW_PHONE.how = scanned === true ? 'scan' : 'photos';
+    return;
+  }
   try {
     for (const [b, n] of pdfs) last = await window.__phs.addOwn(await b.arrayBuffer(), n || 'Score');
     if (pics.length) {
@@ -1224,7 +1235,8 @@ async function phoneAdd(blobs, names, scanned) {
       const when = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
       // (a picture's own name only when a person gave it one: not IMG_1234)
       const own = (names[blobs.indexOf(pics[0])] || '').replace(/\.[^.]+$/, '');
-      const nm = scanned === true ? tr('Scan') + ' ' + when : own && !/^(img|image|photo|pxl|dsc|scan)[ _-]?\d+|^[0-9a-f-]{20,}$/i.test(own) && scanned !== 'photos' ? own : tr('Photos') + ' ' + when;
+      const how = scanned && scanned.reviewed ? scanned.how : scanned;
+      const nm = how === true || how === 'scan' ? tr('Scan') + ' ' + when : own && !/^(img|image|photo|pxl|dsc|scan)[ _-]?\d+|^[0-9a-f-]{20,}$/i.test(own) && how !== 'photos' ? own : tr('Photos') + ' ' + when;
       last = await window.__phs.addOwn(await imagesToPdf(pics), nm);
     }
     $('#toast').hidden = true;
@@ -1232,22 +1244,16 @@ async function phoneAdd(blobs, names, scanned) {
     if (last) { window.__phs.openList(); toast(last.pages === 1 ? `Added: ${last.title} (1 page).` : `Added: ${last.title} (${last.pages} pages).`, 3000); }
   } catch (e) { console.error(e); window.__phoneAdded = { error: String(e && e.message) }; toast('That could not be added.', 3500); }
 }
-// the + in My scores on the iPhone: scan pages, or bring them from Photos or Files
-$('#phsAdd')?.addEventListener('click', async () => {
-  const scan = !!(NATIVE && NATIVE.standScan && (window.standCaps || {}).scan);
-  const how = await choose(tr('Add scores'), [
-    ...(scan ? [{ id: 'scan', title: tr('Scan pages'), sub: tr('With the camera, page after page') }] : []),
-    { id: 'photos', title: tr('From Photos'), sub: tr('Pictures of the pages, in order') },
-    { id: 'files', title: tr('From Files'), sub: tr('PDFs and pictures from iCloud Drive or other apps') },
-  ]);
-  if (how === 'scan') NATIVE.standScan.postMessage({});
-  else if (how === 'photos') $('#phsPhotos').click();
-  else if (how === 'files') $('#phsFiles').click();
+// My scores on the iPhone: Scan and Import score, as on the iPad (the same scanner, the same review
+// of the pages, the same iOS menu: Photo Library, Take Photo, Choose File)
+$('#phsScan')?.addEventListener('click', () => {
+  if (NATIVE && NATIVE.standScan && (window.standCaps || {}).scan) NATIVE.standScan.postMessage({});
+  else $('#scanInput').click();
 });
-for (const id of ['#phsPhotos', '#phsFiles']) $(id)?.addEventListener('change', async (e) => {
+$('#phsImport')?.addEventListener('change', async (e) => {
   const fs = [...e.target.files]; e.target.value = ''; if (!fs.length) return;
   const blobs = []; for (const f of fs) blobs.push(new Blob([await f.arrayBuffer()], { type: f.type }));
-  await phoneAdd(blobs, fs.map((f) => f.name), id === '#phsPhotos' ? 'photos' : false);
+  await phoneAdd(blobs, fs.map((f) => f.name), false);
 });
 window.standIncoming = async (msg) => {
   try {
@@ -1744,7 +1750,7 @@ $('#previewRemove').addEventListener('click', closeScore);
 // iOS keeps canvas memory until a canvas is shrunk; release what is no longer shown.
 function clearCache() { for (const p of V.cache.values()) p.then((c) => { INCACHE.delete(c); setTimeout(() => freeCanvas(c), 2000); }, () => {}); V.cache.clear(); }
 function freeCanvas(c) { if (c && !c.isConnected) { c.width = 0; c.height = 0; } }
-function freePages() { for (const p of V.pages) if (p.ink) { p.ink.width = 0; p.ink.height = 0; } V.pages = []; }
+function freePages() { for (const p of V.pages) { if (p.ink) { p.ink.width = 0; p.ink.height = 0; } if (p.tile) dropArtTile(p); } V.pages = []; }
 
 // Turned score: the page is drawn a quarter turn anticlockwise so that a landscape page fills an upright screen.
 // Every page position is still in the page's own frame (fx along its width, fy along its height), so
@@ -1986,6 +1992,7 @@ async function layout(fade) {
     label = idx.length > 1 ? `${idx[0] + 1}–${idx[1] + 1}` : `${idx[0] + 1}`;
   }
   freePages();
+  for (const op of V.pages) if (op.tile && !entries.includes(op)) dropArtTile(op);
   V.pages = entries;
   stage.textContent = '';
   stage.append(spread);
@@ -2746,7 +2753,7 @@ function sharpenInk() {
   const dpr = Math.min(window.devicePixelRatio || 1, 3), sr = stage.getBoundingClientRect();
   for (const p of V.pages) {
     if (!p.layer || !p.ink || !p.art) continue;
-    const full = () => { if (p.layer.view) { p.ink.style.cssText = ''; p.layer.resize(p.art.width, p.art.height); } };
+    const full = () => { dropArtTile(p); if (p.layer.view) { p.ink.style.cssText = ''; p.layer.resize(p.art.width, p.art.height); } };
     if (Z.s <= 1.05 || TURN()) { full(); continue; }
     const r = p.inner.getBoundingClientRect(); if (!r.width || !r.height) continue;
     // The part on screen (and a margin round it, smaller if memory is short), cut on the screen's own
@@ -2761,13 +2768,42 @@ function sharpenInk() {
       x0 = (L / dpr - r.left) / r.width; x1 = (R / dpr - r.left) / r.width; y0 = (T / dpr - r.top) / r.height; y1 = (B / dpr - r.top) / r.height;
       if (pw * ph <= maxPx()) break;
     }
-    if (pw < 4 || ph < 4) continue;
+    if (pw < 4 || ph < 4) { dropArtTile(p); continue; }
     if (pw * ph > maxPx()) { const k = Math.sqrt(maxPx() / (pw * ph)); pw *= k; ph *= k; }
+    // the page itself (its paper, the music) the same way, under the markings
+    sharpArtTile(p, r, sr, dpr);
     // the whole page is already as sharp as the screen: nothing to gain
     if (Math.abs(pw / (x1 - x0) - p.art.width) < 2 && Math.abs(r.width * dpr - p.art.width) < 2) { full(); continue; }
     Object.assign(p.ink.style, { inset: 'auto', left: x0 * 100 + '%', top: y0 * 100 + '%', width: (x1 - x0) * 100 + '%', height: (y1 - y0) * 100 + '%' });
     p.layer.setView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pw, ph);
   }
+}
+// Zoomed in, the page picture can't be drawn whole at the screen's sharpness (it would be too big
+// for the memory): the paper's lines, the printed music and the notes went soft from about 150%.
+// So, as for the markings, just the part of the page on screen is drawn again at the screen's own
+// pixels, over the page (the whole page stays under it, so moving the page never shows a gap).
+function dropArtTile(p) { p.tileKey = null; if (p.tile) { const t = p.tile; p.tile = null; t.remove(); t.width = t.height = 0; } }
+function sharpArtTile(p, r, sr, dpr) {
+  const doc = V.doc;
+  if (!doc || !doc.renderView || !p.art || p.art.parentNode !== p.inner) return dropArtTile(p);
+  // (the page drawn already as sharp as it shows: nothing to add)
+  if (p.art.width >= r.width * dpr * 0.97) return dropArtTile(p);
+  const m = 0.1;
+  const L = Math.max(Math.floor((sr.left - sr.width * m) * dpr), Math.floor(r.left * dpr)), R = Math.min(Math.ceil((sr.right + sr.width * m) * dpr), Math.ceil(r.right * dpr));
+  const T = Math.max(Math.floor((sr.top - sr.height * m) * dpr), Math.floor(r.top * dpr)), B = Math.min(Math.ceil((sr.bottom + sr.height * m) * dpr), Math.ceil(r.bottom * dpr));
+  let pw = R - L, ph = B - T; if (pw < 8 || ph < 8) return dropArtTile(p);
+  if (pw * ph > maxPx()) { const k = Math.sqrt(maxPx() / (pw * ph)); pw = Math.floor(pw * k); ph = Math.floor(ph * k); }
+  const v = { x: (L / dpr - r.left) / r.width, y: (T / dpr - r.top) / r.height, w: (R - L) / dpr / r.width, h: (B - T) / dpr / r.height };
+  const key = [v.x, v.y, v.w, v.h].map((n) => n.toFixed(5)).join(',') + ':' + pw + 'x' + ph;
+  if (p.tileKey === key) return;
+  p.tileKey = key;
+  const token = layoutToken, c = el('canvas', 'art art-tile');
+  rqAdd(0, (ctl) => doc.renderView(p.index, c, v, pw, ph, { ctl }), () => V.doc !== doc || token !== layoutToken || p.tileKey !== key).then((ok) => {
+    if (!ok || p.tileKey !== key || token !== layoutToken || !p.art || p.art.parentNode !== p.inner) { c.width = c.height = 0; return; }
+    Object.assign(c.style, { inset: 'auto', left: v.x * 100 + '%', top: v.y * 100 + '%', width: v.w * 100 + '%', height: v.h * 100 + '%' });
+    const old = p.tile; p.tile = c;
+    if (old && old.parentNode === p.inner) { old.replaceWith(c); old.width = old.height = 0; } else p.art.after(c);
+  }, () => { if (p.tileKey === key) p.tileKey = null; });
 }
 function setZoomAt(s, cx, cy, base) {
   // keep the point under (cx, cy) still while scaling from base
@@ -2857,7 +2893,7 @@ const inkSize = (tool, v) => tool === 'pen' ? 0.0007 + Math.pow(v / 10, 1.5) * 0
 const penColor = () => INK.slots[INK.slot];
 function persistInk() { S.ink = { tool: ['pen', 'hl', 'stamp'].includes(INK.tool) ? INK.tool : 'pen', finger: INK.finger, stamp: INK.stamp, erase: INK.erase, penKind: INK.penKind, recent: INK.recent, kinds: INK.kinds, eraser: INK.eraser, tape: INK.tape, shapeFill: INK.shapeFill, steady: INK.steady, slots: INK.slots, slot: INK.slot, hlSlots: INK.hlSlots, hlSlot: INK.hlSlot, pen: INK.pen, hl: INK.hl, stampStyle: INK.stampStyle, white: INK.white }; saveSettings(); }
 function styleFor(tool) {
-  if (tool === 'pen' && NBK()) { const k = INK.penKind; return INK.kinds[k] || (INK.kinds[k] = { size: k === 'marker' || k === 'brush' || k === 'water' ? 4 : INK.pen.size, a: INK.pen.a }); }
+  if (tool === 'pen' && NBK()) { const k = INK.penKind; return INK.kinds[k] || (INK.kinds[k] = { size: ['marker', 'brush', 'water', 'paint', 'air', 'pastel', 'charcoal', 'crayon'].includes(k) ? 4 : INK.pen.size, a: INK.pen.a }); }
   return tool === 'stamp' ? INK.stampStyle : tool === 'hl' ? INK.hl : INK.pen;
 }
 // the eraser's reach (page fractions); in a notebook it can be made much bigger
@@ -2993,18 +3029,35 @@ function fillInkPop() {
   INK._pick = pick;
   $('#palSets').hidden = !nb; if (!$('#palSets').hidden) fillPalSets(cur, pick);
   $('#steadyRow').hidden = tool !== 'pen'; $('#steady').value = INK.steady; $('#steadyVal').textContent = INK.steady ? INK.steady : 'Off';
-  const pk = $('#penKinds'); pk.hidden = !(nb && tool === 'pen');
+  // the pens, by family: one family at a time, each pen shown with a line drawn in it
+  const pk = $('#penKinds'), pg = $('#penGroups'); pk.hidden = pg.hidden = !(nb && tool === 'pen');
   if (!pk.hidden) {
+    const groups = [...new Set(PEN_KINDS.map((x) => x.g))];
+    const curG = (PEN_KINDS.find((x) => x.k === INK.penKind) || PEN_KINDS[0]).g;
+    if (!groups.includes(INK.penGroup)) INK.penGroup = curG;
+    pg.textContent = '';
+    for (const gname of groups) {
+      const b = el('button', 'pen-group', tr(gname)); b.classList.toggle('on', gname === INK.penGroup); b.classList.toggle('has', gname === curG);
+      b.addEventListener('click', () => { INK.penGroup = gname; fillInkPop(); });
+      pg.append(b);
+    }
     pk.textContent = '';
-    for (const kd of PEN_KINDS) {
-      const b = el('button', 'pen-kind'); b.classList.toggle('on', INK.penKind === kd.k);
-      const cv = el('canvas'); cv.width = 132; cv.height = 40; b.append(cv, el('span', '', kd.label));
-      const pts = []; for (let i = 0; i <= 30; i++) { const t = i / 30; pts.push([0.08 + 0.84 * t, 0.5 + 0.25 * Math.sin(t * Math.PI * 2), 0.3 + 0.6 * Math.sin(t * Math.PI)]); }
-      drawItem(cv.getContext('2d'), { t: 'pen', pk: kd.k, c: cur, a: 1, s: inkSize('pen', 4) * PEN_WIDTH[kd.k] * 3.2, p: pts }, 132, 40);
+    const dpr = Math.min(3, window.devicePixelRatio || 1), CW = 150, CH = 46;
+    for (const kd of PEN_KINDS.filter((x) => x.g === INK.penGroup)) {
+      const b = el('button', 'pen-kind'); b.classList.toggle('on', INK.penKind === kd.k); b.dataset.k = kd.k;
+      const cv = el('canvas'); cv.width = CW * dpr; cv.height = CH * dpr; b.append(cv, el('span', '', tr(kd.label)));
+      const pts = []; for (let i = 0; i <= 40; i++) { const t = i / 40; pts.push([0.07 + 0.86 * t, 0.5 + 0.24 * Math.sin(t * Math.PI * 2), 0.25 + 0.65 * Math.sin(t * Math.PI)]); }
+      const ks = INK.kinds[kd.k];
+      const it = { t: 'pen', pk: kd.k, c: cur, a: 1, s: inkSize('pen', ks ? Math.min(ks.size, 8) : 4) * PEN_WIDTH[kd.k] * 3.2 * (150 / CW), p: pts };
+      if (ks && typeof ks.pv === 'number') it.pv = ks.pv;
+      drawItem(cv.getContext('2d'), it, CW * dpr, CH * dpr);
       b.addEventListener('click', () => { INK.penKind = kd.k; const st2 = styleFor('pen'); if (st2.c) INK.slots[INK.slot] = st2.c; else st2.c = INK.slots[INK.slot]; persistInk(); fillInkPop(); syncInkBar(); });
       pk.append(b);
     }
   }
+  // how much the pen answers the Pencil's pressure
+  $('#pressRow').hidden = !(nb && tool === 'pen');
+  if (!$('#pressRow').hidden) { const v = typeof st.pv === 'number' ? st.pv : (PEN_PRESSURE[INK.penKind] ?? 0.4); $('#inkPress').value = Math.round(v * 100); $('#pressVal').textContent = v ? Math.round(v * 100) + '%' : tr('Off'); }
   $('#inkSize').max = NBK() ? 20 : 10;
   $('#inkSize').value = st.size; $('#inkSizeVal').textContent = st.size;
   $('#shapeFillRow').hidden = !(NBK() && tool === 'pen'); $('#shapeFill').checked = !!INK.shapeFill;
@@ -3019,10 +3072,12 @@ function drawInkPreview() {
   if (tool === 'stamp') { loadMusicFont().then(() => { g.clearRect(0, 0, c.width, c.height); drawItem(g, { t: 'stamp', k: INK.stamp, c: penColor(), a: st.a, s: inkSize('stamp', st.size) * (800 / W), x: 0.5, y: 0.5 }, c.width, c.height); }); return; }
   const pts = []; for (let i = 0; i <= 40; i++) { const t = i / 40; pts.push([0.08 + 0.84 * t, 0.5 + 0.22 * Math.sin(t * Math.PI * 2), tool === 'pen' ? 0.35 + 0.5 * Math.sin(t * Math.PI) : 0.5]); }
   const pkd = tool === 'pen' && NBK() ? INK.penKind : undefined;
-  drawItem(g, { t: tool, pk: pkd, c: colorFor(tool), a: st.a, s: inkSize(tool, st.size) * (800 / W) * (pkd ? PEN_WIDTH[pkd] : 1), p: pts }, c.width, c.height);
+  const pit = { t: tool, pk: pkd, c: colorFor(tool), a: st.a, s: inkSize(tool, st.size) * (800 / W) * (pkd ? PEN_WIDTH[pkd] : 1), p: pts }; if (pkd && typeof st.pv === 'number') pit.pv = st.pv;
+  drawItem(g, pit, c.width, c.height);
 }
 $('#inkSize').addEventListener('input', (e) => { const tool = INK.tool === 'hl' ? 'hl' : INK.tool === 'stamp' ? 'stamp' : 'pen'; styleFor(tool).size = +e.target.value; $('#inkSizeVal').textContent = e.target.value; drawInkPreview(); syncSizes(); persistInk(); });
 $('#inkAlpha').addEventListener('input', (e) => { const tool = INK.tool === 'hl' ? 'hl' : INK.tool === 'stamp' ? 'stamp' : 'pen'; styleFor(tool).a = +e.target.value / 100; $('#inkAlphaVal').textContent = e.target.value + '%'; drawInkPreview(); syncInkBar(); persistInk(); });
+$('#inkPress').addEventListener('input', (e) => { const st = styleFor('pen'); st.pv = +e.target.value / 100; $('#pressVal').textContent = st.pv ? e.target.value + '%' : tr('Off'); drawInkPreview(); persistInk(); });
 $('#shapeFill').addEventListener('change', (e) => { INK.shapeFill = e.target.checked; persistInk(); });
 $('#steady').addEventListener('input', (e) => { INK.steady = +e.target.value; $('#steadyVal').textContent = INK.steady ? INK.steady : 'Off'; persistInk(); });
 $('#inkCustom').addEventListener('change', (e) => {
@@ -3631,6 +3686,11 @@ const NBK = () => !!(V.file && V.file.kind === 'paper');
 window.__lastInk = () => { const e = centreEntry(); const it = e && e.layer && e.layer.items[e.layer.items.length - 1]; if (!it || !it.p) return it ? { t: it.t } : null;
   const a = it.p[0], b = it.p[it.p.length - 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; const dev = Math.max(...it.p.map((q) => Math.abs((q[0] - a[0]) * (b[1] - a[1]) - (q[1] - a[1]) * (b[0] - a[0])) / L));
   return { t: it.t, n: it.p.length, dev: +dev.toFixed(5), dy: +(b[1] - a[1]).toFixed(5) }; };
+// (tests) the markings of every page, in screen pixels
+window.__inkPts = () => V.pages.map((p) => { const r = p.inner.getBoundingClientRect(); return p.layer ? p.layer.items.filter((x) => x.p).map((it) => ({ t: it.t, p: it.p.map((q) => [r.left + q[0] * r.width, r.top + q[1] * r.height]) })) : []; });
+window.__openPens = () => { closeInkPops(); $('#inkPop').hidden = false; fillInkPop(); };   // (tests)
+window.__inkPick = (c) => { if (INK._pick) INK._pick(c); };
+window.__redrawInk = () => { for (const p of V.pages) if (p.layer) p.layer.redraw(); };
 window.__nbCount = () => V.pages.map((p) => (p.layer ? p.layer.items.filter((x) => x.t !== 'bg').map((x) => x.t).join('+') || '-' : '?')).join(' , ');
 // the page in the middle of the screen
 let lastEntry = null;
@@ -5193,6 +5253,8 @@ function startInk(e, entry) {
   const pk = t === 'pen' && tool === 'pen' && NBK() ? INK.penKind : null;
   const item = { t, c: t === 'white' ? '#fff' : colorFor(t), a: t === 'white' ? 1 : st.a, s: inkSize(t, st.size) * (pk ? PEN_WIDTH[pk] : 1), p: [p] };
   if (pk && pk !== 'fountain') item.pk = pk;
+  // (the pressure chosen for this kind of pen, when set)
+  if (pk && typeof st.pv === 'number') item.pv = st.pv;
   if (tool === 'text') wordPenDown();
   GS = { kind: 'ink', id: e.pointerId, entry, rect, before, item, type: e.pointerType, t0: now(), predicted: null, word: tool === 'text' };
   if (RULER.on) rulerStart(GS, e);
@@ -5203,7 +5265,7 @@ function scheduleLive() {
   if (liveRaf) return;
   liveRaf = requestAnimationFrame(() => {
     liveRaf = 0;
-    if (GS && (GS.kind === 'ink' || GS.kind === 'smart')) drawLiveItem(GS.entry, GS.item, GS.predicted);
+    if (GS && (GS.kind === 'ink' || GS.kind === 'smart')) { drawLiveItem(GS.entry, GS.item, GS.predicted); if (GS.more) for (const it of GS.more) drawLiveItem(GS.entry, it, null, false); }
     else if (GS && GS.kind === 'tape' && GS.item) drawLiveItem(GS.entry, GS.item, null);
     else if (GS && GS.kind === 'lasso') drawLasso(GS.pts);
   });
@@ -5431,18 +5493,121 @@ function openWheel(x, y) {
 // ---------- the ruler (notebooks): lay it on the page, draw along it ----------
 // One finger moves it, two turn it (it holds at every 45°). A line started with the Pencil, or a
 // finger that writes, close to either edge runs straight along that edge, as with a real ruler.
+// Kinds: a straight ruler, two set squares (45° and 30°/60°), a protractor, a circle and a staff
+// ruler (five lines at once, at the notebook's staff spacing). Each is laid out round its middle,
+// on its own axes (x along it, y across it); a line started close to any of its edges follows that
+// edge: straight edges give straight lines, curved ones arcs and circles.
+const RULER_KINDS = [
+  { k: 'line', name: 'Ruler', ico: '<path d="M3.2 15.6 15.6 3.2l5.2 5.2L8.4 20.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M6.3 12.5l1.8 1.8M8.8 10l1.2 1.2M11.3 7.5l1.8 1.8M13.8 5l1.2 1.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' },
+  { k: 'sq45', name: 'Set square 45°', ico: '<path d="M4 20V4l16 16z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.5 16.5V12l4.5 4.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>' },
+  { k: 'sq60', name: 'Set square 30° 60°', ico: '<path d="M4 20V6.5L21 20z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 17V13l5 4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>' },
+  { k: 'prot', name: 'Protractor', ico: '<path d="M2.5 17.5a9.5 9.5 0 0 1 19 0z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 17.5V13M6 12.5l1.2 1M18 12.5l-1.2 1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' },
+  { k: 'circle', name: 'Circle', ico: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 12h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/>' },
+  { k: 'staff', name: 'Staff ruler', ico: '<path d="M3 6.5h18M3 9.25h18M3 12h18M3 14.75h18M3 17.5h18" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' },
+];
 function rulerGeom() { const u = [Math.cos(RULER.ang), Math.sin(RULER.ang)], n = [-u[1], u[0]]; return { u, n }; }
+function rulerKind() { return RULER_KINDS.some((x) => x.k === S.rulerKind) ? S.rulerKind : 'line'; }
+// the shape now: its size, its edges (straight: a → b, facing out; curved: round c, radius r, from
+// angle a0 to a1), what is on it, and its picture
+function rulerShape() {
+  const k = RULER.kind || 'line', sr = stage.getBoundingClientRect(), m = Math.min(sr.width, sr.height);
+  const key = k + ':' + RULER.len + ':' + RULER.h + ':' + (RULER.r || 0) + ':' + Math.round(m);
+  if (RULER.shape && RULER.shape.key === key) return RULER.shape;
+  let sh;
+  const poly = (P) => {
+    // edges of a polygon, each facing away from its middle
+    const cx = P.reduce((s, p) => s + p[0], 0) / P.length, cy = P.reduce((s, p) => s + p[1], 0) / P.length;
+    const edges = P.map((a, i) => { const b = P[(i + 1) % P.length], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy); let out = [dy / l, -dx / l]; const mx = (a[0] + b[0]) / 2 - cx, my = (a[1] + b[1]) / 2 - cy; if (out[0] * mx + out[1] * my < 0) out = [-out[0], -out[1]]; return { t: 'seg', a, b, out }; });
+    const inside = (x, y) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, yi] = P[i], [xj, yj] = P[j]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
+    return { edges, inside, mid: [cx, cy] };
+  };
+  if (k === 'line' || k === 'staff') {
+    const w = RULER.len, h = RULER.h;
+    sh = { w, h, ...poly([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]), mid: [0, 0] };
+    sh.edges = sh.edges.filter((e) => Math.abs(e.out[1]) > 0.5);   // (the long edges)
+  } else if (k === 'sq45' || k === 'sq60') {
+    const L = Math.round(Math.min(460, m * (k === 'sq45' ? 0.46 : 0.56))), H = k === 'sq45' ? L : Math.round(L / Math.sqrt(3));
+    const P = [[-L / 2, H / 2], [L / 2, H / 2], [-L / 2, -H / 2]];
+    sh = { w: L, h: H, ...poly(P), P };
+  } else if (k === 'prot') {
+    const R = Math.round(Math.min(260, m * 0.3)), base = 16, w = 2 * R + 8, h = R + base, c = [0, h / 2 - base];
+    sh = { w, h, R, c, base, mid: [0, h / 2 - base - R * 0.32],
+      edges: [{ t: 'seg', a: [-w / 2, h / 2], b: [w / 2, h / 2], out: [0, 1] }, { t: 'arc', c, r: R, a0: Math.PI, a1: 2 * Math.PI }],
+      inside: (x, y) => y <= h / 2 && y >= c[1] - R && Math.abs(x) <= w / 2 && (y >= c[1] || Math.hypot(x - c[0], y - c[1]) <= R) };
+  } else {
+    const R = RULER.r = clamp(RULER.r || Math.round(m * 0.14), 18, Math.round(m * 0.46));
+    sh = { w: 2 * R, h: 2 * R, R, c: [0, 0], mid: [0, 0], edges: [{ t: 'arc', c: [0, 0], r: R, a0: -Infinity, a1: Infinity }], inside: (x, y) => Math.hypot(x, y) <= R };
+  }
+  sh.key = key; sh.k = k; sh.svg = rulerSvg(sh);
+  return (RULER.shape = sh);
+}
+// The picture: see-through plastic with its marks (every 10 px a small one, every 50 a longer one;
+// on the protractor every degree, numbered every 10°)
+function rulerSvg(sh) {
+  const k = sh.k, f = (n) => +n.toFixed(1);
+  let face = '', ticks = '', txt = '';
+  const along = (a, b, out, from = 0) => {
+    // marks along an edge, pointing in from it
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
+    for (let s = from; s <= l - 2; s += 10) { const big = Math.round(s / 10) % 5 === 0, t = big ? 14 : 7, x = a[0] + ux * s, y = a[1] + uy * s; ticks += `M${f(x)} ${f(y)}l${f(-out[0] * t)} ${f(-out[1] * t)}`; }
+  };
+  if (k === 'line' || k === 'staff') return '';   // (drawn by the page's own styles)
+  if (k === 'sq45' || k === 'sq60') {
+    const P = sh.P; face = `M${P.map((p) => f(p[0]) + ' ' + f(p[1])).join('L')}Z`;
+    // the hole in the middle, as on a real one
+    const c = sh.mid, q = P.map((p) => [c[0] + (p[0] - c[0]) * 0.38, c[1] + (p[1] - c[1]) * 0.38]);
+    face += `M${q.map((p) => f(p[0]) + ' ' + f(p[1])).join('L')}Z`;
+    for (const e of sh.edges) along(e.a, e.b, e.out, 12);
+    const lab = (p, s, dx, dy) => { txt += `<text x="${f(p[0] + dx)}" y="${f(p[1] + dy)}">${s}</text>`; };
+    lab(P[0], '90°', 30, -24); lab(P[1], k === 'sq45' ? '45°' : '30°', -58, -10); lab(P[2], k === 'sq45' ? '45°' : '60°', 16, 46);
+  } else if (k === 'prot') {
+    const { R, c, w, h } = sh;
+    face = `M${f(-w / 2)} ${f(h / 2)}L${f(-w / 2)} ${f(c[1])}L${f(-R)} ${f(c[1])}A${R} ${R} 0 0 1 ${f(R)} ${f(c[1])}L${f(w / 2)} ${f(c[1])}L${f(w / 2)} ${f(h / 2)}Z`;
+    // the hole: a small half circle round the middle
+    const r0 = R * 0.3; face += `M${f(-r0)} ${f(c[1])}A${f(r0)} ${f(r0)} 0 0 1 ${f(r0)} ${f(c[1])}Z`;
+    for (let d = 0; d <= 180; d++) {
+      const a = Math.PI + (d * Math.PI) / 180, t = d % 10 === 0 ? 16 : d % 5 === 0 ? 11 : 6, co = Math.cos(a), si = Math.sin(a);
+      ticks += `M${f(c[0] + co * R)} ${f(c[1] + si * R)}L${f(c[0] + co * (R - t))} ${f(c[1] + si * (R - t))}`;
+      if (d % 10 === 0 && R > 120) { const rr = R - 27; txt += `<text x="${f(c[0] + co * rr)}" y="${f(c[1] + si * rr + 4)}" transform="rotate(${f(d - 90)} ${f(c[0] + co * rr)} ${f(c[1] + si * rr)})">${d}</text>`; }
+    }
+    ticks += `M${f(c[0])} ${f(c[1])}l0 -${f(r0 + 6)}M${f(-8)} ${f(c[1])}l16 0`;
+    for (let s = 10; s < w / 2 - 6; s += 10) { const t = Math.round(s / 10) % 5 === 0 ? 10 : 5; ticks += `M${f(s)} ${f(h / 2)}l0 ${-t}M${f(-s)} ${f(h / 2)}l0 ${-t}`; }
+  } else {
+    const R = sh.R;
+    face = `M${-R} 0A${R} ${R} 0 1 0 ${R} 0A${R} ${R} 0 1 0 ${-R} 0Z`;
+    for (let d = 0; d < 360; d += 5) { const a = (d * Math.PI) / 180, t = d % 30 === 0 ? 12 : 6; ticks += `M${f(Math.cos(a) * R)} ${f(Math.sin(a) * R)}L${f(Math.cos(a) * (R - t))} ${f(Math.sin(a) * (R - t))}`; }
+    ticks += 'M-7 0h14M0 -7v14';
+  }
+  return `<svg class="rk-svg" viewBox="${f(-sh.w / 2 - 2)} ${f(-sh.h / 2 - 2)} ${f(sh.w + 4)} ${f(sh.h + 4)}" width="${f(sh.w + 4)}" height="${f(sh.h + 4)}" style="width:${f(sh.w + 4)}px;height:${f(sh.h + 4)}px"><path class="rk-face" fill-rule="evenodd" d="${face}"/><path class="rk-tick" d="${ticks}"/><g class="rk-num">${txt}</g></svg>`;
+}
 function placeRuler() {
   const r = RULER.el; if (!r) return;
-  r.style.width = RULER.len + 'px'; r.style.height = RULER.h + 'px';
-  r.style.transform = `translate(${RULER.cx - RULER.len / 2}px, ${RULER.cy - RULER.h / 2}px) rotate(${RULER.ang}rad)`;
-  // (the angle it makes with the page: 0° level, 90° upright)
-  let deg = Math.round((RULER.ang * 180) / Math.PI) % 180; if (deg < 0) deg += 180; if (deg > 90) deg = 180 - deg;
-  r.querySelector('.ruler-deg').textContent = deg + '°';
+  const sh = rulerShape();
+  if (r.dataset.key !== sh.key) {
+    r.dataset.key = sh.key; r.dataset.kind = sh.k;
+    const old = r.querySelector('.rk-svg'); if (old) old.remove();
+    if (sh.svg) r.insertAdjacentHTML('afterbegin', sh.svg);
+    const lab = r.querySelector('.ruler-deg'); lab.style.left = (50 + (sh.mid[0] / sh.w) * 100) + '%'; lab.style.top = (50 + (sh.mid[1] / sh.h) * 100) + '%';
+  }
+  r.style.width = sh.w + 'px'; r.style.height = sh.h + 'px';
+  r.style.transform = `translate(${RULER.cx - sh.w / 2}px, ${RULER.cy - sh.h / 2}px) rotate(${RULER.ang}rad)`;
+  r.querySelector('.ruler-deg').textContent = rulerLabel();
 }
-function showRuler() {
+// what it says on it: how it lies (0° level, 90° upright); the circle its size; while a curve is
+// drawn, how far round it has gone
+function rulerLabel() {
+  const g = GS && GS.ruler;
+  if (g && g.arc) return Math.round(Math.abs(g.th1 - g.th0) * 180 / Math.PI) + '°';
+  if (RULER.kind === 'circle') {
+    const p = V.pages[0], pw = p && p.inner ? p.inner.getBoundingClientRect().width : 0;
+    if (pw) { const mm = (RULER.r * 2 / (pw / NB_PW)) / 2.8346; return '⌀ ' + (mm >= 100 ? Math.round(mm / 10) + ' cm' : (mm / 10).toFixed(1) + ' cm'); }
+  }
+  let deg = Math.round((RULER.ang * 180) / Math.PI) % 180; if (deg < 0) deg += 180; if (deg > 90 && RULER.kind === 'line') deg = 180 - deg;
+  return deg + '°';
+}
+function showRuler(kind) {
   if (RULER.on) return;
-  RULER.on = true;
+  RULER.on = true; RULER.kind = kind || rulerKind(); RULER.shape = null;
   const r = el('div', 'ruler'); r.setAttribute('aria-label', 'Ruler: one finger moves it, two turn it');
   r.innerHTML = '<div class="ruler-ticks"></div><span class="ruler-deg">0°</span>';
   RULER.el = r;
@@ -5451,6 +5616,7 @@ function showRuler() {
   RULER.cx = sr.left + sr.width / 2; RULER.cy = sr.top + sr.height * 0.55;
   document.body.append(r); placeRuler();
   requestAnimationFrame(() => r.classList.add('in'));
+  showRulerKinds();
   syncInkBar();
 }
 function hideRuler() {
@@ -5458,29 +5624,93 @@ function hideRuler() {
   RULER.on = false; const r = RULER.el; RULER.el = null; RULER.g = null;
   if (r) { r.classList.remove('in'); setTimeout(() => r.remove(), 200); }
   const b = $('#rulerBtn'); if (b) b.classList.remove('on');
+  const kb = $('.ruler-kinds'); if (kb) { kb.classList.remove('in'); setTimeout(() => kb.remove(), 200); }
 }
+// the kinds, in a small bar at the bottom while one is out: tap another to swap it in its place
+function showRulerKinds() {
+  let kb = $('.ruler-kinds');
+  if (!kb) {
+    kb = el('div', 'ruler-kinds'); kb.setAttribute('role', 'toolbar');
+    kb.innerHTML = RULER_KINDS.map((x) => `<button data-k="${x.k}" aria-label="${tr(x.name)}" title="${tr(x.name)}"><svg viewBox="0 0 24 24">${x.ico}</svg><span>${tr(x.name)}</span></button>`).join('') + `<button class="rk-close" aria-label="${tr('Put away')}"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
+    kb.addEventListener('pointerdown', (e) => e.stopPropagation());
+    kb.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.classList.contains('rk-close')) { hideRuler(); syncInkBar(); return; }
+      setRulerKind(b.dataset.k);
+    });
+    document.body.append(kb);
+    requestAnimationFrame(() => kb.classList.add('in'));
+  }
+  for (const b of kb.querySelectorAll('button[data-k]')) b.classList.toggle('on', b.dataset.k === RULER.kind);
+}
+function setRulerKind(k) {
+  if (!RULER.on || !RULER_KINDS.some((x) => x.k === k)) return;
+  RULER.kind = k; RULER.shape = null; S.rulerKind = k; saveSettings();
+  placeRuler(); showRulerKinds();
+  const hint = { line: 'Draw along an edge. One finger moves the ruler, two turn it.', sq45: 'Draw along any edge: level, upright or at 45°.', sq60: 'Draw along any edge: level, upright, 30° or 60°.', prot: 'Draw along the curve for an arc; the angle shows as you go.', circle: 'Draw round the edge for a circle. Two fingers make it bigger or smaller.', staff: 'Draw along an edge: five staff lines at once.' }[k];
+  inkHint(hint, 2600);
+}
+window.__setRulerKind = setRulerKind;   // (tests)
 function toggleRuler() { if (RULER.on) hideRuler(); else { showRuler(); inkHint('Draw along an edge. One finger moves the ruler, two turn it.', 2600); } syncInkBar(); }
 // where a point is on the ruler: along it (from the middle) and across it (from the middle line)
 function rulerAt(x, y) { const { u, n } = rulerGeom(), dx = x - RULER.cx, dy = y - RULER.cy; return { a: dx * u[0] + dy * u[1], d: dx * n[0] + dy * n[1] }; }
-function onRuler(x, y) { if (!RULER.on) return false; const q = rulerAt(x, y); return Math.abs(q.a) <= RULER.len / 2 && Math.abs(q.d) <= RULER.h / 2; }
+function onRuler(x, y) { if (!RULER.on) return false; const q = rulerAt(x, y); return rulerShape().inside(q.a, q.d); }
+// how far a point (on the ruler's own axes) is outside an edge, and where along it
+function edgeAt(e, x, y) {
+  if (e.t === 'seg') {
+    const dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1], l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
+    const s = (x - e.a[0]) * ux + (y - e.a[1]) * uy, off = (x - e.a[0]) * e.out[0] + (y - e.a[1]) * e.out[1];
+    return { s, off, l, within: s >= -24 && s <= l + 24 };
+  }
+  const th = Math.atan2(y - e.c[1], x - e.c[0]), off = Math.hypot(x - e.c[0], y - e.c[1]) - e.r;
+  let t = th; if (Number.isFinite(e.a0)) { while (t < e.a0 - Math.PI / 2) t += 2 * Math.PI; while (t > e.a1 + Math.PI / 2) t -= 2 * Math.PI; }
+  const slack = 24 / e.r;
+  return { th: t, off, within: !Number.isFinite(e.a0) || (t >= e.a0 - slack && t <= e.a1 + slack) };
+}
 // a stroke starting this close to an edge follows it
 function rulerStart(g, e) {
   if (!RULER.on || !g || g.kind !== 'ink' || g.item.t === 'white' || g.word) return;
-  const q = rulerAt(e.clientX, e.clientY);
-  if (Math.abs(q.a) > RULER.len / 2 + 24) return;
-  const off = Math.abs(q.d) - RULER.h / 2;
-  if (off < -16 || off > 30) return;
-  const side = q.d < 0 ? -1 : 1;
+  const q = rulerAt(e.clientX, e.clientY), sh = rulerShape();
+  let best = null;
+  for (const ed of sh.edges) {
+    const h = edgeAt(ed, q.a, q.d);
+    if (!h.within || h.off < -16 || h.off > 30) continue;
+    if (!best || Math.abs(h.off) < Math.abs(best.h.off)) best = { ed, h };
+  }
+  if (!best) return;
   const half = (g.item.s * g.rect.width) / 2;
-  g.ruler = { side, a0: q.a, lift: RULER.h / 2 + half + 1, pr: e.pointerType === 'pen' ? clamp(e.pressure || 0.5, 0.35, 0.65) : 0.5 };
-  rulerLine(g, q.a);
+  const pr = e.pointerType === 'pen' ? clamp(e.pressure || 0.5, 0.35, 0.65) : 0.5;
+  if (best.ed.t === 'seg') g.ruler = { ed: best.ed, s0: best.h.s, lift: half + 1, pr };
+  else g.ruler = { ed: best.ed, arc: true, th0: best.h.th, th1: best.h.th, lift: half + 1, pr };
+  // the staff ruler: four more lines, at the staff's spacing, on the far side of the first
+  if (RULER.kind === 'staff' && !g.ruler.arc) {
+    const mm = (V.file && V.file.opts && V.file.opts.staffMm) || 7;
+    g.ruler.gap = ((mm / 4) * 2.8346) * (g.rect.width / NB_PW);
+  }
+  rulerLine(g, best.h);
 }
-function rulerLine(g, a1) {
-  const { u, n } = rulerGeom(), R = g.ruler;
-  const pt = (a) => { const x = RULER.cx + u[0] * a + n[0] * R.side * R.lift, y = RULER.cy + u[1] * a + n[1] * R.side * R.lift; const f = fracOf(x, y, g.rect); return [f[0], f[1], R.pr]; };
-  const N = 14; g.item.p = Array.from({ length: N }, (_, i) => pt(R.a0 + ((a1 - R.a0) * i) / (N - 1)));
+function rulerLine(g, h) {
+  const { u, n } = rulerGeom(), R = g.ruler, ed = R.ed;
+  const scr = (x, y) => [RULER.cx + u[0] * x + n[0] * y, RULER.cy + u[1] * x + n[1] * y];
+  const pt = (x, y) => { const s = scr(x, y), f = fracOf(s[0], s[1], g.rect); return [f[0], f[1], R.pr]; };
+  if (!R.arc) {
+    const dx = ed.b[0] - ed.a[0], dy = ed.b[1] - ed.a[1], l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
+    const at = (s, lift) => pt(ed.a[0] + ux * s + ed.out[0] * lift, ed.a[1] + uy * s + ed.out[1] * lift);
+    const N = 14, line = (lift) => Array.from({ length: N }, (_, i) => at(R.s0 + ((h.s - R.s0) * i) / (N - 1), lift));
+    g.item.p = line(R.lift);
+    if (R.gap) g.more = [1, 2, 3, 4].map((j) => ({ ...g.item, p: line(R.lift + j * R.gap) }));
+    return;
+  }
+  // round an edge: the angle followed without jumps, at most once round
+  let th = h.th; while (th - R.th1 > Math.PI) th -= 2 * Math.PI; while (th - R.th1 < -Math.PI) th += 2 * Math.PI;
+  if (Number.isFinite(ed.a0)) th = clamp(th, ed.a0, ed.a1);
+  th = clamp(th, R.th0 - 2 * Math.PI, R.th0 + 2 * Math.PI);
+  R.th1 = th;
+  const rr = ed.r + R.lift, N = clamp(Math.ceil((Math.abs(th - R.th0) * rr) / 4), 2, 600);
+  g.item.p = Array.from({ length: N + 1 }, (_, i) => { const t = R.th0 + ((th - R.th0) * i) / N; return pt(ed.c[0] + Math.cos(t) * rr, ed.c[1] + Math.sin(t) * rr); });
+  if (RULER.el) RULER.el.querySelector('.ruler-deg').textContent = rulerLabel();
 }
-function rulerMove(g, e) { rulerLine(g, rulerAt(e.clientX, e.clientY).a); }
+function rulerMove(g, e) { const q = rulerAt(e.clientX, e.clientY); rulerLine(g, edgeAt(g.ruler.ed, q.a, q.d)); }
 // moving and turning it, with the fingers on it (they never reach the page underneath)
 window.addEventListener('pointerdown', (e) => {
   if (!RULER.on || e.pointerType === 'pen' || !onRuler(e.clientX, e.clientY)) return;
@@ -5499,7 +5729,9 @@ window.addEventListener('pointermove', (e) => {
   if (ids.length >= 2) {
     const [a, b] = ids, p0 = G.base.pts.get(a), q0 = G.base.pts.get(b), p1 = G.pts.get(a), q1 = G.pts.get(b);
     const da = Math.atan2(q1[1] - p1[1], q1[0] - p1[0]) - Math.atan2(q0[1] - p0[1], q0[0] - p0[0]);
-    let ang = G.base.ang + da;
+    // (the circle: two fingers make it bigger or smaller instead)
+    if (RULER.kind === 'circle') { G.base.r = G.base.r || RULER.r; RULER.r = Math.round(G.base.r * Math.hypot(q1[0] - p1[0], q1[1] - p1[1]) / Math.max(1, Math.hypot(q0[0] - p0[0], q0[1] - p0[1]))); }
+    let ang = RULER.kind === 'circle' ? G.base.ang : G.base.ang + da;
     // (it holds at every 45°, level and upright most of all)
     const step = Math.PI / 4, near = Math.round(ang / step) * step; if (Math.abs(ang - near) < (3 * Math.PI) / 180) ang = near;
     RULER.ang = ang;
@@ -5585,6 +5817,8 @@ function endInk(cancelled) {
   done.p = done.p.map((p) => [+p[0].toFixed(5), +p[1].toFixed(5), +p[2].toFixed(2)]);
   if (!L.ready) { L.commit(done); L.loaded.then(() => pushUndo(L.key, L.items.filter((x) => x !== done), L.items.slice())); return; }
   L.commit(done);
+  // (the staff ruler's other four lines)
+  if (g.more) for (const it of g.more) { it.p = it.p.map((p) => [+p[0].toFixed(5), +p[1].toFixed(5), +p[2].toFixed(2)]); L.commit(it); }
   pushUndo(L.key, g.before, L.items.slice());
   // zoomed in, the writing is drawn again at the full sharpness of the screen at once, so a line
   // looks the same after the Pencil lifts as while it was being drawn
@@ -6343,14 +6577,23 @@ async function doExport(withInk, only) {
 }
 $('#expWith').addEventListener('click', () => doExport(true));
 // A page as a picture (to send, or to put in another app): the page on show, or either of the two
+// one choice in an export list: an icon, what it makes, a line under it
+function expRow(ic, title, sub, on) {
+  const b = el('button', 'exp-row'); b.append(icon(ic));
+  const t = el('span', 'exp-t'); t.append(el('b', '', title), el('small', '', sub)); b.append(t);
+  const ch = el('i', 'exp-chev'); b.append(ch);
+  b.addEventListener('click', on); return b;
+}
 function fillExportPics() {
   const box = $('#expPics'); box.textContent = '';
   if (!V.doc) return;
   const shown = [V.page, ...(V.spread === 2 && V.page + 1 < V.doc.pages ? [V.page + 1] : [])];
-  for (const i of shown) {
-    const b = el('button', 'rec-choice wide-choice'); b.append(icon('i-image'), el('b', '', shown.length > 1 ? (i === V.page ? 'Left page as a picture' : 'Right page as a picture') : 'This page as a picture'), el('span', '', 'Page ' + (i + 1) + ' · a JPEG with your markings'));
-    b.addEventListener('click', () => doExportPicture(i)); box.append(b);
-  }
+  const cover = V.file && V.file.cover ? 1 : 0;
+  const num = (i) => (i < cover ? tr('The cover') : tr('Page') + ' ' + (i + 1 - cover));
+  box.append(el('div', 'exp-group', 'As a picture'));
+  const list = el('div', 'exp-list');
+  for (const i of shown) list.append(expRow('i-image', shown.length > 1 ? (i === V.page ? 'Left page' : 'Right page') : 'This page', num(i) + ' · JPEG · ' + tr('with your markings'), () => doExportPicture(i)));
+  box.append(list);
 }
 async function doExportPicture(i) {
   hidePanel(); toast('Making the picture…', 60000);
@@ -6376,12 +6619,17 @@ $('#nbExportBtn').addEventListener('click', () => {
   const box = $('#expPages'); box.textContent = '';
   const shown = [V.page, ...(V.spread === 2 && V.page + 1 < V.doc.pages ? [V.page + 1] : [])];
   const cover = V.file && V.file.cover ? 1 : 0;
-  for (const i of shown) {
-    const b = el('button', 'rec-choice wide-choice'); b.append(icon('i-pdf'), el('b', '', shown.length > 1 ? (i === V.page ? 'The left page' : 'The right page') : 'This page'), el('span', '', i < cover ? 'The cover' : 'Page ' + (i + 1 - cover) + ' only'));
-    b.addEventListener('click', () => doExport(true, [i])); box.append(b);
-  }
-  const all = el('button', 'rec-choice wide-choice'); all.append(icon('i-pen'), el('b', '', 'The whole notebook'), el('span', '', V.doc.pages + ' pages'));
-  all.addEventListener('click', () => doExport(true)); box.append(all);
+  const num = (i) => (i < cover ? tr('The cover') : tr('Page') + ' ' + (i + 1 - cover));
+  // (one clean list: the pages on show, together or each, then the whole notebook)
+  box.append(el('div', 'exp-group', 'As a PDF'));
+  const list = el('div', 'exp-list');
+  if (shown.length > 1) {
+    list.append(expRow('i-pdf', 'Both pages', shown[0] < cover ? num(shown[0]) + ' + ' + num(shown[1]) : tr('Pages') + ' ' + (shown[0] + 1 - cover) + '–' + (shown[1] + 1 - cover), () => doExport(true, shown)));
+    list.append(expRow('i-pdf', 'Left page', num(shown[0]), () => doExport(true, [shown[0]])));
+    list.append(expRow('i-pdf', 'Right page', num(shown[1]), () => doExport(true, [shown[1]])));
+  } else list.append(expRow('i-pdf', 'This page', num(shown[0]), () => doExport(true, [shown[0]])));
+  list.append(expRow('i-paper', 'The whole notebook', V.doc.pages + ' ' + tr('pages'), () => doExport(true)));
+  box.append(list);
   box.hidden = false; $('#expWith').hidden = $('#expClean').hidden = true; fillExportPics();
   $('#expHint').textContent = 'The file opens in the share sheet: save it to Files, mail it, print it or AirDrop it.';
   showPanel('exportpdf');
@@ -9175,11 +9423,9 @@ async function stopRecording() {
 const videoInNative = () => !!(NATIVE && NATIVE.standVideoIn && (window.standCaps || {}).videoIn);
 $('#takeImport').addEventListener('click', async () => {
   if (!videoInNative()) { $('#takeImportFile').click(); return; }
-  const from = await choose(tr('Import a video'), [
-    { id: 'photos', title: tr('From Photos'), sub: tr('The video as it was filmed') },
-    { id: 'files', title: tr('From Files'), sub: tr('iCloud Drive, a USB drive, other apps') },
-  ]);
-  if (from) NATIVE.standVideoIn.postMessage({ cmd: 'pick', from });
+  // (iOS's own menu by the button, as for scores: Photo Library or Choose File)
+  const r = $('#takeImport').getBoundingClientRect();
+  NATIVE.standVideoIn.postMessage({ cmd: 'pick', from: 'ask', rect: [r.left, r.top, r.width, r.height], labels: [tr('Photo Library'), tr('Choose File'), tr('Cancel')] });
 });
 // a video that came in through iOS (or the self test): kept in Recordings like a video filmed here
 async function keepVideo(blob, audio, name, dur) {

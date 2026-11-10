@@ -151,6 +151,7 @@ export function rotateDoc(doc, rot) {
       tmp.width = tmp.height = 0;
     },
     pixHas: (i, w, h) => (deg(i) || !doc.pixHas ? Promise.resolve(true) : doc.pixHas(i, w, h)),
+    renderView: (i, canvas, view, w, h, opts) => (deg(i) || !doc.renderView ? Promise.resolve(false) : doc.renderView(i, canvas, view, w, h, opts)),
     destroy: () => doc.destroy(),
   };
 }
@@ -165,6 +166,7 @@ async function openJoined(file, known) {
       pages: at.length, sizes: parts.flatMap((d) => d.sizes), pdf: own.pdf, ownPages: own.pages,
       render(i, canvas, w, h, opts) { const [k, j] = at[i]; return parts[k].render(j, canvas, w, h, opts); },
       pixHas: (i, w, h) => { const [k, j] = at[i]; return parts[k].pixHas ? parts[k].pixHas(j, w, h) : Promise.resolve(true); },
+      renderView(i, canvas, view, w, h, opts) { const [k, j] = at[i]; return parts[k].renderView ? parts[k].renderView(j, canvas, view, w, h, opts) : Promise.resolve(false); },
       destroy() { for (const d of parts) try { d.destroy(); } catch {} },
     };
   }
@@ -183,6 +185,17 @@ async function openDocumentOne(file, known) {
         const g = canvas.getContext('2d');
         if (cover && i === 0) await paintCover(g, file, canvas.width, canvas.height);
         else drawNotebookPage(g, file, i - cover, canvas.width, canvas.height);
+      },
+      // Zoomed in: just the part of the page on screen (view: fractions of the page), drawn w × h,
+      // so the paper's lines are as sharp as the screen at any zoom (the whole page can't be that big)
+      async renderView(i, canvas, view, w, h) {
+        canvas.width = Math.round(w); canvas.height = Math.round(h);
+        const g = canvas.getContext('2d'), FW = canvas.width / view.w, FH = canvas.height / view.h;
+        g.translate(-view.x * FW, -view.y * FH);
+        if (cover && i === 0) await paintCover(g, file, FW, FH);
+        else drawNotebookPage(g, file, i - cover, FW, FH);
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        return true;
       },
       destroy() {},
     };
@@ -313,6 +326,26 @@ async function openDocumentOne(file, known) {
         } finally { HEAVY.active--; if (release) release(); done(i, page); }
       },
       pixHas: (i, w, h) => { const W = Math.round(w), H = Math.round(h); return fid && W * H <= PIX_MAX ? pixHas(`${fid}|${i}|${W}x${H}`) : Promise.resolve(true); },
+      // Zoomed in: just the part on screen, drawn from the PDF itself at the screen's sharpness. (Not
+      // for a heavy scan: its pictures are drawn one page at a time, and are no sharper this way.)
+      async renderView(i, canvas, view, w, h, opts = {}) {
+        if (gone || heavy || scanLike) return false;
+        const W = Math.round(w), H = Math.round(h);
+        drawing.set(i, (drawing.get(i) || 0) + 1);
+        let page = null;
+        try {
+          page = await pdf.getPage(i + 1).catch(() => null);
+          if (!page || gone) return false;
+          const vp1 = page.getViewport({ scale: 1 }), FW = W / view.w, FH = H / view.h;
+          const vp = page.getViewport({ scale: FW / vp1.width });
+          canvas.width = W; canvas.height = H;
+          const task = page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: vp, transform: [1, 0, 0, FH / (vp1.height * FW / vp1.width), -view.x * FW, -view.y * FH], background: 'rgb(255,255,255)' });
+          if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
+          let ok = true;
+          await task.promise.catch(() => { ok = false; });
+          return ok && !gone && !(opts.ctl && opts.ctl.aborted);
+        } finally { done(i, page); }
+      },
       destroy() { gone = true; pdf.destroy(); },
     };
   }
@@ -347,6 +380,19 @@ async function openDocumentOne(file, known) {
         c.fillStyle = '#fff'; c.fillRect(0, 0, w, h);
         c.imageSmoothingQuality = 'high';
         c.drawImage(bmp, 0, 0, w, h);
+      } finally { give(e); }
+    },
+    // Zoomed in: the part on screen, from the full photo (sharper than the whole page can be drawn)
+    async renderView(i, canvas, view, w, h) {
+      const e = take(i);
+      try {
+        const bmp = await e.p;
+        canvas.width = Math.round(w); canvas.height = Math.round(h);
+        const c = canvas.getContext('2d', { alpha: false });
+        c.fillStyle = '#fff'; c.fillRect(0, 0, canvas.width, canvas.height);
+        c.imageSmoothingQuality = 'high';
+        c.drawImage(bmp, view.x * bmp.width, view.y * bmp.height, view.w * bmp.width, view.h * bmp.height, 0, 0, canvas.width, canvas.height);
+        return true;
       } finally { give(e); }
     },
     destroy() { for (const e of lru.values()) drop(e); lru.clear(); },
@@ -587,6 +633,7 @@ export function mapDoc(doc, map, cuts, glue) {
       void H0; void k;
     },
     pixHas: (i, w, h) => (pieces[i].parts || !doc.pixHas ? Promise.resolve(true) : doc.pixHas(pieces[i].o, w, h)),
+    renderView: (i, canvas, view, w, h, opts) => (pieces[i].parts || !doc.renderView ? Promise.resolve(false) : doc.renderView(pieces[i].o, canvas, view, w, h, opts)),
     orig: (i) => pieces[i].o,
     piece: (i) => pieces[i].box,
     composite: (i) => !!pieces[i].parts,
