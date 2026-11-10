@@ -433,9 +433,44 @@ function straightStrip(L, bmp) {
     const lines = (xx) => { const [yT, yB] = edgeAt(first, x0 + xx), dd = d[Math.max(0, Math.min(w - 1, xx))]; return [yT + dd - oTop, yB + dd - oTop]; };
     return { c, staffTop: mT - oTop, h, lines };
   });
+  // Where the five lines really are at each end of each line of music (a column near the end with just
+  // the five lines in it: clear of barlines, clefs and notes), so one line's staff meets the next one's
+  // exactly, line for line, however the picture was laid straight.
+  const sp0 = L.sp || 10;
+  const fiveAt = (q, from, dir) => {
+    const cv = q.c, w = cv.width, h = cv.height; if (w < 4 || h < 4) return null;
+    const d = cv.getContext('2d').getImageData(0, 0, w, h).data;
+    for (let k = 0; k < sp0 * 14 && from + dir * k >= 0 && from + dir * k < w; k += 1) {
+      const x = Math.round(from + dir * k), runs = []; let run = -1;
+      for (let y = 0; y <= h; y++) { const dk = y < h && d[(y * w + x) * 4] < 170; if (dk && run < 0) run = y; if (!dk && run >= 0) { runs.push([run, y - 1]); run = -1; } }
+      const thin = runs.filter((r) => r[1] - r[0] <= sp0 * 0.35);
+      if (thin.length !== 5 || runs.length !== 5) continue;
+      const mids = thin.map((r) => (r[0] + r[1]) / 2), gaps = mids.slice(1).map((m, i) => m - mids[i]);
+      if (gaps.every((gg) => Math.abs(gg - sp0) < sp0 * 0.3)) return mids;
+    }
+    return null;
+  };
+  outs.forEach((q, k) => {
+    const s2 = L.segs[k], w = q.c.width;
+    q.L = fiveAt(q, Math.min(w - 1, Math.round((s2.sX0 ?? 0) + sp0 * 0.5)), 1);
+    q.R = fiveAt(q, Math.max(0, Math.round((s2.sX1 ?? w) - sp0 * 0.5)), -1);
+  });
+  // each line placed so its staff carries on from the one before (measured; else as worked out)
+  const midOf = (q, side) => { const m = side === 'L' ? q.L : q.R; if (m) return m[2]; const [t, bb] = q.lines(side === 'L' ? 0 : q.c.width - 1); return (t + bb) / 2; };
+  const off = [0];
+  for (let k = 1; k < outs.length; k++) {
+    const want = off[k - 1] + midOf(outs[k - 1], 'R') - midOf(outs[k], 'L');
+    // (a measurement far from where the staff was worked out to be is not trusted)
+    const plan = off[k - 1] + outs[k - 1].staffTop - outs[k].staffTop;
+    off.push(Math.abs(want - plan) < sp0 * 1.5 ? want : plan);
+  }
+  const minOff = Math.min(...off);
+  outs.forEach((q, k) => { q.top = off[k] - minOff; });
+  globalThis.__stitch = outs.map((q, k) => ({ L: q.L, R: q.R, top: q.top, staffTop: q.staffTop, w: q.c.width, sX0: L.segs[k].sX0, sX1: L.segs[k].sX1, sx: L.segs[k].sx }));
   // the lines side by side, their staves at the same height
   const above = Math.max(...outs.map((q) => q.staffTop)), below = Math.max(...outs.map((q, k) => q.h - q.staffTop));
-  const CH0 = Math.ceil(above + below), CW0 = Math.ceil(L.width);
+  const CH0 = Math.ceil(Math.max(...outs.map((q) => q.top + q.h))), CW0 = Math.ceil(L.width);
+  void above; void below;
   // (a very long line is kept a little smaller: iOS will not keep a picture bigger than this, it would
   // come out blank; drawn back at its size, it is the same)
   const LIMIT = /iPhone|iPod/.test(navigator.userAgent) ? 8e6 : 14e6;
@@ -445,7 +480,7 @@ function straightStrip(L, bmp) {
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, CW, CH);
   g.imageSmoothingQuality = 'high';
   g.scale(K, K);
-  L.segs.forEach((s, k) => { const q = outs[k]; s.dy = above - q.staffTop; s.h = q.h; s.staff = q.staffTop; g.drawImage(q.c, s.sx, s.dy); });
+  L.segs.forEach((s, k) => { const q = outs[k]; s.dy = Math.round(q.top * 4) / 4; s.h = q.h; s.staff = q.staffTop; g.drawImage(q.c, s.sx, s.dy); });
   L.height = CH0;
   // and the staff running on from one line to the next (each of its five lines, where it ends to
   // where the next one begins)
@@ -471,7 +506,8 @@ function straightStrip(L, bmp) {
       g.fillStyle = '#fff'; g.fillRect(xa + 1, 0, Math.max(0, xb - xa - 1), CH0);
       const [aT, aB] = qa.lines(ea), [bT, bB] = qb.lines(eb);
       for (let k = 0; k < 5; k++) {
-        const ya = A.dy + aT + (k * (aB - aT)) / 4, yb = B.dy + bT + (k * (bB - bT)) / 4;
+        // (from where each line really ends to where the next one really begins)
+        const ya = A.dy + (qa.R ? qa.R[k] : aT + (k * (aB - aT)) / 4), yb = B.dy + (qb.L ? qb.L[k] : bT + (k * (bB - bT)) / 4);
         g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb + 1, yb); g.stroke();
       }
     }
