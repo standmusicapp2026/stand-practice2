@@ -64,12 +64,14 @@ export async function openStudio(takeId) {
   $('#studio').hidden = false; document.body.classList.add('in-studio');
   $('#stTitle').textContent = take.name || 'Studio';
   ST.sel = ST.P.overlays.find((o) => o.kind === 'score') ? { id: ST.P.overlays.find((o) => o.kind === 'score').id } : null;
-  ST.media.currentTime = ST.P.trim.a;
+  ST.want = null; ST.gradeKey = null; ST.media.currentTime = ST.P.trim.a;
   // (a picture of the first frame to show, and to draw the looks with)
   if (ST.media.readyState < 2) await new Promise((res) => { const done = () => { ST.media.removeEventListener('loadeddata', done); ST.media.removeEventListener('seeked', done); res(); }; ST.media.addEventListener('loadeddata', done); ST.media.addEventListener('seeked', done); setTimeout(done, 2500); });
   ST.tv = null; sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
   makeStrip();
-  ST.media.addEventListener('seeked', () => frame());
+  ST.media.addEventListener('seeked', () => { if (ST.want != null) { const t = ST.want; ST.want = null; if (Math.abs(ST.media.currentTime - t) > 0.0005) { ST.seekAt = performance.now(); ST.media.currentTime = t; } }
+    // (the picture may come a moment after the jump: drawn again then, made afresh)
+    ST.gradeKey = null; frame(); clearTimeout(ST.reGrade); ST.reGrade = setTimeout(() => { if (!ST.media.seeking) { ST.gradeKey = null; frame(); } }, 150); });
   ST.media.addEventListener('ended', () => { ST.playing = false; syncPlay(); lsStop(); });
   // the sound heard as it will be in the video (room, level): played alongside the picture
   ST.pk = ST.pcm ? peakOf(ST.pcm) : 1; LS.buf = null;
@@ -1068,8 +1070,17 @@ function drawVideo(g, m, x, y, w, h) {
   // the chosen look, worked out on the graphics chip for each frame
   let src = m;
   if (ST.P.look && !isNeutral(ST.P.look)) {
-    const k = Math.min(1, 2048 / Math.max(w, h));
-    const graded = grader.render(m, Math.min(m.videoWidth || w, w * k), Math.min(m.videoHeight || h, h * k), ST.P.look);
+    // (worked out at the size it is seen: on the preview that is the screen's own pixels, not the film's;
+    // for the film itself the drawing is at full size, so this is as before)
+    let seen = 1; try { const T = g.getTransform(); seen = Math.min(1, Math.hypot(T.a, T.b) || 1); } catch {}
+    const k = Math.min(1, 2048 / Math.max(w, h), seen);
+    const gw = Math.min(m.videoWidth || w, w * k), gh = Math.min(m.videoHeight || h, h * k);
+    // (the same picture of the video in the same look, at the same size: the last one made is used again;
+    // moving the line along the timeline then costs nothing for the video until its picture changes)
+    const key = m.currentTime + '|' + Math.round(gw) + 'x' + Math.round(gh) + '|' + JSON.stringify(ST.P.look);
+    const preview = g.canvas && g.canvas.id === 'stCanvas';
+    if (!preview || !m.paused || m.seeking || key !== ST.gradeKey || !ST.graded) { ST.graded = grader.render(m, gw, gh, ST.P.look); ST.gradeKey = ST.graded && !m.seeking ? key : null; }
+    const graded = ST.graded;
     if (graded) src = graded;
   }
   if (ST.take.mirror) { g.save(); g.translate(x + w, y); g.scale(-1, 1); g.drawImage(src, 0, 0, w, h); g.restore(); }
@@ -1281,7 +1292,7 @@ function frame() {
   const c = $('#stCanvas'), g = c.getContext('2d');
   const { W, H, q } = ST.view;
   g.setTransform(q, 0, 0, q, 0, 0);
-  drawFrame(g, W, H, ST.media.currentTime);
+  drawFrame(g, W, H, nowT());
   // selection frame on the preview
   const o = selected();
   if (o && o._box && !ST.playing) { g.save(); g.strokeStyle = 'rgba(255,255,255,0.9)'; g.setLineDash([12, 8]); g.lineWidth = 3 / q; g.strokeRect(o._box.x, o._box.y, o._box.w, o._box.h); g.restore(); }
@@ -1289,6 +1300,7 @@ function frame() {
 }
 function loop() { frame(); lsKeep(); if (ST.playing) ST.raf = requestAnimationFrame(loop); }
 function play() {
+  if (ST.want != null) { ST.media.currentTime = ST.want; ST.want = null; }
   if (ST.media.currentTime >= ST.P.trim.b - 0.05 || ST.media.currentTime < ST.P.trim.a) ST.media.currentTime = ST.P.trim.a;
   ST.media.play().catch(() => {}); ST.playing = true; syncPlay(); loop();
   ST.stopAt = setInterval(() => { if (ST.media.currentTime >= ST.P.trim.b) { pause(); if (ST.tapping) finishTap(); } }, 50);
@@ -1345,7 +1357,7 @@ function renderTimeline() {
 }
 function updateHead() {
   if (!ST.media) return;
-  const t = ST.media.currentTime;
+  const t = nowT();
   $('#stHead').style.left = (40 + tx(t)) + 'px';
   $('#stTime').textContent = fmt(t) + ' / ' + fmt(ST.dur);
   const o = ST.P.overlays.find((x) => x.kind === 'score');
@@ -1427,7 +1439,22 @@ function drawWave() {
   // (what is cut away, dimmed)
   if (pics.length) { g.fillStyle = 'rgba(0,0,0,0.55)'; if (ax > 0) g.fillRect(0, 0, Math.min(c.width, ax), c.height); if (bx < c.width) g.fillRect(Math.max(0, bx), 0, c.width - Math.max(0, bx), c.height); }
 }
-function seek(t) { ST.media.currentTime = clamp(t, 0, ST.dur); frame(); }
+// (while the finger moves along the timeline: one seek at a time, the newest place kept for when it lands.
+// A big video asked to jump on every move never finishes any jump, so the picture came in leaps; the line
+// under the finger and the music follow at once, the picture as fast as the iPad can find it)
+function seek(t) {
+  const m = ST.media; t = clamp(t, 0, ST.dur);
+  if (m.seeking && ST.seekAt && performance.now() - ST.seekAt < 700) {
+    ST.want = t; clearTimeout(ST.wantT);
+    // (a jump that never says it landed: the newest place is asked for anyway)
+    ST.wantT = setTimeout(() => { if (ST.want != null) { const w = ST.want; ST.want = null; ST.seekAt = performance.now(); m.currentTime = w; frame(); } }, 700);
+  } else { ST.want = null; ST.seekAt = performance.now(); m.currentTime = t; }
+  if (!ST.seekRaf) ST.seekRaf = requestAnimationFrame(() => { ST.seekRaf = 0; frame(); });
+}
+// (work asked for many times while a finger moves, done once for each picture the screen shows)
+const onceAFrame = (k, fn) => { ST.af = ST.af || {}; if (ST.af[k]) return; ST.af[k] = requestAnimationFrame(() => { ST.af[k] = 0; fn(); }); };
+// (the moment on show: where the finger is, even while the picture is still on its way there)
+const nowT = () => (ST.want != null ? ST.want : ST.media.currentTime);
 // the time over a trim handle while it is moved (to the hundredth when opened out)
 function trimTip(side) {
   const tip = $('#stTrimTip'), t = ST.P.trim[side];
@@ -1492,7 +1519,7 @@ function wireTimeline() {
       if (drag.side === 'a') ST.P.trim.a = clamp(want, 0, ST.P.trim.b - 0.5); else ST.P.trim.b = clamp(want, ST.P.trim.a + 0.5, ST.dur);
       // (opened out: the view follows the handle when it nears an edge)
       if (ST.tv && drag.zoomed) { const v = ST.tv, span = v.b - v.a, h = ST.P.trim[drag.side]; if (h < v.a + span * 0.12 || h > v.b - span * 0.12) { const a2 = clamp(h - span / 2, 0, Math.max(0, ST.dur - span)); ST.tv = { a: a2, b: a2 + span }; drag.off = ST.P.trim[drag.side] - tAt(e.clientX); } }
-      seek(ST.P.trim[drag.side]); renderTimeline(); drawWave(); trimTip(drag.side);
+      seek(ST.P.trim[drag.side]); onceAFrame('tl', () => { renderTimeline(); drawWave(); if (drag && drag.kind === 'trim') trimTip(drag.side); });
     }
     else if (drag.kind === 'bar') {
       const o = ST.P.overlays.find((x) => x.kind === 'score'); const T = o.times, k = drag.k;
@@ -1500,13 +1527,13 @@ function wireTimeline() {
       o.synced = 'hand';
       // (two parts on one grid keep the same bar times: a bar moved is moved in both)
       const two = scoreLines()[1]; if (two && two.times && two.times.length === T.length) { two.times[k] = T[k]; two.synced = 'hand'; }
-      seek(Math.max(0, T[k] + 0.01)); renderTimeline();
+      seek(Math.max(0, T[k] + 0.01)); onceAFrame('tl', renderTimeline);
     } else if (drag.kind === 'img') {
       const o = drag.o, d = t - drag.t0;
       if (drag.side === 'a') o.t0 = clamp(drag.a + d, 0, o.t1 - 0.3);
       else if (drag.side === 'b') o.t1 = clamp(drag.b + d, o.t0 + 0.3, ST.dur);
       else { const len = drag.b - drag.a; o.t0 = clamp(drag.a + d, 0, ST.dur - len); o.t1 = o.t0 + len; }
-      renderTimeline(); seek(o.t0 + 0.05);
+      onceAFrame('tl', renderTimeline); seek(o.t0 + 0.05);
     }
   });
   const end = () => {
