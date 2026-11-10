@@ -184,8 +184,11 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
                 // (at its own moment in the video when the page says it, so the film keeps the video's timing)
                 let pts = (body["t"] as? Double).map { CMTime(seconds: max(0, $0), preferredTimescale: 6000) } ?? CMTime(value: CMTimeValue(i), timescale: CMTimeScale(job.fps))
                 guard CMTimeCompare(pts, job.lastPts) > 0 else { return }
+                // (iOS may take a while with the pictures before it: waited for, never forced — appending
+                // when it is not ready ends the app)
                 var waited = 0
-                while !input.isReadyForMoreMediaData && waited < 1000 { usleep(5000); waited += 1 }
+                while !input.isReadyForMoreMediaData && waited < 12000 && job.writer?.status == .writing { usleep(5000); waited += 1 }
+                guard input.isReadyForMoreMediaData else { job.failed = true; return }
                 if adaptor.append(buffer, withPresentationTime: pts) { job.lastPts = pts } else { job.failed = true }
             }
             if job.failed { outEvent(id, ["type": "error", "message": job.writer?.error?.localizedDescription ?? "frame \(i)"]); return }

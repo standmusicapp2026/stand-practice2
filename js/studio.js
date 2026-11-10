@@ -1711,36 +1711,53 @@ async function exportNative({ share = true } = {}) {
       pending = outNext(id, ['ack'], 60000);
     }); return chain; };
     if (isVideo && m.requestVideoFrameCallback) {
-      // The video plays (slowly, silently) and each of its pictures is drawn the moment it is shown:
-      // every picture once, at its own time, without looking for each one again (much faster).
+      // The video plays (silently) and stops at each of its pictures: it is drawn the moment it is
+      // shown, and the video goes on to the next. Every picture once, at its own time, without
+      // looking for each one (much faster than seeking). A picture the iPad still let pass is looked
+      // for and drawn before going on, so none is ever missing.
       await seekTo(a);
-      m.muted = true; m.playbackRate = rate;
-      let last = null, inFlight = 0;
+      m.muted = true; m.playbackRate = rate = 1;
+      let last = null, inFlight = 0, drain = null;
+      const doFrame = (t) => {
+        const q = performance.now();
+        drawFrame(g, W, H, t, true);
+        tDraw += performance.now() - q;
+        const jp = new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+        inFlight++;
+        hand(jp, t).then(() => { inFlight--; if (drain && inFlight < 3) { const d = drain; drain = null; d(); } });
+        if (sent % 6 === 0) progress(t);
+      };
+      // (the first picture: the one shown at the start of the part)
+      doFrame(a); last = a;
       await new Promise((resolve, reject) => {
         let over = false;
         const finish = () => { if (over) return; over = true; m.pause(); document.removeEventListener('visibilitychange', wake); resolve(); };
-        const wake = () => { if (!document.hidden && !over && m.paused && inFlight < 6) m.play().catch(() => {}); };
+        const wake = () => { if (!document.hidden && !over && m.paused && !busyNow) m.play().catch(() => {}); };
+        let busyNow = false;
         document.addEventListener('visibilitychange', wake);
-        const onFrame = (now, md) => {
+        const onFrame = async (now, md) => {
           if (over) return;
-          if (cancelled) { finish(); return; }
-          const t = md.mediaTime;
-          if (t >= b - 0.25 / fps) { finish(); return; }
-          if (t >= a - 0.5 / fps && (last === null || t > last + 0.001)) {
-            // (a picture missed while the iPad was busy: the video goes on more slowly)
-            if (last !== null && t - last > 1.6 / fps) { skipped++; if (rate > 0.2) { rate = Math.max(0.2, rate * 0.75); m.playbackRate = rate; } }
-            last = t;
-            let q = performance.now();
-            drawFrame(g, W, H, t, true);
-            tDraw += performance.now() - q;
-            const jp = new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
-            inFlight++;
-            // (never more than a few pictures waiting: the video waits for them)
-            if (inFlight >= 6) m.pause();
-            hand(jp, t).then(() => { inFlight--; if (m.paused && !over && inFlight < 3 && !document.hidden) m.play().catch(() => {}); }, (e) => { over = true; reject(e); });
-            if (sent % 6 === 0) progress(t);
-          }
-          m.requestVideoFrameCallback(onFrame);
+          m.pause(); busyNow = true;
+          try {
+            if (cancelled) { finish(); return; }
+            const t = md.mediaTime;
+            if (t >= b - 0.25 / fps) { finish(); return; }
+            if (t >= a - 0.5 / fps && (last === null || t > last + 0.001)) {
+              if (last !== null && t - last > 1.6 / fps) {
+                // (pictures passed by unseen: each looked for in turn, then back to this one)
+                const n = Math.round((t - last) * fps) - 1;
+                for (let k = 1; k <= n; k++) { const tt = last + (k * (t - last)) / (n + 1); await seekTo(tt + 0.3 / fps); doFrame(tt); skipped++; }
+                await seekTo(t + 0.3 / fps);
+              }
+              doFrame(t); last = t;
+              // (never more than a few pictures waiting for iOS: the video waits for them)
+              if (inFlight >= 6) await new Promise((r) => { drain = r; });
+            }
+            busyNow = false;
+            if (cancelled) { finish(); return; }
+            m.requestVideoFrameCallback(onFrame);
+            if (!document.hidden) m.play().catch((e) => { over = true; reject(e); });
+          } catch (e) { over = true; reject(e); }
         };
         m.requestVideoFrameCallback(onFrame);
         m.addEventListener('ended', finish, { once: true });

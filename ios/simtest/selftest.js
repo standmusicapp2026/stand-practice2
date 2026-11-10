@@ -323,7 +323,7 @@ async function videoRun() {
     const f = await db.get('files', 'video:' + takes[0].id);
     const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(f.data);
     await new Promise((res) => { v.onloadedmetadata = res; v.onerror = res; setTimeout(res, 8000); });
-    const ok2 = Math.abs(v.duration - 2) < 0.2 && v.videoWidth === r.w && v.videoHeight === r.h && r.frames >= 50 && r.audio !== 'none';
+    const ok2 = Math.abs(v.duration - 2) < 0.2 && v.videoWidth === r.w && v.videoHeight === r.h && r.frames >= 57 && r.audio !== 'none';
     $('#stBack') && $('#stBack').click(); await sleep(800);
     const msg = `${r.frames} pictures ${r.w}x${r.h} @${r.fps}, ${(v.duration || 0).toFixed(2)} s, ${Math.round(r.size / 1000)} kB, sound ${r.audio}, ${JSON.stringify(r.seeks)} ${JSON.stringify(r.ms)}`;
     if (!ok2) throw new Error(msg);
