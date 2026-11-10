@@ -347,12 +347,12 @@
       <button class="tb-btn" data-panel="reps"><svg><use href="#i-reps"/></svg><span>Reps</span></button>
       <button class="tb-btn rec" id="recBtn"><span class="rec-dot"></span><span id="recBtnLabel">Record</span></button>
       <button class="tb-btn" id="performBtn"><svg><use href="#i-perform"/></svg><span>Perform</span></button>
-      <button class="tb-btn" data-panel="settings"><svg><use href="#i-more"/></svg><span>More</span></button>
       <button class="tb-btn nbbar both" id="zoomBtn" aria-label="Zoom" title="Zoom"><svg><use href="#i-zoom"/></svg><span>Zoom</span></button>
       <button class="tb-btn nbbar" id="nbPhotoBtn" aria-label="Photo" title="Photo"><svg><use href="#i-image"/></svg><span>Photo</span></button>
       <button class="tb-btn nbbar" id="nbAddBtn" aria-label="Add page" title="Add page"><svg><use href="#i-plus"/></svg><span>Add page</span></button>
       <button class="tb-btn nbbar" id="nbPagesBtn" aria-label="Pages" title="Pages"><svg><use href="#i-pages"/></svg><span>Pages</span></button>
       <button class="tb-btn nbbar" id="nbExportBtn" aria-label="Export" title="Export"><svg><use href="#i-share"/></svg><span>Export</span></button>
+      <button class="tb-btn nbbar both" data-panel="settings" aria-label="More" title="More"><svg><use href="#i-more"/></svg><span>More</span></button>
     </div>
   </header>
   <button class="perform-exit" id="performExit" hidden aria-label="Leave performance mode"><svg><use href="#i-perform"/></svg><span>Performing</span></button>
@@ -1325,6 +1325,7 @@
 <aside class="panel wide" id="panel-pages" hidden aria-label="Pages">
   <div class="panel-head"><h2>Pages</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
+    <div class="seg full flow-seg"><button data-flow="turn">Turn like a book</button><button data-flow="scroll">Scroll down</button></div>
     <div class="tool-list">
       <button class="tool-row" id="pgCrop"><svg><use href="#i-crop"/></svg><span><b>Crop this page</b><small>Keep only the music you need</small></span></button>
       <button class="tool-row" id="pgCut"><svg><use href="#i-cut"/></svg><span><b>Cut this page</b><small>Split between systems into two pages</small></span></button>
@@ -1357,13 +1358,14 @@
 </aside>
 
 <aside class="panel" id="panel-settings" hidden aria-label="Score settings">
-  <div class="panel-head"><h2>This score</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-head"><h2 id="setTitle">This score</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
     <label class="field"><span>Title</span><input id="metaTitle" autocomplete="off"></label>
-    <label class="field"><span>Composer</span><input id="metaComposer" autocomplete="off"></label>
+    <label class="field"><span id="metaComposerLbl">Composer</span><input id="metaComposer" autocomplete="off"></label>
     <div class="stat-row" id="scoreStats"></div>
 
     <div class="ctl-head"><span>On screen</span></div>
+    <div class="seg full flow-seg"><button data-flow="turn">Turn like a book</button><button data-flow="scroll">Scroll down</button></div>
     <div class="seg full" id="viewSeg"><button data-view="auto">Two pages</button><button data-view="one">One page</button><button data-view="turn">Sideways</button></div>
     <p class="hint" id="viewHint"></p>
     <div class="set-rows">
@@ -1405,9 +1407,9 @@
     <div id="paperTools" hidden>
       <button class="btn" id="paperAdd"><svg><use href="#i-plus"/></svg><span>Add a page</span></button>
     </div>
-    <button class="btn danger-text" id="delScore"><svg><use href="#i-trash"/></svg><span>Delete score</span></button>
+    <button class="btn danger-text" id="delScore"><svg><use href="#i-trash"/></svg><span id="delScoreLbl">Delete score</span></button>
     <div class="confirm" id="delScoreConfirm" hidden>
-      <span>Delete this score with its markings and recordings?</span>
+      <span id="delScoreAsk">Delete this score with its markings and recordings?</span>
       <button class="btn small" id="delScoreNo">Keep</button>
       <button class="btn small danger" id="delScoreYes">Delete</button>
     </div>

@@ -241,7 +241,7 @@ function showPanel(name, tab) {
   if (openPanel === name && !tab) { hidePanel(); return; }
   hidePanel();
   const p = $('#panel-' + name); if (!p) return;
-  p.hidden = false; openPanel = name;
+  p.hidden = false; openPanel = name; rulerAway(); syncFlowSeg();
   { const tn = name === 'tuner' && tab === 'harm' ? 'harmonics' : name === 'tuner' && tab === 'drone' ? 'drone' : name;
     if (SECTION_TOURS[tn] && name !== 'compose') setTimeout(() => sectionTour(tn, { force: openPanel === name }), 350); }   // compose waits until you start writing
   $$(`[data-panel="${name}"]`).forEach((b) => { if (!b.dataset.tab || b.dataset.tab === tab) b.classList.add('on'); });
@@ -1887,6 +1887,7 @@ let layoutToken = 0;
 async function layout(fade) {
   if (!V.doc) return;
   const token = ++layoutToken;
+  if (SCROLL()) return layoutScroll(token);
   V.spread = spreadSize();
   if (V.spread === 2 && S.fillScreen !== false && V.score && V.score.autoBox === undefined) measureMargins();
   follow.pages();
@@ -2004,6 +2005,174 @@ async function layout(fade) {
   prefetch(token);
   showTempoMarks(token, entries);
 }
+// ---------- pages one under the other, scrolled like Notes (a choice: turning like a book stays the usual) ----------
+// Every page has its place in one long column; only the pages on screen and near it are drawn (their
+// pictures and markings), the others wait as blank paper and are drawn as they come near. One finger
+// moves the column (and it runs on a little, as on the iPhone); turning a page (a tap at the side, a
+// pedal, listening, a jump) brings the next page to the top.
+const SC = { boxes: [], doc: null, token: 0, spread: null, raf: 0, mom: 0, anim: 0, placeT: 0 };
+const SCROLL = () => !!(S.scrollPages && V.doc && !TURN() && !(typeof DUO !== 'undefined' && DUO.on));
+function scrollWidth(sr) { return Math.floor(Math.min(sr.width - 16, Math.max(sr.height * 1.05, 560))); }
+// (where a page is in the column; a moved column is the pages' own frame for offsetTop, a still one is not)
+const scTop = (b) => (b.pg.offsetParent === SC.spread ? b.pg.offsetTop : b.pg.offsetTop - SC.spread.offsetTop);
+function scrollReady() { return SCROLL() && SC.spread && Z.el === SC.spread && SC.doc === V.doc && SC.boxes.length === V.doc.pages; }
+// the page at the top of the screen, and how far into it (0 … 1)
+function scrollWhere() {
+  if (!SC.spread || !SC.boxes.length) return { page: V.page, f: 0 };
+  const n = spreadNatural(), y = (scPad() + 14 - n.oy - Z.y) / Z.s;
+  let page = 0;
+  for (const b of SC.boxes) { if (scTop(b) <= y) page = b.i; else break; }
+  const b = SC.boxes[page], h = b.pg.offsetHeight || 1;
+  return { page, f: clamp((y - 14 / Z.s - scTop(b)) / h, 0, 1) };
+}
+function scrollYFor(page, f = 0) {
+  const b = SC.boxes[clamp(page, 0, SC.boxes.length - 1)]; if (!b) return 0;
+  const n = spreadNatural();
+  return scPad() - n.oy - (scTop(b) + f * b.pg.offsetHeight) * Z.s;
+}
+// the top of the pages: just under the toolbar (when it shows)
+function scPad() {
+  const sr = stage.getBoundingClientRect(), tb = $('#topbar');
+  const off = $('#score').classList.contains('chrome-off') || !tb ? 0 : Math.max(0, tb.getBoundingClientRect().bottom - sr.top);
+  return Math.round(off) + 6;
+}
+async function layoutScroll(token) {
+  const keep = SC.doc === V.doc && SC.spread && Z.el === SC.spread ? scrollWhere() : { page: V.page, f: 0 };
+  V.spread = 1; V.half = false;
+  follow.pages();
+  clearSelection();
+  const sr = stage.getBoundingClientRect(), W = scrollWidth(sr);
+  const spread = el('div', 'spread scroll-col');
+  const boxes = [];
+  for (let i = 0; i < V.doc.pages; i++) {
+    const c = cropOf(i), [pw, ph] = V.doc.sizes[i] || [595, 842];
+    const bw = W, bh = Math.max(40, Math.round((W * ph * c.h) / (pw * c.w)));
+    const pg = el('div', 'pg'); pg.style.width = bw + 'px'; pg.style.height = bh + 'px'; pg.dataset.i = i;
+    const inner = el('div', 'pgi');
+    // (whole pixels, as on the stand: the page picture sits exactly on the screen's pixels)
+    const iw = Math.round(bw / c.w), ih = Math.round(bh / c.h);
+    inner.style.width = iw + 'px'; inner.style.height = ih + 'px';
+    inner.style.left = -Math.round(c.x * iw) + 'px'; inner.style.top = -Math.round(c.y * ih) + 'px';
+    pg.append(inner); spread.append(pg);
+    boxes.push({ i, pg, inner, iw, ih });
+  }
+  freePages();
+  V.pages = [];
+  stage.textContent = '';
+  stage.append(spread);
+  SC.boxes = boxes; SC.doc = V.doc; SC.token = token; SC.spread = spread;
+  cancelAnimationFrame(SC.mom); cancelAnimationFrame(SC.anim); SC.mom = SC.anim = 0;
+  Z.el = spread; Z.s = 1; Z.x = 0; Z.sharp = 1;
+  Z.y = scrollYFor(keep.page, keep.f);
+  applyZoom();
+  V.page = keep.page;
+  $('#pageLabel').textContent = `${V.page + 1} / ${V.doc.pages}`;
+  $('#pageRange').value = V.page + 1;
+  syncPaperPlus();
+  scrollSync(true);
+}
+// what is on screen now: the page number, and the pages near drawn (the far ones let go)
+function scrollSync(now) {
+  if (SC.raf && !now) return;
+  const run = () => {
+    SC.raf = 0;
+    if (!scrollReady()) return;
+    const n = spreadNatural(), top = (0 - n.oy - Z.y) / Z.s, bot = (n.sh - n.oy - Z.y) / Z.s, scr = n.sh / Z.s;
+    const w = scrollWhere();
+    if (w.page !== V.page) {
+      V.page = w.page; if (V.score) V.score.lastPage = V.page;
+      clearTimeout(SC.placeT); SC.placeT = setTimeout(rememberPlace, 600);
+      $('#pageLabel').textContent = `${V.page + 1} / ${V.doc.pages}`; $('#pageRange').value = V.page + 1;
+      syncPaperPlus(); follow.pages();
+    }
+    for (const b of SC.boxes) {
+      const t = scTop(b), h = b.pg.offsetHeight;
+      const shown = t + h > top && t < bot, near = t + h > top - scr * 0.8 && t < bot + scr * 0.8;
+      const far = t + h < top - scr * 2.2 || t > bot + scr * 2.2;
+      const e = V.pages.find((x) => x.index === b.i);
+      if (near && !e && !b.loading) scrollMake(b, shown ? 0 : 1);
+      else if (far && e) scrollFree(e);
+    }
+  };
+  if (now) run(); else SC.raf = requestAnimationFrame(run);
+}
+async function scrollMake(b, prio) {
+  b.loading = true;
+  const token = SC.token, doc = V.doc, sc = V.score;
+  let art = null;
+  try { art = await renderPage(b.i, b.iw, b.ih, 1, prio); } catch { art = null; }
+  b.loading = false;
+  if (token !== layoutToken || V.doc !== doc || V.score !== sc || !b.pg.isConnected) return;
+  // (not drawn: asked again in a moment, if it is still wanted)
+  if (!art || !art.width) { setTimeout(() => scrollSync(), 250); return; }
+  if (V.pages.some((x) => x.index === b.i)) return;
+  // (a page picture kept for another place on screen is never taken from there)
+  if (art.parentNode && art.parentNode !== b.inner) { const c = document.createElement('canvas'); c.width = art.width; c.height = art.height; c.getContext('2d').drawImage(art, 0, 0); art = c; }
+  art.className = 'art';
+  const ink = el('canvas', 'ink'); ink.width = art.width; ink.height = art.height;
+  b.inner.insertBefore(ink, b.inner.firstChild); b.inner.insertBefore(art, ink);
+  const i = b.i;
+  const layer = new InkLayer(ink, sc.id, doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i));
+  const entry = { index: i, orig: doc.orig(i), pg: b.pg, inner: b.inner, art, ink, layer, iw: b.iw, ih: b.ih };
+  layer.onItems = () => renderNotes(entry);
+  V.pages.push(entry); V.pages.sort((x, y) => x.index - y.index);
+  if (Z.s > 1.05) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 120); }
+  showTempoMarks(layoutToken, [entry]);
+}
+function scrollFree(e) {
+  if (GS && GS.entry === e) return;
+  if (Sel.entry === e) return;
+  dropArtTile(e);
+  try { if (e.layer && e.layer._dropBase) e.layer._dropBase(); } catch {}
+  if (e.art && e.art.parentNode) e.art.remove();
+  if (e.art && !INCACHE.has(e.art)) freeCanvas(e.art);
+  if (e.ink) { e.ink.remove(); e.ink.width = e.ink.height = 0; }
+  V.pages = V.pages.filter((x) => x !== e);
+}
+// to a page, gliding (a jump far away goes straight there)
+function scrollToPage(i, glide = true) {
+  if (!scrollReady()) return;
+  cancelAnimationFrame(SC.mom); SC.mom = 0; cancelAnimationFrame(SC.anim);
+  const from = Z.y, to = (() => { const s = Z.y; Z.y = scrollYFor(i, 0); clampZoom(); const v = Z.y; Z.y = s; return v; })();
+  if (!glide || Math.abs(to - from) > stage.getBoundingClientRect().height * 4 || matchMedia('(prefers-reduced-motion: reduce)').matches) { Z.y = to; applyZoom(); scrollSync(true); return; }
+  const t0 = performance.now(), T = 320;
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / T), e = 1 - Math.pow(1 - k, 3);
+    Z.y = from + (to - from) * e; applyZoom();
+    if (k < 1) SC.anim = requestAnimationFrame(step); else { SC.anim = 0; scrollSync(true); scheduleSharpen(); }
+  };
+  SC.anim = requestAnimationFrame(step);
+}
+// let go while moving: the column runs on and slows down
+function scrollMomentum(v) {
+  cancelAnimationFrame(SC.mom);
+  if (Math.abs(v) < 0.15) { scheduleSharpen(); return; }
+  let last = performance.now();
+  const step = () => {
+    const now2 = performance.now(), dt = Math.min(40, now2 - last); last = now2;
+    const y0 = Z.y; Z.y += v * dt; applyZoom();
+    v *= Math.pow(0.0035, dt / 1000);   // (slows as on the iPhone)
+    if (Math.abs(v) < 0.02 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; scrollSync(true); scheduleSharpen(); return; }
+    SC.mom = requestAnimationFrame(step);
+  };
+  SC.mom = requestAnimationFrame(step);
+}
+function scrollStop() { cancelAnimationFrame(SC.mom); SC.mom = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; }
+// a trackpad or mouse wheel moves it too
+stage.addEventListener('wheel', (e) => {
+  if (!scrollReady()) return;
+  e.preventDefault(); scrollStop();
+  if (e.ctrlKey) { setZoomAt(Z.s * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY, { s: Z.s, x: Z.x, y: Z.y }); scheduleSharpen(); return; }
+  Z.y -= e.deltaY; if (Z.s > 1) Z.x -= e.deltaX; applyZoom(); clearTimeout(SC.wheelT); SC.wheelT = setTimeout(scheduleSharpen, 200);
+}, { passive: false });
+function setScrollPages(on) {
+  S.scrollPages = !!on; saveSettings();
+  for (const b of $$('[data-flow]')) b.classList.toggle('on', (b.dataset.flow === 'scroll') === !!on);
+  if (V.doc) { V.half = false; clearCache(); layout(); }
+}
+for (const b of $$('[data-flow]')) b.addEventListener('click', () => setScrollPages(b.dataset.flow === 'scroll'));
+function syncFlowSeg() { for (const b of $$('[data-flow]')) b.classList.toggle('on', (b.dataset.flow === 'scroll') === !!S.scrollPages); }
+window.__scroll = { SC, where: scrollWhere, to: scrollToPage, set: setScrollPages, nat: () => spreadNatural(), yfor: (i) => scrollYFor(i, 0) };   // (tests)
 // ---------- the tempo printed in the score ----------
 // Where a page says how fast (♩ = 108, Allegretto…), a tap there starts the metronome at that
 // tempo. The first time a score is opened, each mark glows softly once, so it is found; after
@@ -2212,6 +2381,7 @@ function goTo(page, fade = true) {
   V.page = clamp(page, 0, V.doc.pages - 1); V.half = false; V.score.lastPage = V.page;
   rememberPlace();
   if (V.page === 0) V.usedJumps.clear();
+  if (scrollReady()) { scrollToPage(V.page, fade !== false); return; }
   layout(fade);
 }
 function turn(dir) {
@@ -2238,7 +2408,9 @@ function turn(dir) {
       return;
     }
   }
-  if (S.halfTurn && V.spread === 1 && !V.inking) {
+  // (pages one under the other: back first goes to the top of the page you are in)
+  if (scrollReady() && dir < 0) { const w = scrollWhere(); if (w.f > 0.08 && !rr) { scrollToPage(w.page); return; } }
+  if (S.halfTurn && V.spread === 1 && !V.inking && !SCROLL()) {
     if (dir > 0) {
       if (!V.half && V.page + 1 <= lastPg()) { V.half = true; layout(true); return; }
       if (V.half) { goTo(V.page + 1); return; }
@@ -2654,6 +2826,14 @@ function clampZoom() {
   }
   const n = spreadNatural();
   const cw = n.w * Z.s, ch = n.h * Z.s;
+  if (SCROLL() && Z.el === SC.spread) {
+    // the column: across, as a page; down, from its top to its last page's foot (with room left
+    // under it, to write at the bottom of the last page above the writing tools)
+    if (cw <= n.sw) Z.x = (n.sw - cw) / 2 - n.ox; else Z.x = clamp(Z.x, n.sw - cw - n.ox, -n.ox);
+    const hi = -n.oy + scPad() - 10, lo = Math.min(hi, n.sh * 0.55 - ch - n.oy);
+    Z.y = clamp(Z.y, lo, hi);
+    return;
+  }
   if (NBPAN()) {
     // a notebook page moves freely with two fingers, at any size: its corners and its foot can be
     // brought to where the hand writes (above the writing tools), never lost off the screen
@@ -2673,7 +2853,12 @@ function applyZoom() {
   Z.el.style.transformOrigin = turn ? '50% 50%' : '';
   const turnCss = turn ? ' rotate(-90deg)' : '';
   // close to the normal size it snaps back, so returning to 100% is easy
-  if (NBPAN()) {
+  if (SCROLL() && Z.el === SC.spread) {
+    clampZoom();
+    Z.el.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})`;
+    zoomPill.hidden = Math.abs(Z.s - 1) < 0.01;
+    scrollSync();
+  } else if (NBPAN()) {
     // (a notebook page never jumps back to the middle by itself: it stays where the fingers left it)
     clampZoom();
     const moved = Z.s !== 1 || Math.abs(Z.x) > 0.5 || Math.abs(Z.y) > 0.5;
@@ -2824,7 +3009,7 @@ function setZoomAt(s, cx, cy, base) {
   Z.x = cx - n.left - n.ox - wx * Z.s; Z.y = cy - n.top - n.oy - wy * Z.s;
   applyZoom();
 }
-zoomPill.addEventListener('click', () => { Z.s = 1; Z.x = 0; Z.y = 0; applyZoom(); scheduleSharpen(); });
+zoomPill.addEventListener('click', () => { if (scrollReady()) { const sr = stage.getBoundingClientRect(); setZoomAt(1, sr.left + sr.width / 2, sr.top + sr.height / 2, { s: Z.s, x: Z.x, y: Z.y }); scheduleSharpen(); return; } Z.s = 1; Z.x = 0; Z.y = 0; applyZoom(); scheduleSharpen(); });
 // the Zoom button in the top bar: steps and presets, zooming about the middle of the screen
 function zoomTo(s) {
   const sr = stage.getBoundingClientRect();
@@ -2955,6 +3140,7 @@ document.addEventListener('pointerdown', (e) => {
 }, true);
 function closeInkPops() { $('#layerPop').hidden = true; $('#addPagePop').hidden = true; $('#shapePop').hidden = true; $('#eraserPop').hidden = true; $('#tapePop').hidden = true; $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; $('#insertPop').hidden = true; $('#picPop').hidden = true; }
 function syncInkBar() {
+  requestAnimationFrame(fitInkbar);
   const nb = NBK();
   $('#inkbar').classList.toggle('nb', nb);
   if (nb) inkBarBack();   // (in a notebook the writing tools always stay)
@@ -5654,7 +5840,7 @@ window.__setRulerKind = setRulerKind;   // (tests)
 function toggleRuler() { if (RULER.on) hideRuler(); else { showRuler(); inkHint('Draw along an edge. One finger moves the ruler, two turn it.', 2600); } syncInkBar(); }
 // where a point is on the ruler: along it (from the middle) and across it (from the middle line)
 function rulerAt(x, y) { const { u, n } = rulerGeom(), dx = x - RULER.cx, dy = y - RULER.cy; return { a: dx * u[0] + dy * u[1], d: dx * n[0] + dy * n[1] }; }
-function onRuler(x, y) { if (!RULER.on) return false; const q = rulerAt(x, y); return rulerShape().inside(q.a, q.d); }
+function onRuler(x, y) { if (!RULER.on || RULER.away) return false; const q = rulerAt(x, y); return rulerShape().inside(q.a, q.d); }
 // how far a point (on the ruler's own axes) is outside an edge, and where along it
 function edgeAt(e, x, y) {
   if (e.t === 'seg') {
@@ -5669,7 +5855,7 @@ function edgeAt(e, x, y) {
 }
 // a stroke starting this close to an edge follows it
 function rulerStart(g, e) {
-  if (!RULER.on || !g || g.kind !== 'ink' || g.item.t === 'white' || g.word) return;
+  if (!RULER.on || RULER.away || !g || g.kind !== 'ink' || g.item.t === 'white' || g.word) return;
   const q = rulerAt(e.clientX, e.clientY), sh = rulerShape();
   let best = null;
   for (const ed of sh.edges) {
@@ -5751,6 +5937,30 @@ const rulerUp = (e) => {
 };
 window.addEventListener('pointerup', rulerUp, { capture: true });
 window.addEventListener('pointercancel', rulerUp, { capture: true });
+// The ruler belongs to the notebook page being written on: with a panel open over it (the metronome,
+// the tuner…), another screen, or the markings closed, it steps away (and comes back as it was);
+// leaving the notebook puts it away.
+function rulerAway() {
+  if (!RULER.on) { document.body.classList.remove('ruler-away'); return; }
+  if ($('#score').hidden || !NBK()) { hideRuler(); document.body.classList.remove('ruler-away'); return; }
+  const away = !V.inking || !!openPanel || !!document.querySelector('.panel:not([hidden]), dialog[open], .sheet:not([hidden]), #pagesView:not([hidden]), #studio:not([hidden])');
+  document.body.classList.toggle('ruler-away', away);
+  RULER.away = away;
+}
+setInterval(rulerAway, 300);
+// In a notebook on a wide screen the writing tools share the top line with the title and the
+// notebook's buttons: they sit in the room between the two, never over either (scrolling sideways
+// if that room is short).
+function fitInkbar() {
+  const bar = $('#inkbar'), sc = $('#score');
+  if (!bar || bar.hidden || !sc.classList.contains('nbmode') || innerWidth < 1180) { if (bar) { bar.style.left = ''; bar.style.maxWidth = ''; bar.style.marginLeft = ''; } return; }
+  const t = $('#topbar .tb-title'), tools = [...$$('#topbar .tb-tools > *')].filter((x) => x.offsetParent && getComputedStyle(x).display !== 'none');
+  if (!t || !tools.length) return;
+  const a = Math.max(...[...t.children].filter((x) => x.offsetParent).map((x) => x.getBoundingClientRect().right), t.getBoundingClientRect().left) + 8, b = Math.min(...tools.map((x) => x.getBoundingClientRect().left)) - 8;
+  if (b - a < 200) return;
+  bar.style.marginLeft = '0px'; bar.style.maxWidth = Math.floor(b - a) + 'px'; bar.style.left = Math.round((a + b) / 2) + 'px';
+}
+window.addEventListener('resize', () => requestAnimationFrame(fitInkbar));
 window.__ruler = RULER;   // (tests)
 window.standPencilSqueeze = (at) => { try { openWheel(at && at.x, at && at.y); } catch (err) { console.warn(err); } };
 window.__wheel = { open: openWheel, close: closeWheel, get el() { return WHEEL.el; } };   // (tests)
@@ -5835,7 +6045,8 @@ function showEraserDot(e, entry) {
 function hideEraserDot() { if (eraserDot) eraserDot.hidden = true; }
 
 function startNav(e) {
-  GS = { kind: 'nav', id: e.pointerId, x: e.clientX, y: e.clientY, t0: now(), zx: Z.x, zy: Z.y, moved: false };
+  if (SC.mom || SC.anim) scrollStop();
+  GS = { kind: 'nav', id: e.pointerId, x: e.clientX, y: e.clientY, t0: now(), zx: Z.x, zy: Z.y, moved: false, vs: [] };
   // a finger held still on a page (notebooks and markings): copy, paste and the like
   if (e.pointerType === 'touch' && (V.inking || NBK()) && !V.perform && entryAt(e.clientX, e.clientY)) {
     const g = GS;
@@ -5966,6 +6177,12 @@ window.addEventListener('pointermove', (e) => {
   if (GS.kind === 'nav' && GS.id === e.pointerId) {
     const dx = e.clientX - GS.x, dy = e.clientY - GS.y;
     if (Math.hypot(dx, dy) > 8) { GS.moved = true; clearTimeout(GS.holdT); }
+    if (scrollReady() && GS.moved) {
+      // (pages one under the other: one finger moves the column)
+      if (Z.s > 1.001) Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom();
+      GS.vs.push([now(), Z.y]); if (GS.vs.length > 8) GS.vs.shift();
+      return;
+    }
     if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
   }
 });
@@ -5974,8 +6191,8 @@ function pinchApply(g) {
   const s = g.base.s * (d / g.d0);
   // zoom about the first centre, then follow the fingers (two-finger pan)
   // (a notebook page snaps to 100% when close to it, without moving)
-  setZoomAt(NBPAN() && Math.abs(s - 1) < 0.04 ? 1 : s, g.cx0, g.cy0, g.base);
-  if (Z.s !== 1 || NBPAN()) { Z.x += cx - g.cx0; Z.y += cy - g.cy0; applyZoom(); }
+  setZoomAt((NBPAN() || scrollReady()) && Math.abs(s - 1) < 0.04 ? 1 : s, g.cx0, g.cy0, g.base);
+  if (Z.s !== 1 || NBPAN() || scrollReady()) { Z.x += cx - g.cx0; Z.y += cy - g.cy0; applyZoom(); }
 }
 function pointerEnd(e) {
   if (e.target && e.target.closest && e.target.closest('.tour')) { PT.delete(e.pointerId); return; }   // taps on a tour are for the tour
@@ -5994,7 +6211,7 @@ function pointerEnd(e) {
       // a quick two-finger swipe without zooming turns the page (in a notebook, where two fingers
       // also move the page, only a quick, clearly sideways one)
       const nbp = NBPAN();
-      if ((nbp ? g.base.s === 1 : Z.s === 1) && Math.abs(g.lastDs - 1) < 0.08 && Math.abs(g.lastDx || 0) > (nbp ? 140 : 90) && now() - g.t0 < (nbp ? 450 : 700) && (!nbp || Math.abs(g.lastDy || 0) < Math.abs(g.lastDx) * 0.5)) turn(g.lastDx < 0 ? 1 : -1);
+      if (!scrollReady() && (nbp ? g.base.s === 1 : Z.s === 1) && Math.abs(g.lastDs - 1) < 0.08 && Math.abs(g.lastDx || 0) > (nbp ? 140 : 90) && now() - g.t0 < (nbp ? 450 : 700) && (!nbp || Math.abs(g.lastDy || 0) < Math.abs(g.lastDx) * 0.5)) turn(g.lastDx < 0 ? 1 : -1);
     }
     return;
   }
@@ -6006,6 +6223,13 @@ function pointerEnd(e) {
     if (!p || p.palm || e.type === 'pointercancel') return;
     if (penDown || (V.inking && now() - lastPenUp < 500)) return;   // the Pencil came down meanwhile: it was the hand
     const dx = e.clientX - g.x, dy = e.clientY - g.y, dt = now() - g.t0;
+    if (scrollReady() && g.moved) {
+      // let go: it runs on as fast as it was moving
+      const vs = g.vs.filter((q) => now() - q[0] < 90);
+      const v = vs.length >= 2 ? (vs[vs.length - 1][1] - vs[0][1]) / Math.max(8, vs[vs.length - 1][0] - vs[0][0]) : 0;
+      scrollMomentum(clamp(v, -6, 6));
+      return;
+    }
     if (Z.s !== 1) {
       if (g.moved) { scheduleSharpen(); return; }
     } else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3 && dt < 800) { turn(dx < 0 ? 1 : -1); return; }
@@ -6031,7 +6255,8 @@ function pointerEnd(e) {
     if (V.perform) { if (e.clientX > w * 0.5) turn(1); else turn(-1); return; }
     if (lastTap && now() - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40 && e.clientX > w * 0.32 && e.clientX < w * 0.68) {
       lastTap = null;
-      if (Z.s !== 1) { Z.s = 1; if (NBPAN()) { Z.x = 0; Z.y = 0; } applyZoom(); } else setZoomAt(2.2, e.clientX, e.clientY, { s: 1, x: Z.x, y: Z.y });
+      if (Z.s !== 1 && scrollReady()) setZoomAt(1, e.clientX, e.clientY, { s: Z.s, x: Z.x, y: Z.y });
+      else if (Z.s !== 1) { Z.s = 1; if (NBPAN()) { Z.x = 0; Z.y = 0; } applyZoom(); } else setZoomAt(2.2, e.clientX, e.clientY, { s: 1, x: Z.x, y: Z.y });
       scheduleSharpen(); return;
     }
     lastTap = { t: now(), x: e.clientX, y: e.clientY };
@@ -6695,6 +6920,16 @@ function fillScoreSettings() {
   $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || ''; META_FOR.id = V.score.id;
   $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#landscapeLock').checked = !!S.landscapeLock; $('#turnScore').checked = !!S.turnScore; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
   renderBookmarks(); renderJumps(); $('#paperTools').hidden = !(V.file && V.file.kind === 'paper');
+  // a notebook: the same panel, with what belongs to a notebook (the printed-score things left out)
+  { const nb = NBK();
+    $('#setTitle').textContent = tr(nb ? 'This notebook' : 'This score');
+    $('#metaComposerLbl').textContent = tr(nb ? 'Subtitle' : 'Composer');
+    $('#delScoreLbl').textContent = tr(nb ? 'Delete notebook' : 'Delete score');
+    $('#delScoreAsk').textContent = tr(nb ? 'Delete this notebook with everything in it?' : 'Delete this score with its markings and recordings?');
+    for (const id of ['#halfTurn', '#duoBtn', '#trimMargins']) { const r = $(id) && $(id).closest('.set-row'); if (r) r.hidden = nb; }
+    const jd = $('#jumpList') && $('#jumpList').closest('details'); if (jd) jd.hidden = nb;
+    const pb = $('#pagesBtn'); if (pb) pb.closest('.row-even').hidden = nb;   // (Pages and Export are on the notebook's own bar)
+  }
   syncViewSeg();
   $('#bmCount').textContent = (V.score.bookmarks || []).length || '';
   $('#jumpCount').textContent = (V.score.jumps || []).length || '';

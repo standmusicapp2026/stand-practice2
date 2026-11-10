@@ -2180,3 +2180,8 @@ body.phone .lg-prev-side { width: 100%; }
 .ruler-kinds .rk-close { min-width: 44px; justify-content: center; color: var(--muted); border-left: 1px solid var(--line); border-radius: 0 13px 13px 0; margin-left: 4px; }
 .ruler-kinds .rk-close svg { width: 20px; height: 20px; }
 body.phone .ruler-kinds button { min-width: 54px; font-size: 10px; }
+body.ruler-away .ruler, body.ruler-away .ruler-kinds { display: none; }
+/* pages one under the other (Scroll down) */
+.spread.scroll-col { flex-direction: column; justify-content: flex-start; align-items: center; gap: 14px; padding: 10px 0 14px; flex: none; }
+.spread.scroll-col .pg { flex: none; }
+.flow-seg { margin-bottom: 4px; }
