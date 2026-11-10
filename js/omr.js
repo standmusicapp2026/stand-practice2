@@ -2721,6 +2721,9 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       bars: s.bars.map((b) => ({ ...b, x: back(b.x, (s.top + s.bottom) / 2)[0], w: b.w / f })),
       signs: (s.signs || []).map((g) => ({ ...g, x: back(g.x, (s.top + s.bottom) / 2)[0], x1: back(g.x1, (s.top + s.bottom) / 2)[0] })), explicitClef: !!s.explicitClef,
       startX: back(s.startX, s.top)[0],
+      // (where the top and bottom lines are along the staff, every few points: a page that is a little
+      // turned or curved, as a scan often is, can be laid straight)
+      edge: Array.from({ length: Math.max(2, Math.ceil((s.x1 - s.x0) / 12) + 1) }, (_, i) => { const x = Math.min(s.x1, s.x0 + i * 12); const [X, yT] = back(x, yAt(s, 8, x)), [, yB] = back(x, yAt(s, 0, x)); return [Math.round(X * 10) / 10, Math.round(yT * 10) / 10, Math.round(yB * 10) / 10]; }),
       path: dbg ? Array.from({ length: Math.ceil((s.x1 - s.x0) / 20) + 1 }, (_, i) => { const x = Math.min(s.x1, s.x0 + i * 20); return [0, 2, 4, 6, 8].map((p) => back(x, yAt(s, p, x))); }) : undefined,
       _: dbg ? s : undefined,
     };

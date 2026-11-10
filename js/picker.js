@@ -15,7 +15,7 @@ const PK = { picks: new Map(), doc: null, page: 0, resolve: null, box: null, pts
 
 export function pickRegion(src, file, opts = {}) {
   return new Promise(async (resolve) => {
-    PK.resolve = resolve; PK.box = null; PK.opts = opts; PK.picks = new Map();
+    PK.resolve = resolve; PK.box = null; PK.opts = opts; PK.picks = new Map(); PK.long = opts.long || 2600;
     $('#picker').hidden = false; $('#pkDone').disabled = true;
     $('#pkTitle').textContent = opts.title || 'Choose the music';
     $('#pkDone').textContent = opts.done || 'Use this';
@@ -359,7 +359,7 @@ async function linesOut() {
     const lines = page === PK.page ? PK.lines : PK.linesCache.get(key);
     if (!lines) continue;
     const [pw, ph] = PK.doc.sizes[page];
-    const scale = outScale ? outScale * (PK.doc.sizes[pages[0]][0] / pw) : Math.min(4, Math.max(1.6, 2600 / pw));
+    const scale = outScale ? outScale * (PK.doc.sizes[pages[0]][0] / pw) : Math.min(PK.long > 2600 ? 6 : 4, Math.max(1.6, (PK.long || 2600) / pw));
     if (!outScale) outScale = scale;
     const full = document.createElement('canvas');
     await PK.doc.render(page, full, pw * scale, ph * scale);
@@ -497,7 +497,7 @@ async function cropOut() {
   const b = PK.box;
   const [pw, ph] = PK.doc.sizes[PK.page];
   // render the page big enough that the staff lines are about 14-20 px apart
-  const scale = Math.min(4, Math.max(1.6, 2600 / pw));
+  const scale = Math.min(PK.long > 2600 ? 6 : 4, Math.max(1.6, (PK.long || 2600) / pw));
   const full = document.createElement('canvas');
   await PK.doc.render(PK.page, full, pw * scale, ph * scale);
   const x = Math.floor(b.x0 * full.width), y = Math.floor(b.y0 * full.height);

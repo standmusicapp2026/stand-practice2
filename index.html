@@ -201,7 +201,7 @@
         <button class="tile" data-panel="scales" data-tile="scales"><svg><use href="#i-scales"/></svg><span>Scales</span></button>
         <button class="tile" data-panel="study" data-tile="study"><svg><use href="#i-passage"/></svg><span>Passages</span></button>
         <button class="tile" data-panel="reps" data-tile="reps"><svg><use href="#i-reps"/></svg><span>Repetitions</span></button>
-        <button class="tile" data-panel="pomodoro" data-tile="pomodoro"><svg><use href="#i-timer"/></svg><span>Practice timer</span></button>
+        <button class="tile" data-panel="pomodoro" data-tile="pomodoro"><svg><use href="#i-timer"/></svg><span>Timer</span></button>
       </div></div>
       <div class="tgroup" data-group="make"><span class="tg-label">Record and write</span><div class="tg-row">
         <button class="tile rec" data-panel="record" data-tile="record"><span class="rec-dot"></span><span>Record</span></button>
@@ -901,13 +901,15 @@
         <input type="range" id="revAmt" min="0" max="100" value="18" aria-label="Reverb amount">
       </div>
       <section class="cut-box" id="cutBox">
-        <div class="ctl-head"><span>Cut</span><span class="num" id="cutRange">Select a part of the waveform</span></div>
+        <div class="ctl-head"><span>Trim</span><span class="num" id="cutRange"></span></div>
+        <div id="trimHost"></div>
+        <p class="hint" id="trimHint">Drag the ends. Hold one still to place it to the moment.</p>
         <div class="row-2">
-          <button class="btn" id="cutKeep" disabled>Keep only the selection</button>
-          <button class="btn" id="cutRemove" disabled>Remove the selection</button>
+          <button class="btn primary" id="cutKeep" disabled>Keep this part</button>
+          <button class="btn" id="cutRemove" disabled>Remove this part</button>
         </div>
         <div class="cut-progress" id="cutProgress" hidden><i></i><span class="num" id="cutPct">0%</span></div>
-        <p class="hint">Makes a new recording. The original stays as it is. Videos are cut in real time, so a long cut takes as long as it plays.</p>
+        <p class="hint">Makes a new recording. The original stays as it is.</p>
       </section>
       <label class="check"><input type="checkbox" id="autoLevel" checked> Bring quiet recordings up to a good level</label>
       <button class="btn primary st-open" id="studioBtn"><svg><use href="#i-studio"/></svg><span>Studio</span><small>Put the score on your video, edit and share</small></button>

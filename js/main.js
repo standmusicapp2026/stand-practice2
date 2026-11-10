@@ -33,9 +33,10 @@ import { placeWords } from './textplace.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks } from './imslp.js';
 import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
-import { findMarks, resolveMarks, metroFor } from './tempo.js';
+import { findMarks, resolveMarks, metroFor, noteOfMark } from './tempo.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio, cutVideoNative } from './studio.js';
+import { createTrimmer } from './trimmer.js';
 import { CameraHost, CameraPhone, directWatch, nlog, directSendFile, PAIR, pairWatch, pairList } from './link.js';
 import { openPair, drawLinked, linkedCount } from './pair.js';
 import { PageFollower } from './follow.js';
@@ -2006,7 +2007,7 @@ const OCRWAIT = new Map();
 const TEMPO_WORDS = ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Vivo', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft', 'Più mosso', 'Meno mosso', 'Tempo I', 'Tempo primo', 'a tempo', 'Animato', 'Doppio movimento', 'Sarabande', 'Allemande', 'Courante', 'Menuet', 'Gigue'];
 function pageWords(i) { return pageWordsOf(V.doc, i, TEMPO_WORDS); }
 // the words of a page of any score (and where they are, as parts of the page)
-async function pageWordsOf(doc, i, words = [], { plain = false, width = 1500, canvas = null } = {}) {
+async function pageWordsOf(doc, i, words = [], { plain = false, width = 1500, canvas = null, out = null } = {}) {
   if (!doc) return [];
   // 1. the words in the PDF (exact, and at once)
   try {
@@ -2041,7 +2042,9 @@ async function pageWordsOf(doc, i, words = [], { plain = false, width = 1500, ca
       rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words, lines: true, ...(plain ? { plain: true } : {}) });
     });
   }
-  if (!canvas) c.width = c.height = 0;
+  // (read off the picture: the picture is handed back when asked for, to look closer at a mark)
+  if (out) { out.ocr = true; if (!canvas) out.canvas = c; }
+  else if (!canvas) c.width = c.height = 0;
   return (got || []).filter((l) => l && l.s && (l.c ?? 1) >= 0.3).map((l) => ({ s: String(l.s), x: l.x, y: l.y, w: l.w, h: l.h }));
 }
 // the marks of a page if it was read before (or null)
@@ -2064,7 +2067,21 @@ async function tempoMarksOf(i) {
   if (kept[key]) return kept[key];
   const rk = fk + '|' + key;
   if (!TEMPO.reading.has(rk)) TEMPO.reading.set(rk, (async () => {
-    const marks = findMarks(await pageWords(i));
+    const out = {};
+    let marks = findMarks(await pageWordsOf(V.doc, i, TEMPO_WORDS, { width: 2000, out }));
+    if (out.ocr && out.canvas) {
+      try {
+        // (read once more, as printed, when no number was found: "J = 132" taken for words otherwise)
+        if (!marks.some((m) => m.exact)) {
+          const more = findMarks(await pageWordsOf(V.doc, i, [], { canvas: out.canvas, plain: true }));
+          for (const m of more) if (m.exact && !marks.some((o) => Math.abs(o.y - m.y) < 0.02 && Math.abs(o.x - m.x) < 0.1)) marks.push(m);
+          marks = marks.filter((m) => !(m.rel === undefined && !m.exact && more.some((o) => o.exact && Math.abs(o.y - m.y) < 0.02 && Math.abs(o.x - m.x) < 0.15)));
+        }
+        // the note a number counts, as drawn (the reader only guesses it: a half note read as a "J")
+        for (const m of marks) if (m.exact) { const u = noteOfMark(out.canvas, m); if (u) m.unit = u; }
+      } catch (e) { console.warn(e); }
+      out.canvas.width = out.canvas.height = 0;
+    }
     kept[key] = marks; setSetting(fk, kept).catch(() => {});
     return marks;
   })().finally(() => TEMPO.reading.delete(rk)));
@@ -4474,6 +4491,32 @@ function palColour(c, P) {
   const [r, g, b] = hexRgb(hex).map((x) => Math.round(x * 255)); return `rgba(${r},${g},${b},${a})`;
 }
 const PAL_KEYS = ['f', 'c', 'c2', 'lc', 'bg', 'g2', 'sc', 'oc', 'hc'];
+// The type of a layout, in families that go together (as a design app's themes): headings and text
+// set in one pair of typefaces. "As designed" leaves each layout as it was drawn.
+const LAY_FONTS = [
+  { k: 'design', label: 'As designed', head: null, body: null },
+  { k: 'modern', label: 'Modern', head: 'avenir', hb: 1, body: 'sans', small: 'futura' },
+  { k: 'classic', label: 'Classic', head: 'baskerville', hb: 0, body: 'hoefler', small: 'gill' },
+  { k: 'elegant', label: 'Elegant', head: 'bodoni', hb: 0, hi: 1, body: 'hoefler', small: 'gill' },
+  { k: 'bold', label: 'Bold', head: 'condensed', hb: 1, caps: 1, body: 'avenir', small: 'futura' },
+  { k: 'friendly', label: 'Friendly', head: 'round', hb: 1, body: 'avenir', small: 'round' },
+  { k: 'handwritten', label: 'Handwritten', head: 'script', hb: 0, body: 'note', small: 'hand' },
+];
+let layFont = (() => { try { return localStorage.getItem('standLayFont') || 'design'; } catch { return 'design'; } })();
+const SCRIPTY = new Set(['script', 'savoye', 'zapfino', 'party', 'hand', 'note', 'marker', 'chalk', 'chalkdust']);
+function inFonts(items, k = layFont, land = false) {
+  const F = LAY_FONTS.find((q) => q.k === k); if (!F || !F.head) return items;
+  return items.map((it) => {
+    if (it.t !== 'tb') return it;
+    const o = { ...it };
+    // (what a box is: a heading (big), a small label in spaced capitals, or text)
+    const spacedCaps = o.caps && (o.ls || 0) > 0.1, big = (o.fs || 0) >= 0.028 || SCRIPTY.has(o.ff) && (o.fs || 0) >= 0.024;
+    if (spacedCaps) o.ff = F.small;
+    else if (big) { o.ff = F.head; o.b = F.hb; o.i = F.hi || 0; if (F.caps && (o.fs || 0) >= 0.04) o.caps = 1; }
+    else o.ff = F.body;
+    return land ? measureTextBox(o, 1414, 1000) : measureTextBox(o);
+  });
+}
 function inPalette(items, k = layPal) {
   const P0 = LAY_PALS.find((q) => q.k === k); if (!P0 || k === 'cream') return items;
   // (a layout made on dark paper stays dark: only its colours move; a light one turns dark for
@@ -4506,32 +4549,141 @@ let layCat = 'concert';
     pals.append(b);
   }
   const pn = el('div', 'lay-pal-name'); pn.id = 'layPalName'; pn.textContent = (LAY_PALS.find((q) => q.k === layPal) || LAY_PALS[0]).label;
-  g.before(pals, pn);
+  // (all of them, big, with their colours and type: the gallery)
+  const all = el('button', 'btn lay-all'); all.id = 'layAll'; all.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="9" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.5"/></svg>';
+  all.append(el('span', '', 'All layouts, colours and type')); all.addEventListener('click', openLayGallery);
+  g.before(all, pals, pn);
   for (const L of LAYOUTS) {
     const b = el('button', 'ins-layout' + (L.land ? ' land' : '')); const c = el('canvas'); c.width = L.land ? 283 : 200; c.height = L.land ? 200 : 283; b.append(c, el('span', '', L.label));
     b.dataset.cat = L.cat || 'practice'; b.hidden = b.dataset.cat !== layCat;
-    b.addEventListener('click', async () => {
-      const items = inPalette(L.make());
-      const bg = items.filter((x) => x.t === 'bg'), rest = items.filter((x) => x.t !== 'bg');
-      closeInkPops(); clearSelection();
-      // in a notebook: a new page of its own (sideways when the layout is); elsewhere, on the page
-      if (NBK()) {
-        await addPaperPage('plain', { land: !!L.land, items: [...bg.map((x) => ({ c2: '', pat: '', ...x })), ...rest], quiet: true });
-        if (!V.inking) setInking(true);
-        inkHint(L.label + ': a new page. Tap anything to change it.', 2800);
-        return;
-      }
-      addItems(rest, false);
-      if (bg.length) setBackground(bg[0]);
-      inkHint('Layout added. Tap anything to change it.', 2600);
-    });
+    b.addEventListener('click', () => useLayout(L));
     g.append(b);
   }
 })();
-globalThis.__layouts = LAYOUTS; globalThis.__inPalette = inPalette;
+// a layout put to use: in a notebook a new page of its own (sideways when the layout is); elsewhere,
+// on the page shown — in the colours and type chosen
+async function useLayout(L) {
+  const items = inFonts(inPalette(L.make()), layFont, !!L.land);
+  const bg = items.filter((x) => x.t === 'bg'), rest = items.filter((x) => x.t !== 'bg');
+  closeInkPops(); clearSelection();
+  try { const r = JSON.parse(localStorage.getItem('standLayRecent') || '[]').filter((k) => k !== L.k); r.unshift(L.k); localStorage.setItem('standLayRecent', JSON.stringify(r.slice(0, 12))); } catch {}
+  if (NBK()) {
+    await addPaperPage('plain', { land: !!L.land, items: [...bg.map((x) => ({ c2: '', pat: '', ...x })), ...rest], quiet: true });
+    if (!V.inking) setInking(true);
+    inkHint(tr(L.label) + ': ' + tr('a new page. Tap anything to change it.'), 2800);
+    return;
+  }
+  addItems(rest, false);
+  if (bg.length) setBackground(bg[0]);
+  inkHint('Layout added. Tap anything to change it.', 2600);
+}
+// ---------- the gallery: every layout, big, in sections; its colours and its type for all of them ----------
+const LG = { cat: 'all', q: '', built: false, io: null };
+const lgGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || d); } catch { return JSON.parse(d); } };
+function drawLayoutInto(c, L) {
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  for (const it0 of inFonts(inPalette(L.make()), layFont, !!L.land)) {
+    const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { t: 'shape', k: it0.mask || (it0.rr ? 'round' : 'rect'), x: it0.x, y: it0.y, w: it0.w, h: it0.h, rot: it0.rot, f: '#d9c7b4', g: 1, g2: '#8fa7bd', a: 1 } : it0;
+    drawItem(g, it, c.width, c.height, false);
+  }
+  c.dataset.drawn = layPal + '|' + layFont;
+}
+function lgList() {
+  const fav = new Set(lgGet('standLayFav', '[]')), rec = lgGet('standLayRecent', '[]');
+  const q = LG.q.trim().toLowerCase();
+  let list = LG.cat === 'fav' ? LAYOUTS.filter((L) => fav.has(L.k)) : LG.cat === 'recent' ? rec.map((k) => LAYOUTS.find((L) => L.k === k)).filter(Boolean) : LG.cat === 'all' ? LAYOUTS : LAYOUTS.filter((L) => (L.cat || 'practice') === LG.cat);
+  if (q) list = LAYOUTS.filter((L) => (tr(L.label) + ' ' + L.label + ' ' + (L.cat || '')).toLowerCase().includes(q));
+  return { list, fav };
+}
+function lgRender() {
+  const grid = $('#lgGrid'); grid.textContent = '';
+  const { list, fav } = lgList();
+  $('#lgEmpty').hidden = list.length > 0;
+  $('#lgEmpty').textContent = LG.cat === 'fav' ? tr('Tap the star on a layout to keep it here.') : LG.cat === 'recent' ? tr('The layouts you use show here.') : tr('No layout with that name.');
+  if (LG.io) LG.io.disconnect();
+  LG.io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { const c = e.target, L = LAYOUTS.find((x) => x.k === c.dataset.k); if (L && c.dataset.drawn !== layPal + '|' + layFont) loadMusicFont().then(() => drawLayoutInto(c, L)); } }, { root: $('#lgMain'), rootMargin: '300px' });
+  for (const L of list) {
+    const card = el('div', 'lg-card' + (L.land ? ' land' : '')); card.setAttribute('role', 'button'); card.tabIndex = 0;
+    const c = el('canvas'); c.width = L.land ? 566 : 400; c.height = L.land ? 400 : 566; c.dataset.k = L.k;
+    const star = el('button', 'lg-star' + (fav.has(L.k) ? ' on' : '')); star.setAttribute('aria-label', 'Favourite');
+    star.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/></svg>';
+    star.addEventListener('click', (e) => { e.stopPropagation(); const f = new Set(lgGet('standLayFav', '[]')); if (f.has(L.k)) f.delete(L.k); else f.add(L.k); try { localStorage.setItem('standLayFav', JSON.stringify([...f])); } catch {} star.classList.toggle('on', f.has(L.k)); lgCounts(); if (LG.cat === 'fav') lgRender(); });
+    const cap = el('div', 'lg-cap'); cap.append(el('b', '', L.label), el('small', '', (LAYOUT_CATS.find(([id]) => id === (L.cat || 'practice')) || ['', ''])[1] + (L.land ? ' · ' + tr('sideways') : '')));
+    card.append(c, star, cap);
+    card.addEventListener('click', () => lgPreview(L));
+    grid.append(card); LG.io.observe(c);
+  }
+  translatePage();
+}
+function lgCounts() {
+  const fav = lgGet('standLayFav', '[]'), rec = lgGet('standLayRecent', '[]');
+  const n = { all: LAYOUTS.length, fav: fav.length, recent: rec.length };
+  for (const [id] of LAYOUT_CATS) n[id] = LAYOUTS.filter((L) => (L.cat || 'practice') === id).length;
+  $$('#lgCats button').forEach((b) => { const i = b.querySelector('i'); if (i) i.textContent = n[b.dataset.cat] ?? ''; });
+}
+function lgThemeChanged() {
+  try { localStorage.setItem('standLayPal', layPal); localStorage.setItem('standLayFont', layFont); } catch {}
+  $$('#lgPals button').forEach((x) => x.classList.toggle('on', x.dataset.k === layPal));
+  $$('#lgFonts button').forEach((x) => x.classList.toggle('on', x.dataset.k === layFont));
+  $$('.lay-pals button').forEach((x, i) => x.classList.toggle('on', LAY_PALS[i] && LAY_PALS[i].k === layPal));
+  const pn = $('#layPalName'); if (pn) pn.textContent = (LAY_PALS.find((q) => q.k === layPal) || LAY_PALS[0]).label;
+  // (the pictures on show drawn again at once, the others when they come into view)
+  loadMusicFont().then(() => { const r = $('#lgMain').getBoundingClientRect(); $$('#lgGrid canvas').forEach((c) => { const b = c.getBoundingClientRect(); if (b.bottom > r.top - 300 && b.top < r.bottom + 300) drawLayoutInto(c, LAYOUTS.find((x) => x.k === c.dataset.k)); }); });
+  if (!$('#lgPrev').hidden && LG.prev) drawLayoutInto($('#lgPrevC'), LG.prev);
+  drawLayoutThumbs();
+}
+function lgPreview(L) {
+  LG.prev = L;
+  const c = $('#lgPrevC'); c.width = L.land ? 1414 : 1000; c.height = L.land ? 1000 : 1414; c.classList.toggle('land', !!L.land);
+  $('#lgPrevName').textContent = L.label; $('#lgPrev').hidden = false;
+  loadMusicFont().then(() => drawLayoutInto(c, L));
+  $('#lgUse').textContent = NBK() ? tr('Add as a new page') : tr('Put it on this page');
+  translatePage();
+}
+function buildLayGallery() {
+  if (LG.built) return; LG.built = true;
+  const g = el('div', 'lg'); g.id = 'layGal'; g.hidden = true;
+  g.innerHTML = `<div class="lg-head"><button class="icon-btn" id="lgClose" aria-label="Close"><svg><use href="#i-close"/></svg></button><div class="lg-ht"><h2>Layouts</h2><small>Ready-made pages. Choose the colours and the type for all of them, then tap one.</small></div><input id="lgSearch" type="search" placeholder="Search layouts" autocomplete="off"></div>
+    <div class="lg-body"><nav class="lg-cats" id="lgCats"></nav><div class="lg-main" id="lgMain">
+      <div class="lg-theme"><div class="lg-row"><span class="lg-lab">Colours</span><div class="lg-pals" id="lgPals"></div></div><div class="lg-row"><span class="lg-lab">Type</span><div class="lg-fonts" id="lgFonts"></div></div></div>
+      <div class="lg-grid" id="lgGrid"></div><p class="hint lg-empty" id="lgEmpty" hidden></p></div></div>
+    <div class="lg-prev" id="lgPrev" hidden><div class="lg-prev-card"><canvas id="lgPrevC"></canvas><div class="lg-prev-side"><b id="lgPrevName"></b><p class="hint">Everything on it can be changed: tap a word to write your own, a photo place to choose a photo.</p><button class="btn primary" id="lgUse">Add as a new page</button><button class="btn" id="lgPrevClose">Back to the layouts</button></div></div></div>`;
+  document.body.append(g);
+  const cats = $('#lgCats');
+  for (const [id, label, icon] of [['all', 'All layouts', '◻︎'], ...LAYOUT_CATS.map(([a, b]) => [a, b]), ['fav', 'Favourites'], ['recent', 'Recent']]) {
+    const b = el('button', id === LG.cat ? 'on' : ''); b.dataset.cat = id; b.append(el('span', '', label), el('i'));
+    b.addEventListener('click', () => { LG.cat = id; LG.q = ''; $('#lgSearch').value = ''; $$('#lgCats button').forEach((x) => x.classList.toggle('on', x === b)); lgRender(); $('#lgMain').scrollTop = 0; });
+    cats.append(b); void icon;
+  }
+  for (const P of LAY_PALS) {
+    const b = el('button', P.k === layPal ? 'on' : ''); b.dataset.k = P.k; b.setAttribute('aria-label', P.label);
+    const sw = el('i'); sw.style.background = `linear-gradient(135deg, ${P.sw[0]} 0 55%, ${P.sw[1]} 55% 100%)`;
+    b.append(sw, el('span', '', P.label));
+    b.addEventListener('click', () => { layPal = P.k; lgThemeChanged(); });
+    $('#lgPals').append(b);
+  }
+  for (const F of LAY_FONTS) {
+    const b = el('button', F.k === layFont ? 'on' : ''); b.dataset.k = F.k;
+    const aa = el('b', '', 'Aa'); aa.setAttribute('translate', 'no');
+    const ff = FONTS[F.head || 'display']; if (ff) aa.style.fontFamily = ff.css;
+    b.append(aa, el('span', '', F.label));
+    b.addEventListener('click', () => { layFont = F.k; lgThemeChanged(); });
+    $('#lgFonts').append(b);
+  }
+  $('#lgClose').addEventListener('click', () => { g.hidden = true; });
+  $('#lgSearch').addEventListener('input', (e) => { LG.q = e.target.value; lgRender(); });
+  $('#lgPrevClose').addEventListener('click', () => { $('#lgPrev').hidden = true; });
+  $('#lgPrev').addEventListener('click', (e) => { if (e.target.id === 'lgPrev') $('#lgPrev').hidden = true; });
+  $('#lgUse').addEventListener('click', async () => { const L = LG.prev; $('#lgPrev').hidden = true; g.hidden = true; if (L) await useLayout(L); });
+}
+function openLayGallery() {
+  buildLayGallery(); closeInkPops();
+  $('#layGal').hidden = false; lgCounts(); lgRender(); translatePage();
+}
+globalThis.__layouts = LAYOUTS; globalThis.__inPalette = inPalette; globalThis.__layGallery = openLayGallery;
 async function drawLayoutThumbs() {
   await loadMusicFont();
-  $$('#insLayouts canvas').forEach((c, i) => { const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it0 of inPalette(LAYOUTS[i].make())) {
+  $$('#insLayouts canvas').forEach((c, i) => { const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it0 of inFonts(inPalette(LAYOUTS[i].make()), layFont, !!LAYOUTS[i].land)) {
     // empty photo places show as a soft picture in the little previews
     const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { t: 'shape', k: it0.mask || (it0.rr ? 'round' : 'rect'), x: it0.x, y: it0.y, w: it0.w, h: it0.h, rot: it0.rot, f: '#d9c7b4', g: 1, g2: '#8fa7bd', a: 1 } : it0;
     drawItem(g, it, c.width, c.height, false);
@@ -9256,6 +9408,7 @@ async function selectTake(id) {
   syncPlayerControls();
   refreshTakes();
   requestAnimationFrame(drawWave);
+  makeTrimmer(t);
 }
 function syncPlayerControls() {
   const sp = Math.round(player.rate * 100);
@@ -9267,18 +9420,34 @@ function syncPlayerControls() {
   $('#autoLevel').checked = player.autoLevel;
 }
 // ---------- cutting a recording ----------
+// the trimmer (as in Photos): the part kept, between its two handles
+let TRIM = null;
+function makeTrimmer(t) {
+  if (TRIM) { TRIM.destroy(); TRIM = null; }
+  const dur = player.duration || t.dur || 0;
+  $('#cutBox').hidden = !(dur > 0.5) || nativeVideo;
+  if (!(dur > 0.5) || nativeVideo) return;
+  TRIM = createTrimmer($('#trimHost'), {
+    dur, videoUrl: t.kind === 'video' ? videoURL : null, peaks: t.peaks || null,
+    onSeek: (x) => { try { player.seek(x); } catch {} },
+    onChange: () => syncCut(), onEnd: () => syncCut(),
+  });
+  syncCut();
+}
+const trimSel = () => (TRIM ? { a: TRIM.a, b: TRIM.b } : { a: 0, b: player.duration || 0 });
 function syncCut() {
-  const ok = !!currentTake && player.loop && player.b - player.a > 0.2 && !nativeVideo && !cutting;
+  const dur = player.duration || 0, { a, b } = trimSel();
+  const trimmed = a > 0.05 || b < dur - 0.05;
+  const ok = !!currentTake && trimmed && b - a > 0.2 && !nativeVideo && !cutting;
   $('#cutKeep').disabled = !ok; $('#cutRemove').disabled = !ok;
-  $('#cutRange').textContent = player.loop && player.b > player.a
-    ? `${fmtTime(player.a, true)} – ${fmtTime(player.b, true)} · ${(player.b - player.a).toFixed(1)} s`
-    : 'Select a part of the waveform';
+  $('#cutRange').textContent = `${fmtTime(a, true)} – ${fmtTime(b, true)} · ${(b - a).toFixed(1)} s`;
+  if (TRIM) TRIM.head(player.currentPos ? player.currentPos() : 0);
 }
 let cutting = false;
 async function cutTake(mode) {
   const t = currentTake;
-  if (!t || cutting || !(player.b > player.a)) return;
-  const a = player.a, b = player.b, dur = player.duration;
+  const { a, b } = trimSel(), dur = player.duration;
+  if (!t || cutting || !(b > a)) return;
   const segs = segmentsFor(dur, a, b, mode);
   if (!segs.length || segmentsLength(segs) < 0.2) { toast('Nothing left to keep.'); return; }
   cutting = true; syncCut();
@@ -9580,7 +9749,7 @@ $('#shareBtn').addEventListener('click', exportTake);
 
 const wave = $('#wave');
 let waveRaf = 0;
-function animateWave() { cancelAnimationFrame(waveRaf); const f = () => { drawWave(); player.syncVideo(); if (player.playing) waveRaf = requestAnimationFrame(f); }; f(); }
+function animateWave() { cancelAnimationFrame(waveRaf); const f = () => { drawWave(); player.syncVideo(); if (TRIM) TRIM.head(player.currentPos()); if (player.playing) waveRaf = requestAnimationFrame(f); }; f(); }
 function drawWave() {
   if (!currentTake || nativeVideo || wave.offsetParent === null) return;
   const dpr = devicePixelRatio || 1, W = wave.clientWidth, Hh = wave.clientHeight;

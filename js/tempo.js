@@ -194,17 +194,88 @@ export function metroFor(bpm, unit, meter) {
   const mm = String(meter || '4/4').match(/^(\d+)\/(\d+)/), beats = mm ? +mm[1] : 4, lower = mm ? +mm[2] : 4;
   const per = 4 / lower;                           // the metronome's beat, in quarters
   const compound = (lower === 8 || lower === 16) && beats % 3 === 0;
+  // The metronome counts the note the mark names, at the number printed: "𝅗𝅥 = 132" clicks 132 half
+  // notes (2/2), "♩. = 60" 60 dotted quarters, each in three — never a number other than the one on
+  // the page. (A whole bar keeps its length: 4/4 becomes 2/2, 6/8 becomes 2 beats of three.)
   if (unit === 1.5 || unit === 0.75 || unit === 3) {
-    // a dotted note: counted in threes. In a compound meter, its smaller notes; else 6/8 (or 6/4 for 𝅗𝅥.)
-    if (compound) { const v = Math.round(bpm * unit / per); if (v <= 280) return { bpm: v }; }
-    const lw = unit === 3 ? 4 : unit === 0.75 ? 16 : 8, v = Math.round(bpm * unit / (4 / lw));
-    if (v >= 20 && v <= 280) return { bpm: v, meter: (compound && lower === lw ? beats : 6) + '/' + lw };
-    return { bpm, meter: (compound ? beats / 3 : 2) + '/' + (unit === 3 ? 2 : unit === 0.75 ? 8 : 4), sub: 3 };
+    const lw = unit === 3 ? 2 : unit === 0.75 ? 8 : 4;
+    const nb = compound ? beats / 3 : Math.max(1, Math.round((beats * per) / unit));
+    return { bpm, meter: nb + '/' + lw, sub: 3 };
+  }
+  if (Math.abs(unit - per) < 1e-6) return { bpm };
+  if (unit === 2 || unit === 1) {
+    const lw = unit === 2 ? 2 : 4, nb = (beats * per) / unit;
+    if (Number.isInteger(nb) && nb >= 1 && nb <= (unit === 2 ? 4 : 7)) return { bpm, meter: nb + '/' + lw };
+  }
+  if (unit === 0.5 && lower === 4) {
+    // (eighth notes in a meter of quarters: the quarter beat, each in two, the eighths at the number printed)
+    const v = Math.round(bpm / 2); if (v >= 20) return { bpm: v, sub: 2 };
   }
   const v = Math.round(bpm * unit / per);
   if (v >= 20 && v <= 280) return { bpm: v };
-  // (too fast or slow to count that way: the meter counted in the mark's own note)
   const lw = unit === 2 ? 2 : unit === 0.5 ? 8 : unit === 0.25 ? 16 : 4;
   const nb = Math.max(1, Math.round(beats * per / unit));
   return { bpm, meter: nb + '/' + lw };
+}
+
+// The note drawn before the "=" of a metronome mark on a scanned page, looked at in the picture
+// (the reader only guesses at it: a half note read as "J", a dotted quarter as "J"): a hollow head is
+// a half note, a filled one a quarter, a flag makes it an eighth, a dot beside it makes it dotted.
+// `canvas` is the page as read, the mark its box (0..1). Returns the note in quarters, or null.
+export function noteOfMark(canvas, m) {
+  if (!canvas || !canvas.width || !m || !m.text) return null;
+  const eq = m.text.search(/=|＝/); if (eq < 1) return null;
+  const W = canvas.width, H = canvas.height;
+  const cw = (m.w * W) / Math.max(1, m.text.length);   // (about one character)
+  const xEq = m.x * W + cw * eq;
+  const x0 = Math.max(0, Math.round(xEq - cw * 3.2)), x1 = Math.min(W, Math.round(xEq - cw * 0.15));
+  const y0 = Math.max(0, Math.round(m.y * H - m.h * H * 0.9)), y1 = Math.min(H, Math.round((m.y + m.h * 1.5) * H));
+  const w = x1 - x0, h = y1 - y0; if (w < 4 || h < 6) return null;
+  const d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(x0, y0, w, h).data;
+  const ink = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) ink[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000 < 140 ? 1 : 0;
+  // the pieces of ink
+  const lab = new Int32Array(w * h).fill(-1), comps = [];
+  for (let i = 0; i < w * h; i++) {
+    if (!ink[i] || lab[i] >= 0) continue;
+    const st = [i]; lab[i] = comps.length; const c = { x0: w, y0: h, x1: 0, y1: 0, n: 0, px: [] };
+    while (st.length) {
+      const p = st.pop(), x = p % w, y = (p / w) | 0; c.n++; c.px.push(p);
+      if (x < c.x0) c.x0 = x; if (x > c.x1) c.x1 = x; if (y < c.y0) c.y0 = y; if (y > c.y1) c.y1 = y;
+      for (const q of [p - 1, p + 1, p - w, p + w, p - w - 1, p - w + 1, p + w - 1, p + w + 1]) {
+        if (q < 0 || q >= w * h || Math.abs((q % w) - x) > 1 || !ink[q] || lab[q] >= 0) continue;
+        lab[q] = comps.length; st.push(q);
+      }
+    }
+    comps.push(c);
+  }
+  // the note: the tallest piece (its stem), nearest the "="
+  const notes = comps.filter((c) => c.y1 - c.y0 > m.h * H * 0.7 && c.n > 6).sort((a, b) => b.x1 - a.x1);
+  const n = notes[0]; if (!n) return null;
+  const nh = n.y1 - n.y0 + 1;
+  // its head: the wider end (bottom, stem up; else top), the rows where it is wider than the stem
+  const rowW = (y) => { let a = -1, b = -1; for (let x = n.x0; x <= n.x1; x++) if (lab[y * w + x] === comps.indexOf(n)) { if (a < 0) a = x; b = x; } return a < 0 ? 0 : b - a + 1; };
+  const stem = Math.min(...Array.from({ length: nh }, (_, k) => rowW(n.y0 + k)).filter((v) => v > 0));
+  const low = [], high = [];
+  for (let k = 0; k < Math.round(nh * 0.4); k++) { low.push(n.y1 - k); high.push(n.y0 + k); }
+  const wide = (ys) => ys.filter((y) => rowW(y) > stem * 2.2);
+  const headRows = wide(low).length >= wide(high).length ? wide(low) : wide(high);
+  if (headRows.length < 2) return null;
+  // filled or hollow: the ink between the head's two sides, row by row
+  const id = comps.indexOf(n); let on = 0, all = 0;
+  for (const y of headRows) {
+    let a = -1, b = -1; for (let x = n.x0; x <= n.x1; x++) if (lab[y * w + x] === id) { if (a < 0) a = x; b = x; }
+    for (let x = a; x <= b; x++) { all++; if (ink[y * w + x]) on++; }
+  }
+  let unit = on / Math.max(1, all) < 0.8 ? 2 : 1;
+  // a flag: ink well to the side of the stem at its far end
+  if (unit === 1) {
+    const far = headRows[0] > (n.y0 + n.y1) / 2 ? n.y0 : n.y1, band = Math.max(2, Math.round(nh * 0.3));
+    let maxW = 0; for (let k = 0; k < band; k++) { const y = far === n.y0 ? n.y0 + k : n.y1 - k; maxW = Math.max(maxW, rowW(y)); }
+    if (maxW > stem * 2.5) unit = 0.5;
+  }
+  // a dot: a small round piece just after the head, at its height
+  const hy = headRows.reduce((p, q) => p + q, 0) / headRows.length, hx1 = n.x1;
+  const dot = comps.some((c) => c !== n && c.n >= 3 && c.x0 > hx1 && c.x0 - hx1 < nh * 0.6 && Math.abs((c.y0 + c.y1) / 2 - hy) < nh * 0.25 && c.x1 - c.x0 <= nh * 0.25 && c.y1 - c.y0 <= nh * 0.25);
+  return dot ? unit * 1.5 : unit;
 }

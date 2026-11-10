@@ -151,7 +151,9 @@ function close() {
 async function addScore(opt = {}) {
   const second = opt === true || !!(opt && opt.second);
   pause();
-  const region = await D.pickRegion(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video' });
+  // (drawn bigger than for the page: the music is shown large on the video, and must stay sharp)
+  const hi = /iPhone|iPod/.test(navigator.userAgent) ? 2600 : 3400;
+  const region = await D.pickRegion(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video', long: hi });
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
@@ -226,7 +228,8 @@ function jointOf(o) {
   J.toCommon = (x, pos, k) => { const q = x.layout.bars[k]; return J.cx[k] + clamp((pos - q.x0) / Math.max(1, q.x1 - q.x0), 0, 1) * J.cw[k]; };
   // where both are at time t, by the first line's bars (evenly through each bar: the page glides)
   const at = (t) => { const { b: k, f } = barAt(a, t); return k < 0 ? 0 : k >= n ? J.width : J.cx[k] + f * J.cw[k]; };
-  J.viewAt = (t) => { let s2 = 0; for (let k = -2; k <= 2; k++) s2 += at(t + k * 0.08); return s2 / 5; };
+  J.viewAt = (t) => { const T = a.times, ts = [], xs = []; for (let k = 0; k <= n; k++) { ts.push(T[k]); xs.push(k < n ? J.cx[k] : J.width); } return glide(ts, xs, t); };
+  void at;
   return J;
 }
 // a change to how a line looks: both lines, so the two read as one system
@@ -262,7 +265,7 @@ function stripLayout(A, W, H) {
     const lines = s0.bars.map((b) => b.x).filter((x) => x > x0 + sp * 1.2 && x < x1 - sp * 1.2).sort((a, b) => a - b);
     // a barline right at the start belongs to the previous line
     const cuts = [x0, ...lines, x1];
-    const seg = { x: x0, y: top, w: x1 - x0, h: bot - top, sx, staff: s0.top - top, sX0: Math.max(0, s0.x0 - x0), sX1: Math.min(x1 - x0, s0.x1 - x0) };
+    const seg = { x: x0, y: top, w: x1 - x0, h: bot - top, sx, staff: s0.top - top, sX0: Math.max(0, s0.x0 - x0), sX1: Math.min(x1 - x0, s0.x1 - x0), sys: si };
     segs.push(seg);
     for (let k = 0; k < cuts.length - 1; k++) {
       const a = cuts[k], b = cuts[k + 1];
@@ -290,7 +293,11 @@ function stripLayout(A, W, H) {
   // every line of music sits at the same height in the strip
   const above = Math.max(...segs.map((s) => s.staff)), below = Math.max(...segs.map((s) => s.h - s.staff));
   for (const s of segs) s.dy = above - s.staff;
-  return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key };
+  // (each staff's lines along it, and the line of music it belongs to: for laying each line straight
+  // and keeping with it the slurs and marks that belong to it, wherever they reach)
+  const sysOf = new Map(); A.systems.forEach((sys, si) => sys.forEach((i) => sysOf.set(i, si)));
+  const staffs = A.staves.every((st) => st.edge) ? A.staves.map((st, i) => ({ sys: sysOf.has(i) ? sysOf.get(i) : -1, sp: st.sp, top: st.top, bottom: st.bottom, edge: st.edge })) : null;
+  return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key, staffs, v: staffs ? 2 : 1 };
 }
 function evenTimes(n) {
   const a = ST.P.trim.a + 0.4, b = ST.P.trim.b - 0.2;
@@ -305,6 +312,10 @@ async function prepareOverlay(o) {
   }
   const bmp = await createImageBitmap(o.img);
   const L = o.layout;
+  if (L.staffs && L.segs.every((q) => q.sys !== undefined)) {
+    try { const st = straightStrip(L, bmp); bmp.close && bmp.close(); ST.strips.set(o.id, st); return; }
+    catch (e) { console.warn('straight strip', e); }
+  }
   const c = document.createElement('canvas'); c.width = Math.ceil(L.width); c.height = Math.ceil(L.height);
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   for (const s of L.segs) g.drawImage(bmp, s.x, s.y, s.w, s.h, s.sx, s.dy ?? (c.height - s.h) / 2, s.w, s.h);
@@ -327,6 +338,149 @@ async function prepareOverlay(o) {
   for (let i = 0; i < d.length; i += 4) { const v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000; const a = clamp((235 - v) * 1.6, 0, 255); d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = a; }
   m.getContext('2d').putImageData(id, 0, 0);
   ST.strips.set(o.id, { canvas: c, mask: m, tinted: new Map() });
+}
+// The long line, laid straight and whole. Every mark on the picture (a note, a slur, a dynamic, a
+// fingering) is a piece of ink: each piece goes with the line of music it belongs to (the staff it
+// touches, else the nearest one), so a slur reaching up over the line above is kept whole and the
+// notes of the line above never come along. Each line is then laid straight (a scan a little turned
+// or curved: its staff made level along its whole length), and the lines are joined at the same
+// height, their staff lines running on from one to the next.
+function straightStrip(L, bmp) {
+  const W = bmp.width, H = bmp.height;
+  const src = document.createElement('canvas'); src.width = W; src.height = H;
+  const sg = src.getContext('2d', { willReadFrequently: true }); sg.fillStyle = '#fff'; sg.fillRect(0, 0, W, H); sg.drawImage(bmp, 0, 0);
+  const px = sg.getImageData(0, 0, W, H).data; src.width = src.height = 0;
+  const N = W * H, lum = new Uint8Array(N);
+  for (let i = 0, j = 0; i < N; i++, j += 4) lum[i] = (px[j] * 299 + px[j + 1] * 587 + px[j + 2] * 114) / 1000;
+  // (ink: anything clearly darker than the paper, the thin grey staff lines of a page drawn small too)
+  const INK = 215, SOFT = 248;
+  // the pieces of ink (8 neighbours), by two passes and a union-find
+  const lab = new Int32Array(N).fill(-1);
+  let par = new Int32Array(1 << 16), nl = 0;
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  const unite = (a, b) => { a = find(a); b = find(b); if (a !== b) { if (a < b) par[b] = a; else par[a] = b; } };
+  for (let y = 0; y < H; y++) {
+    const r = y * W;
+    for (let x = 0; x < W; x++) {
+      const i = r + x; if (lum[i] >= INK) continue;
+      let l = -1;
+      const nb = [x > 0 ? lab[i - 1] : -1, y > 0 && x > 0 ? lab[i - W - 1] : -1, y > 0 ? lab[i - W] : -1, y > 0 && x < W - 1 ? lab[i - W + 1] : -1];
+      for (const q of nb) if (q >= 0) { if (l < 0) l = q; else unite(l, q); }
+      if (l < 0) { if (nl >= par.length) { const p2 = new Int32Array(par.length * 2); p2.set(par); par = p2; } par[nl] = nl; l = nl++; }
+      lab[i] = l;
+    }
+  }
+  const box = new Map();   // root -> [x0, y0, x1, y1, n]
+  for (let i = 0; i < N; i++) {
+    if (lab[i] < 0) continue;
+    const r = find(lab[i]); lab[i] = r;
+    const x = i % W, y = (i / W) | 0; let b = box.get(r);
+    if (!b) box.set(r, (b = [x, y, x, y, 0]));
+    if (x < b[0]) b[0] = x; if (x > b[2]) b[2] = x; if (y < b[1]) b[1] = y; if (y > b[3]) b[3] = y; b[4]++;
+  }
+  // where a staff's top and bottom lines are at x (along its edge, a sample every few points)
+  const edgeAt = (st, x) => {
+    const e = st.edge; if (x <= e[0][0]) return [e[0][1], e[0][2]];
+    for (let k = 1; k < e.length; k++) if (x <= e[k][0]) { const f = (x - e[k - 1][0]) / Math.max(1e-3, e[k][0] - e[k - 1][0]); return [e[k - 1][1] + f * (e[k][1] - e[k - 1][1]), e[k - 1][2] + f * (e[k][2] - e[k - 1][2])]; }
+    const z = e[e.length - 1]; return [z[1], z[2]];
+  };
+  const staffs = L.staffs.filter((st) => st.sys >= 0);
+  const owner = new Map();
+  for (const [r, b] of box) {
+    if (b[4] < 3) continue;   // (specks)
+    const cx = (b[0] + b[2]) / 2;
+    let best = -1, bo = 0, gap = Infinity, near = -1;
+    for (const st of staffs) {
+      const [yT, yB] = edgeAt(st, cx), m = st.sp * 0.3;
+      const ov = Math.min(b[3], yB + m) - Math.max(b[1], yT - m);
+      if (ov > bo) { bo = ov; best = st.sys; }
+      const g = b[3] < yT ? yT - b[3] : b[1] > yB ? b[1] - yB : 0;
+      if (g < gap) { gap = g; near = st.sys; }
+    }
+    owner.set(r, best >= 0 ? best : near);
+  }
+  const ownerAt = (i) => (lab[i] >= 0 ? (owner.has(lab[i]) ? owner.get(lab[i]) : -2) : -1);
+  // each line of music, laid straight
+  const outs = L.segs.map((s) => {
+    const first = staffs.find((st) => st.sys === s.sys) || staffs[0];
+    const x0 = Math.max(0, Math.round(s.x)), w = Math.max(1, Math.min(W - x0, Math.round(s.w)));
+    const mid = x0 + w / 2, [mT, mB] = edgeAt(first, mid), yc0 = (mT + mB) / 2;
+    const d = new Int16Array(w); let dmin = 0, dmax = 0;
+    for (let x = 0; x < w; x++) { const [yT, yB] = edgeAt(first, x0 + x); d[x] = Math.round(yc0 - (yT + yB) / 2); if (d[x] < dmin) dmin = d[x]; if (d[x] > dmax) dmax = d[x]; }
+    // the rows its ink reaches
+    let top = Infinity, bot = -Infinity;
+    for (const [r, b] of box) if (owner.get(r) === s.sys && b[2] >= x0 && b[0] < x0 + w) { if (b[1] < top) top = b[1]; if (b[3] > bot) bot = b[3]; }
+    if (!isFinite(top)) { top = Math.max(0, Math.round(mT - s.staff)); bot = Math.min(H - 1, Math.round(top + s.h)); }
+    top = Math.max(0, top - 2); bot = Math.min(H - 1, bot + 2);
+    const oTop = top + dmin, h = bot - top + 1 + (dmax - dmin);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); const out = g.createImageData(w, h); const od = out.data; od.fill(255);
+    for (let x = 0; x < w; x++) {
+      const X = x0 + x, dx = d[x];
+      for (let y = top; y <= bot; y++) {
+        const i = y * W + X, v = lum[i]; if (v >= SOFT) continue;
+        let mine = ownerAt(i) === s.sys;
+        // (the soft edge of a mark goes with the mark)
+        if (!mine && lab[i] < 0) for (let dy = -1; dy <= 1 && !mine; dy++) for (let ddx = -1; ddx <= 1; ddx++) { const yy = y + dy, xx = X + ddx; if (yy < 0 || yy >= H || xx < 0 || xx >= W) continue; if (ownerAt(yy * W + xx) === s.sys) { mine = true; break; } }
+        if (!mine) continue;
+        const o = ((y + dx - oTop) * w + x) * 4; od[o] = od[o + 1] = od[o + 2] = v;
+      }
+    }
+    g.putImageData(out, 0, 0);
+    const lines = (xx) => { const [yT, yB] = edgeAt(first, x0 + xx), dd = d[Math.max(0, Math.min(w - 1, xx))]; return [yT + dd - oTop, yB + dd - oTop]; };
+    return { c, staffTop: mT - oTop, h, lines };
+  });
+  // the lines side by side, their staves at the same height
+  const above = Math.max(...outs.map((q) => q.staffTop)), below = Math.max(...outs.map((q, k) => q.h - q.staffTop));
+  const CH0 = Math.ceil(above + below), CW0 = Math.ceil(L.width);
+  // (a very long line is kept a little smaller: iOS will not keep a picture bigger than this, it would
+  // come out blank; drawn back at its size, it is the same)
+  const LIMIT = /iPhone|iPod/.test(navigator.userAgent) ? 8e6 : 14e6;
+  const K = Math.min(1, Math.sqrt(LIMIT / (CW0 * CH0)), 32000 / CW0);
+  const CW = Math.ceil(CW0 * K), CH = Math.ceil(CH0 * K);
+  const c = document.createElement('canvas'); c.width = CW; c.height = CH;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, CW, CH);
+  g.imageSmoothingQuality = 'high';
+  g.scale(K, K);
+  L.segs.forEach((s, k) => { const q = outs[k]; s.dy = above - q.staffTop; s.h = q.h; s.staff = q.staffTop; g.drawImage(q.c, s.sx, s.dy); });
+  L.height = CH0;
+  // and the staff running on from one line to the next (each of its five lines, where it ends to
+  // where the next one begins)
+  if (L.sp && L.segs.length > 1) {
+    // (as dark and as thick as the staff lines of the page itself)
+    const look = (() => {
+      const q = outs[0], w = q.c.width, x = Math.max(0, Math.round((L.segs[0].sX1 ?? w) - L.sp * 2));
+      const d = q.c.getContext('2d').getImageData(x, 0, 1, q.c.height).data; const [yT, yB] = q.lines(x);
+      const vals = [], th = [];
+      for (let k = 0; k < 5; k++) {
+        const y = Math.round(yT + (k * (yB - yT)) / 4); let mn = 255, n = 0;
+        for (let dy = -3; dy <= 3; dy++) { const yy = y + dy; if (yy < 0 || yy >= q.c.height) continue; const v = d[yy * 4]; if (v < 235) n++; if (v < mn) mn = v; }
+        vals.push(mn); th.push(n);
+      }
+      vals.sort((p, r) => p - r); th.sort((p, r) => p - r);
+      return { v: vals[2] < 235 ? vals[2] : 40, t: Math.max(1, Math.min(L.sp * 0.2, th[2] || L.sp * 0.1)) };
+    })();
+    g.strokeStyle = `rgb(${look.v},${look.v},${look.v})`; g.lineWidth = look.t; g.lineCap = 'butt';
+    for (let i = 0; i + 1 < L.segs.length; i++) {
+      const A = L.segs[i], B = L.segs[i + 1], qa = outs[i], qb = outs[i + 1];
+      const ea = Math.round(A.sX1 ?? A.w) - 1, eb = Math.round(B.sX0 ?? 0);
+      const xa = A.sx + ea, xb = B.sx + eb;
+      g.fillStyle = '#fff'; g.fillRect(xa + 1, 0, Math.max(0, xb - xa - 1), CH0);
+      const [aT, aB] = qa.lines(ea), [bT, bB] = qb.lines(eb);
+      for (let k = 0; k < 5; k++) {
+        const ya = A.dy + aT + (k * (aB - aT)) / 4, yb = B.dy + bT + (k * (bB - bT)) / 4;
+        g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb + 1, yb); g.stroke();
+      }
+    }
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  for (const q of outs) q.c.width = q.c.height = 0;
+  // the ink alone: dark becomes opaque, paper becomes clear
+  const m = document.createElement('canvas'); m.width = CW; m.height = CH;
+  const id = g.getImageData(0, 0, CW, CH); const d2 = id.data;
+  for (let i = 0; i < d2.length; i += 4) { const v = (d2[i] * 299 + d2[i + 1] * 587 + d2[i + 2] * 114) / 1000; const a = clamp((235 - v) * 1.6, 0, 255); d2[i] = d2[i + 1] = d2[i + 2] = 255; d2[i + 3] = a; }
+  m.getContext('2d').putImageData(id, 0, 0);
+  return { canvas: c, mask: m, tinted: new Map(), k: K };
 }
 function tintedMask(st, color) {
   if (st.tinted.has(color)) return st.tinted.get(color);
@@ -609,7 +763,8 @@ function knotsOf(byBar, times, bars) {
     const out = []; let lx = 0, lt = 0;
     for (const n of ns.filter((q) => q.t !== null && !q.rep).sort((p, q) => p.x - q.x)) {
       const fx = (n.x - b.x0) / Math.max(1, b.x1 - b.x0), ft = (n.t - T0) / Math.max(0.01, T1 - T0);
-      if (fx > lx + 0.02 && ft > lt + 0.02 && fx < 0.98 && ft < 0.98) { out.push([ft, fx]); lx = fx; lt = ft; }
+      // (a note heard far from where it stands in the bar is a mismatch: left out, the line keeps an even pace)
+      if (fx > lx + 0.02 && ft > lt + 0.02 && fx < 0.98 && ft < 0.98 && Math.abs(fx - ft) < 0.38) { out.push([ft, fx]); lx = fx; lt = ft; }
     }
     return out;
   });
@@ -717,9 +872,11 @@ function heardTime() {
   const at = ST.clk.ct + (m.paused ? 0 : Math.min(0.3, (now - ST.clk.p) / 1000) * (m.playbackRate || 1));
   return at;
 }
-function tap() {
+function tap(e) {
   const T = ST.tapping; if (!T) return;
-  const t = heardTime();
+  // (the moment the finger landed, not when the page got round to it: a busy iPad may be a little late)
+  const lag = e && e.timeStamp > 0 ? Math.max(0, Math.min(0.15, (performance.now() - e.timeStamp) / 1000)) : 0;
+  const t = heardTime() - lag * (ST.media.playbackRate || 1);
   T.times.push(t); T.k++;
   const n = T.o.layout.bars.length;
   $('#stTapInfo').textContent = T.k < n ? `Bar ${T.k + 1} of ${n}` : 'Tap where the last bar ends';
@@ -766,8 +923,16 @@ async function finishTap() {
     const lastTap = times[times.length - 1];
     if (from && old.length === n + 1 && times.length < n + 1 && old[times.length] > lastTap + 0.12) times.push(...old.slice(times.length));
     while (times.length < n + 1) times.push(Math.min(ST.P.trim.b, times[times.length - 1] + pace));
+    // (a tap clearly off the pace of the ones around it, a slip of the finger, is put back on it; a
+    // real slowing down stays)
+    const nt = Math.min(times.length, T.times.length) - from;
+    if (nt >= 6) { const st2 = steadyTimes(times.slice(from, from + nt)); for (let i = 0; i < nt; i++) times[from + i] = st2[i]; }
+    for (let i = Math.max(1, from); i < times.length; i++) if (times[i] <= times[i - 1] + 0.05) times[i] = times[i - 1] + 0.05;
     T.o.times = times; T.o.synced = 'tap';
     if (T.o.knots) T.o.knots = T.o.knots.map((kn, k) => (k < from || (from && k >= T.times.length && old[k] === times[k]) ? kn : []));
+    // (two parts of one piece: the same bars at the same moments, in both lines)
+    const other = scoreLines().find((x) => x !== T.o);
+    if (other && other.layout.bars.length === n) { other.times = times.slice(); other.synced = 'tap'; other.knots = other.knots ? other.knots.map((kn, k) => (k < from ? kn : [])) : null; }
     saveSoon(); D.toast(from ? `Bars from ${from + 1} set from your taps.` : 'Bars set from your taps.', 2200);
   }
   renderSide(); renderTimeline(); frame();
@@ -825,6 +990,8 @@ function softBack(m, W, H) {
 function drawFrame(g, W, H, t, forExport) {
   const P = ST.P, m = ST.media;
   g.save();
+  // (the video made bigger or smaller with the best smoothing there is)
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   // (only what is drawn over the video, on a clear picture: for putting it over the original video
   // elsewhere, at the original's own quality)
   const onlyOver = !!globalThis.__studioOverlaysOnly;
@@ -899,7 +1066,32 @@ function posAt(o, t) {
   return bars[b].x0 + fx * (bars[b].x1 - bars[b].x0);
 }
 // the same, smoothed over a quarter of a second, for moving the page without jolts
-function viewAt(o, t) { let s = 0; for (let k = -2; k <= 2; k++) s += posAt(o, t + k * 0.06); return s / 5; }
+// Where the page is at time t: a gentle curve through the start of each bar (its speed changes
+// smoothly from bar to bar, never in a jolt), so the music glides by.
+function glide(ts, xs, t) {
+  const n = ts.length; if (n < 2) return xs[0] || 0;
+  if (t <= ts[0]) return xs[0]; if (t >= ts[n - 1]) return xs[n - 1];
+  let k = 0; while (k < n - 2 && t >= ts[k + 1]) k++;
+  const sl = (i) => (xs[i + 1] - xs[i]) / Math.max(1e-3, ts[i + 1] - ts[i]);
+  // (the speed at each bar start: between the bars around it, never overshooting: Fritsch–Carlson)
+  const m = (i) => { if (i <= 0) return sl(0); if (i >= n - 1) return sl(n - 2); const a = sl(i - 1), b = sl(i); return a * b <= 0 ? 0 : (2 * a * b) / (a + b); };
+  const h = ts[k + 1] - ts[k], u = (t - ts[k]) / Math.max(1e-3, h), u2 = u * u, u3 = u2 * u;
+  return (2 * u3 - 3 * u2 + 1) * xs[k] + (u3 - 2 * u2 + u) * h * m(k) + (-2 * u3 + 3 * u2) * xs[k + 1] + (u3 - u2) * h * m(k + 1);
+}
+// (held between two ends, coming to rest at them gently rather than stopping dead)
+function softClamp(v, a, b, k) {
+  if (b <= a) return a;
+  k = Math.min(k, (b - a) / 3);
+  const smax = (x, y) => (x + y + Math.sqrt((x - y) * (x - y) + k * k)) / 2, smin = (x, y) => (x + y - Math.sqrt((x - y) * (x - y) + k * k)) / 2;
+  return clamp(smin(smax(v, a + k / 2), b - k / 2), a, b);
+}
+function viewAt(o, t) {
+  const T = o.times, bars = o.layout.bars; if (!T) return posAt(o, t);
+  const ts = [], xs = [];
+  for (let k = 0; k < bars.length; k++) { ts.push(T[k]); xs.push(bars[k].x0); }
+  ts.push(T[bars.length]); xs.push(bars[bars.length - 1].x1);
+  return glide(ts, xs, t);
+}
 function drawScore(g, W, H, o, t) {
   const st = ST.strips.get(o.id); if (!st) return;
   const L = o.layout, bars = L.bars, n = bars.length;
@@ -941,7 +1133,7 @@ function drawScore(g, W, H, o, t) {
     // two parts as one system: the same bar over the same bar, the page moving for both together
     const per = Math.max(1, o.perView), vw = Math.min(J.width, (J.width / n) * per);
     const smooth = J.viewAt(t);
-    vx0 = clamp(smooth - vw * (o.band ? 0.22 : 0.32), 0, Math.max(0, J.width - vw)); vx1 = vx0 + vw;
+    vx0 = softClamp(smooth - vw * (o.band ? 0.22 : 0.32), 0, Math.max(0, J.width - vw), vw * 0.12); vx1 = vx0 + vw;
     if (b >= 0 && b < n) cursor = J.toCommon(o, posAt(o, t), cb);
     else if (b >= n) cursor = J.width - 1;   // (at the end it stays on the last barline)
     paint(vx0, vx1, 1, cursor, null, 1, J);
@@ -957,14 +1149,16 @@ function drawScore(g, W, H, o, t) {
     const pos = posAt(o, t), smooth = viewAt(o, t);
     // the score slides under a still line, like a film; at the very start and end the music stays
     // put and the line moves instead, so there is never paper without music (or an empty band)
-    if (o.band) vx0 = clamp(smooth - vw * 0.22, 0, Math.max(0, L.width - vw));
-    else vx0 = clamp(smooth - vw * 0.32, 0, Math.max(0, L.width - vw));
+    vx0 = softClamp(smooth - vw * (o.band ? 0.22 : 0.32), 0, Math.max(0, L.width - vw), vw * 0.12);
     vx1 = vx0 + vw;
     if (b >= 0 && b < n) cursor = pos;
   }
   paint(vx0, vx1, 1, cursor, null);
   function paint(vx0, vx1, alpha, cursor, fullW, inkA = 1, joint = null) {
-  const vw = vx1 - vx0, vh = L.height;
+  o._motion = { vx0, cursor };   // (where the page and the line are: for the tests)
+  // (the music made bigger smoothly, never in squares)
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  const vw = vx1 - vx0, vh = L.height, SK = st.k || 1;
   const band = !!o.band && o.mode === 'scroll';
   const boxW0 = band ? W : W * o.size, scale = boxW0 / (fullW || vw), boxW = vw * scale, boxH = vh * scale * (joint ? joint.r(o) : 1) * (band ? o.size / 0.96 : 1);
   const pad = band ? Math.round(boxH * 0.06) : o.look === 'lines' ? 0 : Math.round(boxW * 0.025);
@@ -979,10 +1173,10 @@ function drawScore(g, W, H, o, t) {
       const c0 = joint.cx[k], c1 = c0 + joint.cw[k], d0 = Math.max(c0, vx0), d1 = Math.min(c1, vx1);
       if (d1 <= d0) return;
       const s0 = bb.x0 + ((d0 - c0) / (c1 - c0)) * (bb.x1 - bb.x0), s1 = bb.x0 + ((d1 - c0) / (c1 - c0)) * (bb.x1 - bb.x0);
-      if (s1 - s0 > 0.5) g.drawImage(img, s0, 0, s1 - s0, vh, x + (d0 - vx0) * scale, y, (d1 - d0) * scale, boxH);
+      if (s1 - s0 > 0.5) g.drawImage(img, s0 * SK, 0, (s1 - s0) * SK, vh * SK, x + (d0 - vx0) * scale, y, (d1 - d0) * scale, boxH);
     });
     g.globalAlpha = ja;
-  } : (img) => { if (sx1 > sx0 && inkA > 0.001) { const a0 = g.globalAlpha; g.globalAlpha = a0 * inkA; g.drawImage(img, sx0, 0, sx1 - sx0, vh, x + (sx0 - vx0) * scale, y, (sx1 - sx0) * scale, boxH); ; g.globalAlpha = a0; } };
+  } : (img) => { if (sx1 > sx0 && inkA > 0.001) { const a0 = g.globalAlpha; g.globalAlpha = a0 * inkA; g.drawImage(img, sx0 * SK, 0, (sx1 - sx0) * SK, vh * SK, x + (sx0 - vx0) * scale, y, (sx1 - sx0) * scale, boxH); ; g.globalAlpha = a0; } };
   o._box = { x: x - pad, y: y - pad, w: boxW + pad * 2, h: boxH + pad * 2, W, H };
   g.save(); g.globalAlpha = (o.opacity ?? 1) * alpha;
   if (o.look !== 'lines') {
@@ -1142,7 +1336,7 @@ async function makeStrip() {
     const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = ST.url;
     await new Promise((res) => { v.onloadeddata = res; v.onerror = res; setTimeout(res, 4000); });
     const ar = (v.videoWidth || 9) / (v.videoHeight || 16);
-    const h = 56, w = Math.max(16, Math.round(h * ar));
+    const h = 112, w = Math.max(24, Math.round(h * ar));   // (sharp on the iPad's screen)
     const n = clamp(Math.round(ST.dur * 2), 12, 120);   // (two a second, enough to open out a little)
     for (let k = 0; k < n; k++) {
       if (STRIP.key !== key) return;
@@ -1201,6 +1395,7 @@ function trimTip(side) {
   tip.hidden = false; tip.style.left = (40 + tx(t)) + 'px';
   const s2 = ST.tv ? (Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0')) : fmt(t);
   tip.innerHTML = ''; tip.append(s2); const sm = document.createElement('small'); sm.textContent = '· ' + fmt(ST.P.trim.b - ST.P.trim.a); tip.append(sm);
+  { const W = $('#stScoreLane').getBoundingClientRect().width, half = (tip.offsetWidth || 120) / 2; tip.style.left = (40 + clamp(tx(t), half - 46, W - half)) + 'px'; }
 }
 // opening the strip out around a handle held still, and closing it again (a short glide each way)
 function zoomTrim(drag, open) {
@@ -1627,7 +1822,7 @@ async function outUpload(id, op, blob, name) {
   return op === 'src' ? outNext(id, ['src']) : outNext(id, ['chunk']);
 }
 // the sound as Studio makes it (level and room), worked out at once, not in real time
-async function studioSound(a, b) {
+async function studioSound(a, b, { wetOnly = false } = {}) {
   const sr = ST.sr, i0 = Math.floor(a * sr), i1 = Math.min(ST.pcm.length, Math.ceil(b * sr));
   const part = ST.pcm.subarray(i0, i1);
   const room = ROOMS[ST.P.sound.room];
@@ -1636,7 +1831,7 @@ async function studioSound(a, b) {
   const buf = oc.createBuffer(1, Math.max(1, part.length), sr); buf.copyToChannel(part, 0);
   const src = oc.createBufferSource(); src.buffer = buf;
   const level = oc.createGain(); const pk = peakOf(part); level.gain.value = ST.P.sound.level !== false && pk > 0.001 ? Math.min(8, 0.89 / pk) : 1;
-  src.connect(level); level.connect(oc.destination);
+  src.connect(level); if (!wetOnly) level.connect(oc.destination);
   if (room) { const conv = oc.createConvolver(); conv.buffer = makeImpulse(oc, room); const wet = oc.createGain(); wet.gain.value = (ST.P.sound.wet ?? 0.18) * 0.9; level.connect(conv).connect(wet).connect(oc.destination); }
   src.start(0);
   const out = await oc.startRendering();
@@ -1674,9 +1869,11 @@ async function exportNative({ share = true } = {}) {
     // added: then the one Studio makes
     let audio = 'none', gain = 1;
     const room = ROOMS[ST.P.sound.room];
-    if (isVideo && srcInfo && srcInfo.hasAudio && !room) {
-      audio = 'src';
+    if (isVideo && srcInfo && srcInfo.hasAudio && (!room || (ST.pcm && total <= 240))) {
+      // the original sound as it is (both sides, its own quality); a room is added over it
+      audio = room ? 'mix' : 'src';
       if (ST.P.sound.level !== false && ST.pcm) { const i0 = Math.floor(a * ST.sr), i1 = Math.min(ST.pcm.length, Math.ceil(b * ST.sr)); const pk = peakOf(ST.pcm.subarray(i0, i1)); gain = pk > 0.001 ? Math.min(8, 0.89 / pk) : 1; }
+      if (room) { busy('Making the video…', 'Making the sound.', 0.01); await outUpload(id, 'wav', await studioSound(a, b, { wetOnly: true })); }
     } else if (ST.pcm) {
       busy('Making the video…', 'Making the sound.', 0.01);
       await outUpload(id, 'wav', await studioSound(a, b));
@@ -1722,7 +1919,7 @@ async function exportNative({ share = true } = {}) {
         const q = performance.now();
         drawFrame(g, W, H, t, true);
         tDraw += performance.now() - q;
-        const jp = new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
+        const jp = new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.97));
         inFlight++;
         hand(jp, t).then(() => { inFlight--; if (drain && inFlight < 3) { const d = drain; drain = null; d(); } });
         if (sent % 6 === 0) progress(t);
@@ -1778,7 +1975,7 @@ async function exportNative({ share = true } = {}) {
         tSeek += performance.now() - q; q = performance.now();
         drawFrame(g, W, H, t, true);
         tDraw += performance.now() - q;
-        await hand(new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95)), t);
+        await hand(new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.97)), t);
         if (i % 5 === 0) progress(t);
       }
     }
@@ -1852,13 +2049,13 @@ function wire() {
   $('#stSyncBtn').addEventListener('click', async () => { const ls = scoreLines(); if (!ls.length) { addScore(); return; } ST.sel = { id: ls[0].id }; renderSide(); if (ls.length === 2) await syncBoth(); else for (const o of ls) await autoSync(o); });
   $('#stFormatBtn').addEventListener('click', () => { ST.sel = null; renderSide(); frame(); });
   $('#stExport').addEventListener('click', exportVideo);
-  $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); tap(); });
+  $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); tap(e); });
   $('#stBusyCancel').addEventListener('click', () => { if (ST.busyCancel) ST.busyCancel(); busy(null); });
   wireTimeline(); wireStage();
   window.addEventListener('resize', () => { if (!$('#studio').hidden) { sizeCanvas(); renderTimeline(); drawWave(); frame(); } });
   document.addEventListener('keydown', (e) => {
     if ($('#studio').hidden || e.target.matches('input, select, textarea')) return;
-    if (e.key === ' ') { e.preventDefault(); if (ST.tapping) tap(); else ST.playing ? pause() : play(); }
+    if (e.key === ' ') { e.preventDefault(); if (ST.tapping) tap(e); else ST.playing ? pause() : play(); }
     if (e.key === 'Escape' && ST.tapping) finishTap();
   });
 }

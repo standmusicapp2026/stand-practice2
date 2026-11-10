@@ -235,10 +235,12 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
                 guard writer.status == .completed else {
                     self.outEvent(id, ["type": "error", "message": writer.error?.localizedDescription ?? "finish"]); self.clean(job); return
                 }
-                let sound: URL? = audio == "src" ? job.src?.1 : audio == "wav" ? job.wav?.1 : nil
+                // ("mix": the original sound, as it is, with the room Studio adds laid over it)
+                let fromSrc = audio == "src" || audio == "mix"
+                let sound: URL? = fromSrc ? job.src?.1 : audio == "wav" ? job.wav?.1 : nil
                 if let sound = sound {
                     self.outEvent(id, ["type": "progress", "f": 0.97])
-                    self.addSound(to: job.url, from: sound, range: audio == "src" ? (a, b) : nil, gain: audio == "src" ? gain : 1) { final, err in
+                    self.addSound(to: job.url, from: sound, range: fromSrc ? (a, b) : nil, gain: fromSrc ? gain : 1, wet: audio == "mix" ? job.wav?.1 : nil) { final, err in
                         if let final = final { self.finished(id, final, job) }
                         else {
                             // (the film without its sound is no use: said plainly, the page falls back)
@@ -287,7 +289,9 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
     private func startWriter(_ job: Job) -> String? {
         let w = job.w, h = job.h, fps = job.fps
         // (about 0.25 bit for each point of each picture: 1080×1920 at 30 a second ≈ 16 Mbit/s)
-        let rate = job.rate > 0 ? job.rate : Int(Double(w * h * fps) * 0.25)
+        // (about a third of a bit for each point of each picture: 1080×1920 at 30 a second ≈ 21 Mbit/s,
+        // more than the camera itself gives; the video is only made smaller this once)
+        let rate = job.rate > 0 ? job.rate : Int(Double(w * h * fps) * 0.34)
         guard let writer = try? AVAssetWriter(outputURL: job.url, fileType: .mp4) else { return "writer" }
         let settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -327,7 +331,17 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
     // The film (pictures only) with its sound: the pictures are copied as they are (never made again),
     // the sound is made into AAC at a high rate from the original (the part used, made louder by
     // `gain` when Studio levels it) or from Studio's own.
-    private func addSound(to film: URL, from sound: URL, range: (Double, Double)?, gain: Float, done: @escaping (URL?, String?) -> Void) {
+    private func addSound(to film: URL, from sound: URL, range: (Double, Double)?, gain: Float, wet wetURL: URL? = nil, done: @escaping (URL?, String?) -> Void) {
+        // (the room's sound, made by Studio, whole in memory: added to the original as it goes)
+        var wet: [[Float]] = [], wetRate: Double = 0
+        if let wu = wetURL, let f = try? AVAudioFile(forReading: wu), let buf = AVAudioPCMBuffer(pcmFormat: f.processingFormat, frameCapacity: AVAudioFrameCount(f.length)) {
+            if (try? f.read(into: buf)) != nil, let ch = buf.floatChannelData {
+                let n = Int(buf.frameLength)
+                for c in 0..<Int(buf.format.channelCount) { wet.append(Array(UnsafeBufferPointer(start: ch[c], count: n))) }
+                wetRate = buf.format.sampleRate
+            }
+        }
+        var wetPos = 0
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("studio-final-" + UUID().uuidString + ".mp4")
         let filmAsset = AVURLAsset(url: film), soundAsset = AVURLAsset(url: sound)
         guard let vTrack = filmAsset.tracks(withMediaType: .video).first else { done(nil, "no pictures"); return }
@@ -343,7 +357,7 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
             let desc = aTrack.formatDescriptions.first.map { $0 as! CMAudioFormatDescription }
             let asbd = desc.flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee }
             let channels = max(1, min(2, Int(asbd?.mChannelsPerFrame ?? 2)))
-            let rate = (asbd?.mSampleRate ?? 48000) >= 44100 ? (asbd?.mSampleRate ?? 48000) : 48000
+            let rate = wetRate > 0 ? wetRate : (asbd?.mSampleRate ?? 48000) >= 44100 ? (asbd?.mSampleRate ?? 48000) : 48000
             let aOut = AVAssetReaderTrackOutput(track: aTrack, outputSettings: [
                 AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
                 AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
@@ -381,7 +395,8 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
                     // (from the start of the part used; nothing after the end of the pictures)
                     let pts = CMTimeSubtract(CMSampleBufferGetPresentationTimeStamp(s), start)
                     if CMTimeCompare(pts, filmEnd) >= 0 { aReader.cancelReading(); aIn.markAsFinished(); group.leave(); return }
-                    if gain != 1 { StandVideoKit.scale(s, by: gain) }
+                    if !wet.isEmpty { StandVideoKit.mix(s, gain: gain, channels: channels, wet: wet, pos: &wetPos) }
+                    else if gain != 1 { StandVideoKit.scale(s, by: gain) }
                     var timing = CMSampleTimingInfo(duration: CMSampleBufferGetDuration(s), presentationTimeStamp: pts, decodeTimeStamp: .invalid)
                     var moved: CMSampleBuffer?
                     CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: s, sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleBufferOut: &moved)
@@ -395,6 +410,28 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
                 }
             }
         } catch { done(nil, error.localizedDescription) }
+    }
+
+    // the original, louder by `gain`, with the room's sound added (float samples, in place)
+    private static func mix(_ s: CMSampleBuffer, gain: Float, channels: Int, wet: [[Float]], pos: inout Int) {
+        guard let block = CMSampleBufferGetDataBuffer(s) else { return }
+        var length = 0, total = 0; var ptr: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: &length, totalLengthOut: &total, dataPointerOut: &ptr) == kCMBlockBufferNoErr, let p = ptr else { return }
+        let n = length / MemoryLayout<Float>.size, frames = n / max(1, channels)
+        let wn = wet[0].count, wc = wet.count
+        let start = pos
+        p.withMemoryRebound(to: Float.self, capacity: n) { f in
+            for i in 0..<frames {
+                let j = start + i
+                for c in 0..<channels {
+                    var w: Float = 0
+                    if j < wn { w = channels == 1 && wc > 1 ? (wet[0][j] + wet[1][j]) * 0.5 : wet[min(c, wc - 1)][j] }
+                    let k = i * channels + c
+                    f[k] = max(-1, min(1, f[k] * gain + w))
+                }
+            }
+        }
+        pos += frames
     }
 
     // louder by `gain`, in place (float samples), never past full scale
