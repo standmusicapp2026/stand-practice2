@@ -1850,7 +1850,9 @@ async function outNext(id, types, ms = 120000) {
     await new Promise((r) => { q.wake = r; setTimeout(r, 1000); });
   }
 }
-const toB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+// (a picture from a canvas; when iOS is short of memory toBlob gives nothing, so the slower way is tried)
+const encodeCanvas = (c, type, q) => new Promise((res) => { try { c.toBlob((b) => { if (b) return res(b); try { res(c.toDataURL(type, q)); } catch (e) { res(null); } }, type, q); } catch (e) { res(null); } });
+const toB64 = (blob) => typeof blob === 'string' ? Promise.resolve(blob.split(',')[1] || '') : !blob ? Promise.reject(new Error('the picture could not be made (memory)')) : new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
 // a file handed to iOS in pieces (never whole in one message)
 async function outUpload(id, op, blob, name) {
   const post = (m) => window.webkit.messageHandlers.standVideoOut.postMessage({ op, id, ...m });
@@ -1976,7 +1978,7 @@ async function exportNative({ share = true, noOver = false } = {}) {
             globalThis.__studioOverlaysOnly = true;
             try { og.setTransform(1, 0, 0, 1, 0, 0); og.clearRect(0, 0, oc.width, oc.height); og.setTransform(sc, 0, 0, sc, -box.x * sc, -box.y * sc); drawFrame(og, W, H, t, true); }
             finally { globalThis.__studioOverlaysOnly = false; og.setTransform(1, 0, 0, 1, 0, 0); }
-            const data = await toB64(await new Promise((r) => oc.toBlob(r, 'image/png')));
+            const data = await toB64(await encodeCanvas(oc, 'image/png'));
             if (pend) await pend;
             if (cancelled) return false;
             post({ op: 'oframe', i, t: t - a, data, rect });
@@ -2039,9 +2041,9 @@ async function exportNative({ share = true, noOver = false } = {}) {
         const q = performance.now();
         drawFrame(g, W, H, t, true);
         tDraw += performance.now() - q;
-        const jp = new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.97));
+        const jp = encodeCanvas(canvas, 'image/jpeg', 0.97);
         inFlight++;
-        hand(jp, t).then(() => { inFlight--; if (drain && inFlight < 3) { const d = drain; drain = null; d(); } });
+        hand(jp, t).catch(() => {}).then(() => { inFlight--; if (drain && inFlight < 3) { const d = drain; drain = null; d(); } });
         if (sent % 6 === 0) progress(t);
       };
       // (the first picture: the one shown at the start of the part)
@@ -2095,7 +2097,7 @@ async function exportNative({ share = true, noOver = false } = {}) {
         tSeek += performance.now() - q; q = performance.now();
         drawFrame(g, W, H, t, true);
         tDraw += performance.now() - q;
-        await hand(new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.97)), t);
+        await hand(encodeCanvas(canvas, 'image/jpeg', 0.97), t);
         if (i % 5 === 0) progress(t);
       }
     }
