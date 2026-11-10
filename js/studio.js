@@ -397,6 +397,9 @@ function straightStrip(L, bmp) {
       const g = b[3] < yT ? yT - b[3] : b[1] > yB ? b[1] - yB : 0;
       if (g < gap) { gap = g; near = st.sys; }
     }
+    // (a mark cut by the edge of the picture — words or a number above the first line or below the
+    // last, half in the picture — is left out: only whole marks go on the line, never halves)
+    if (best < 0 && (b[1] <= 1 || b[3] >= H - 2)) { owner.set(r, -3); continue; }
     owner.set(r, best >= 0 ? best : near);
   }
   const ownerAt = (i) => (lab[i] >= 0 ? (owner.has(lab[i]) ? owner.get(lab[i]) : -2) : -1);
