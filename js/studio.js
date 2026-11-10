@@ -1841,7 +1841,29 @@ async function studioSound(a, b, { wetOnly = false } = {}) {
   const n = part.length;   // (as long as the pictures)
   return encodeWav([out.getChannelData(0).subarray(0, n), out.getChannelData(1).subarray(0, n)], sr);
 }
-async function exportNative({ share = true } = {}) {
+// Where on the picture what Studio draws over the video can be, over the whole part (a few moments
+// looked at; a picture placed over it may be anywhere): only that part is made for each frame.
+function overBox(W, H, a, b) {
+  const P = ST.P; if (!P.overlays.length) return { x: 0, y: 0, w: 2, h: 2 };
+  if (P.overlays.some((o) => o.kind === 'image' || !o.layout)) return { x: 0, y: 0, w: W, h: H };
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  globalThis.__studioOverlaysOnly = true;
+  try {
+    for (let k = 0; k <= 6; k++) {
+      const t = a + ((b - a) * k) / 6;
+      for (const o of P.overlays) o._box = null;
+      drawFrame(g, W, H, t, true);
+      for (const o of P.overlays) { const q = o._box; if (!q) { x0 = 0; y0 = 0; x1 = W; y1 = H; continue; } x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x + q.w); y1 = Math.max(y1, q.y + q.h); }
+    }
+  } finally { globalThis.__studioOverlaysOnly = false; c.width = c.height = 0; }
+  if (!isFinite(x0)) return { x: 0, y: 0, w: W, h: H };
+  // (room for the soft shadow round it)
+  const m = Math.round(Math.max(W, H) * 0.04);
+  x0 = Math.max(0, Math.floor(x0 - m)); y0 = Math.max(0, Math.floor(y0 - m)); x1 = Math.min(W, Math.ceil(x1 + m)); y1 = Math.min(H, Math.ceil(y1 + m));
+  return { x: x0, y: y0, w: Math.max(2, x1 - x0), h: Math.max(2, y1 - y0) };
+}
+async function exportNative({ share = true, noOver = false } = {}) {
   pause();
   const [W, H] = outSize();
   const a = ST.P.trim.a, b = ST.P.trim.b, total = b - a;
@@ -1883,6 +1905,65 @@ async function exportNative({ share = true } = {}) {
       audio = 'wav';
     }
     if (cancelled) return false;
+    // Over the original video itself: only what Studio draws over it is made here (see-through), and
+    // iOS lays that on the original, at the original's own size — the video is never drawn again, so
+    // it keeps all its quality (and nothing has to be looked for in it: much quicker too).
+    let outW = W, outH = H, overUsed = false;
+    const SEEKS = {}, t0 = performance.now(); let tDraw = 0, tJpg = 0, tSeek = 0;
+    const canOver = !noOver && !globalThis.__noOver && isVideo && srcInfo && srcInfo.w > 0 && srcInfo.h > 0 && (window.standCaps || {}).videoOver
+      && ST.P.fit !== 'fit' && (!ST.P.look || isNeutral(ST.P.look)) && !ST.take.mirror;
+    let sent = 0;
+    if (canOver) {
+      const vw = srcInfo.w, vh = srcInfo.h, orig = ST.P.format === 'orig';
+      const c0 = Math.max(W / vw, H / vh);
+      const cw = orig ? vw : Math.min(vw, W / c0), ch = orig ? vh : Math.min(vh, H / c0);
+      const px = ST.P.pan ? ST.P.pan.x : 0.5, py = ST.P.pan ? ST.P.pan.y : 0.5;
+      const cx = (vw - cw) * px, cy = (vh - ch) * py;
+      const q = Math.min(1, 3840 / Math.max(cw, ch));
+      const Wo = Math.max(16, Math.round((cw * q) / 2) * 2), Ho = Math.max(16, Math.round((ch * q) / 2) * 2);
+      post({ op: 'over', a, b, fps, w: Wo, h: Ho, crop: [cx, cy, cw, ch] });
+      let ready = true;
+      try { await outNext(id, ['ready']); } catch (e) { ready = false; console.warn('over', e); }
+      if (ready) {
+        try {
+          // (only the part of the picture the music and pictures can be in, at the film's own sharpness)
+          const box = overBox(W, H, a, b), sc = Wo / W;
+          const oc = document.createElement('canvas'); oc.width = Math.max(2, Math.round(box.w * sc)); oc.height = Math.max(2, Math.round(box.h * sc));
+          const og = oc.getContext('2d');
+          const rect = [box.x * sc, box.y * sc, oc.width, oc.height];
+          const N = Math.max(1, Math.ceil(total * fps - 1e-6));
+          const t0o = performance.now();
+          let pend = null;
+          for (let i = 0; i < N; i++) {
+            if (cancelled) return false;
+            const t = a + i / fps;
+            globalThis.__studioOverlaysOnly = true;
+            try { og.setTransform(1, 0, 0, 1, 0, 0); og.clearRect(0, 0, oc.width, oc.height); og.setTransform(sc, 0, 0, sc, -box.x * sc, -box.y * sc); drawFrame(og, W, H, t, true); }
+            finally { globalThis.__studioOverlaysOnly = false; og.setTransform(1, 0, 0, 1, 0, 0); }
+            const data = await toB64(await new Promise((r) => oc.toBlob(r, 'image/png')));
+            if (pend) await pend;
+            if (cancelled) return false;
+            post({ op: 'oframe', i, t: t - a, data, rect });
+            pend = outNext(id, ['ack'], 180000); pend.catch(() => {});   // (looked at below; a failure is not left unseen)
+            sent++;
+            if (i % 6 === 0) {
+              const f = clamp((t - a) / Math.max(0.01, total), 0, 1), left = f > 0.03 ? ((performance.now() - t0o) / f) * (1 - f) / 1000 : null;
+              busy('Making the video…', `${fmt(t - a)} of ${fmt(total)}` + (left ? ` · about ${fmt(left)} left` : ''), 0.03 + 0.92 * f);
+            }
+          }
+          if (pend) await pend;
+          outW = Wo; outH = Ho; overUsed = true;
+        } catch (e) {
+          // (anything wrong on the way: made the other way, picture by picture)
+          if (cancelled) return false;
+          console.warn('over failed', e);
+          try { post({ op: 'cancel' }); } catch {}
+          ST.exporting = false; OUTQ.delete(id);
+          return exportNative({ share, noOver: true });
+        }
+      }
+    }
+    if (!overUsed) {
     // every picture, drawn exactly at its moment
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const g = canvas.getContext('2d');
@@ -1895,8 +1976,8 @@ async function exportNative({ share = true } = {}) {
       m.addEventListener('seeked', () => setTimeout(() => done('seeked'), m.requestVideoFrameCallback ? 120 : 30), { once: true });
       m.currentTime = t; setTimeout(() => done('late'), 3000);
     });
-    let pending = null; const t0 = performance.now(); const SEEKS = {}; let tDraw = 0, tJpg = 0, tSeek = 0;
-    let sent = 0, skipped = 0, rate = 0.5;
+    let pending = null;
+    let skipped = 0, rate = 0.5;
     const progress = (tt) => {
       const f = clamp((tt - a) / Math.max(0.01, total), 0, 1), left = f > 0.03 ? ((performance.now() - t0) / f) * (1 - f) / 1000 : null;
       busy('Making the video…', `${fmt(tt - a)} of ${fmt(total)}` + (left ? ` · about ${fmt(left)} left` : ''), 0.03 + 0.92 * f);
@@ -1956,12 +2037,12 @@ async function exportNative({ share = true } = {}) {
             busyNow = false;
             if (cancelled) { finish(); return; }
             m.requestVideoFrameCallback(onFrame);
-            if (!document.hidden) m.play().catch((e) => { over = true; reject(e); });
+            if (!document.hidden) m.play().catch((e) => { if (e && e.name === 'AbortError') return; over = true; reject(e); });
           } catch (e) { over = true; reject(e); }
         };
         m.requestVideoFrameCallback(onFrame);
         m.addEventListener('ended', finish, { once: true });
-        m.play().catch(reject);
+        m.play().catch((e) => { if (e && e.name === 'AbortError') return; reject(e); });   // (stopped by our own pause at a picture: not a failure)
       });
       m.playbackRate = 1; m.muted = false;
       await chain;
@@ -1983,6 +2064,7 @@ async function exportNative({ share = true } = {}) {
       }
     }
     if (pending) await pending;
+    }
     busy('Making the video…', 'Putting the sound in.', 0.96);
     post({ op: 'end', audio, a, b, gain, dur: total });
     const done = await outNext(id, ['done'], 600000);
@@ -1990,7 +2072,7 @@ async function exportNative({ share = true } = {}) {
     const blob = new Blob([await res.blob()], { type: 'video/mp4' });
     try { window.webkit.messageHandlers.standDone.postMessage({ path: done.path }); } catch {}
     busy(null);
-    window.__studioExport = { w: W, h: H, fps, frames: sent, size: blob.size, audio, seeks: SEEKS, ms: { seek: Math.round(tSeek), draw: Math.round(tDraw), jpg: Math.round(tJpg), all: Math.round(performance.now() - t0) } };
+    window.__studioExport = { w: outW, h: outH, over: overUsed, fps, frames: sent, size: blob.size, audio, seeks: SEEKS, ms: { seek: Math.round(tSeek), draw: Math.round(tDraw), jpg: Math.round(tJpg), all: Math.round(performance.now() - t0) } };
     await keepExport(blob, a, b, total, { share });
     return true;
   } finally {

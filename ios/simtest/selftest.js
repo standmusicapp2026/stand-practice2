@@ -323,11 +323,32 @@ async function videoRun() {
     const f = await db.get('files', 'video:' + takes[0].id);
     const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(f.data);
     await new Promise((res) => { v.onloadedmetadata = res; v.onerror = res; setTimeout(res, 8000); });
-    const ok2 = Math.abs(v.duration - 2) < 0.2 && v.videoWidth === r.w && v.videoHeight === r.h && r.frames >= 57 && r.audio !== 'none';
+    // (a picture from the middle of the film, against the original at the same moment: the same scene,
+    // upright, not black)
+    const mean = async (vid, t) => { await new Promise((res) => { vid.onseeked = res; vid.currentTime = t; setTimeout(res, 3000); }); await sleep(200); const c = document.createElement('canvas'); c.width = 24; c.height = 24; const g = c.getContext('2d'); g.drawImage(vid, 0, 0, 24, 24); const d = g.getImageData(0, 0, 24, 24).data; let s2 = 0; for (let k = 0; k < d.length; k += 4) s2 += d[k] + d[k + 1] + d[k + 2]; return s2 / (d.length / 4) / 3; };
+    const src = document.createElement('video'); src.muted = true; src.playsInline = true; src.src = URL.createObjectURL((await db.get('files', 'video:' + got.id)).data);
+    await new Promise((res) => { src.onloadedmetadata = res; src.onerror = res; setTimeout(res, 8000); });
+    const mOut = await mean(v, 1.0), mSrc = await mean(src, 1.0);
+    const upright = Math.abs(v.videoWidth / Math.max(1, v.videoHeight) - src.videoWidth / Math.max(1, src.videoHeight)) < 0.03 || !r.over;
+    const ok2 = Math.abs(v.duration - 2) < 0.2 && v.videoWidth === r.w && v.videoHeight === r.h && r.frames >= 57 && r.audio !== 'none' && mOut > 8 && upright && (!r.over || Math.abs(mOut - mSrc) < 40);
     $('#stBack') && $('#stBack').click(); await sleep(800);
-    const msg = `${r.frames} pictures ${r.w}x${r.h} @${r.fps}, ${(v.duration || 0).toFixed(2)} s, ${Math.round(r.size / 1000)} kB, sound ${r.audio}, ${JSON.stringify(r.seeks)} ${JSON.stringify(r.ms)}`;
+    const msg = `${r.over ? 'over the original' : 'pictures'} ${r.frames} ${r.w}x${r.h} (original ${src.videoWidth}x${src.videoHeight}) @${r.fps}, ${(v.duration || 0).toFixed(2)} s, ${Math.round(r.size / 1000)} kB, sound ${r.audio}, light ${mOut.toFixed(0)}/${mSrc.toFixed(0)}, ${JSON.stringify(r.seeks)} ${JSON.stringify(r.ms)}`;
     if (!ok2) throw new Error(msg);
+    // (made over the original itself, as it should be on the iPad; else it fell back)
+    if (window.standCaps && window.standCaps.videoOver && !r.over) throw new Error('fell back: ' + msg);
     return msg;
+  }, 180000);
+  await step('studio export: picture by picture (the way kept for when the other fails)', async () => {
+    await closePanels();
+    const S = await import('/js/studio.js');
+    await S.openStudio(got.id); await sleep(1500);
+    S._studio.P.trim = { a: 0, b: 2 };
+    window.__studioExport = null;
+    const ok = await S._exportNative({ share: false, noOver: true });
+    const r = window.__studioExport;
+    $('#stBack') && $('#stBack').click(); await sleep(800);
+    if (!ok || !r || r.over || r.frames < 57) throw new Error(JSON.stringify(r));
+    return `${r.frames} pictures ${r.w}x${r.h}`;
   }, 180000);
   await shot('v2-exported');
   await closePanels();

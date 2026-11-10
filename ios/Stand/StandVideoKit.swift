@@ -2,6 +2,7 @@ import UIKit
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
+import CoreImage
 
 // Videos in and out of Stand at their own quality.
 //
@@ -18,6 +19,9 @@ import UniformTypeIdentifiers
 //                 · { op: "src", id, part: "begin" | "chunk" | "end", data, name } (the original video)
 //                 · { op: "wav", id, part: "begin" | "chunk" | "end", data } (the sound made by Studio)
 //                 · { op: "end", id, audio: "src" | "wav" | "none", a, b, gain } · { op: "cancel", id }
+//                 · { op: "over", id, a, b, fps, w, h, crop: [x, y, w, h] } then { op: "oframe", id, i, data, rect }:
+//                   only what Studio draws over the video (PNG, see-through), put over the original
+//                   video itself at its own size (never drawn again by the page: nothing is lost)
 // App → page:
 //   standVideoInEvent({ type: "busy" | "done" | "error" | "cancel", video, audio, name, dur, w, h, fps, message })
 //   standVideoOutEvent({ id, type: "ready" | "ack" | "src" | "progress" | "done" | "error", i, fps, w, h, hasAudio, path, f, message })
@@ -147,10 +151,28 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
         var frames = 0
         var failed = false
         var lastPts: CMTime = .negativeInfinity
+        var over: Over?
         init(id: String, w: Int, h: Int, fps: Int, rate: Int, url: URL) {
             self.id = id; self.w = w; self.h = h; self.fps = fps; self.rate = rate; self.url = url
         }
     }
+    // The music over the original video: the pictures Studio draws (see-through) wait here, by number,
+    // until the video's own frames reach them; the film is made by iOS from the original, at its size.
+    private final class Over {
+        let cond = NSCondition()
+        var frames: [Int: CIImage] = [:]
+        var got = 0          // (pictures received: 0 … got-1)
+        var used = 0         // (the last one used)
+        var jsDone = false
+        var cancelled = false
+        var exported: Bool?  // (nil: still being made; then whether it worked)
+        var error: String?
+        var endBody: [String: Any]?
+        var session: AVAssetExportSession?
+        let fps: Double, w: Int, h: Int
+        init(fps: Double, w: Int, h: Int) { self.fps = fps; self.w = w; self.h = h }
+    }
+    private lazy var ci = CIContext(options: [.cacheIntermediates: false])
     private var jobs: [String: Job] = [:]
     private let queue = DispatchQueue(label: "stand.videoout")
 
@@ -237,6 +259,15 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
                 } else { outEvent(id, ["type": "chunk"]) }
             }
         case "end":
+            if let job = jobs[id], let ov = job.over {
+                jobs.removeValue(forKey: id)
+                ov.cond.lock(); ov.jsDone = true; ov.endBody = body; ov.cond.broadcast()
+                let ready = ov.exported != nil
+                ov.cond.unlock()
+                // (the film may still be being made: it goes on when it is)
+                if ready { overDone(id, job) }
+                return
+            }
             guard let job = jobs.removeValue(forKey: id), let writer = job.writer, let input = job.input else { outEvent(id, ["type": "error", "message": "no pictures"]); return }
             input.markAsFinished()
             // (the last picture lasts until the end of the part)
@@ -294,9 +325,133 @@ final class StandVideoKit: NSObject, PHPickerViewControllerDelegate, UIDocumentP
                 else { self.outEvent(id, ["type": "error", "message": ex.error?.localizedDescription ?? "cut"]) }
                 self.clean(job)
             }
+        case "over":
+            guard let job = jobs[id], job.src != nil else { outEvent(id, ["type": "error", "message": "no video"]); return }
+            if let err = startOver(job, body) { outEvent(id, ["type": "error", "message": err]) }
+            else { outEvent(id, ["type": "ready", "over": true, "w": job.over?.w ?? 0, "h": job.over?.h ?? 0]) }
+        case "oframe":
+            guard let job = jobs[id], let ov = job.over else { outEvent(id, ["type": "error", "message": "no job"]); return }
+            let i = body["i"] as? Int ?? ov.got
+            guard let b64 = body["data"] as? String, let data = Data(base64Encoded: b64), let pic = CIImage(data: data) else {
+                outEvent(id, ["type": "error", "message": "picture \(i)"]); return
+            }
+            // where it goes on the film (from the top left, in the film's own points)
+            let r = (body["rect"] as? [Double]) ?? [0, 0, Double(ov.w), Double(ov.h)]
+            let e = pic.extent
+            let placed = pic.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                .transformed(by: CGAffineTransform(scaleX: CGFloat(r[2]) / max(1, e.width), y: CGFloat(r[3]) / max(1, e.height)))
+                .transformed(by: CGAffineTransform(translationX: CGFloat(r[0]), y: CGFloat(Double(ov.h) - r[1] - r[3])))
+            ov.cond.lock()
+            ov.frames[i] = placed; ov.got = max(ov.got, i + 1); ov.cond.broadcast()
+            // (never far ahead of the film being made: the pictures waiting are kept few)
+            let until = Date().addingTimeInterval(120)
+            while ov.frames.count > 48 && !ov.cancelled && ov.exported == nil && Date() < until { _ = ov.cond.wait(until: Date().addingTimeInterval(0.5)) }
+            let failed = ov.exported == false ? (ov.error ?? "export") : nil
+            ov.cond.unlock()
+            if let f = failed { outEvent(id, ["type": "error", "message": f]); return }
+            outEvent(id, ["type": "ack", "i": i])
         case "cancel":
-            if let job = jobs.removeValue(forKey: id) { job.writer?.cancelWriting(); clean(job) }
+            if let job = jobs.removeValue(forKey: id) {
+                if let ov = job.over { ov.cond.lock(); ov.cancelled = true; ov.cond.broadcast(); ov.cond.unlock(); ov.session?.cancelExport() }
+                job.writer?.cancelWriting(); clean(job)
+            }
         default: break
+        }
+    }
+
+    // The film made by iOS from the original video (the part used, cut and upright as shown in Studio),
+    // with Studio's pictures laid over each of its frames.
+    private func startOver(_ job: Job, _ body: [String: Any]) -> String? {
+        guard let src = job.src?.1 else { return "no video" }
+        let asset = AVURLAsset(url: src)
+        guard let vt = asset.tracks(withMediaType: .video).first else { return "no pictures" }
+        let a = body["a"] as? Double ?? 0, b = body["b"] as? Double ?? asset.duration.seconds
+        let fps = max(1, body["fps"] as? Double ?? Double(vt.nominalFrameRate))
+        let W = max(16, (body["w"] as? Int ?? 1080) / 2 * 2), H = max(16, (body["h"] as? Int ?? 1920) / 2 * 2)
+        let crop = (body["crop"] as? [Double]) ?? []
+        let comp = AVMutableComposition()
+        guard let ct = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { return "track" }
+        do { try ct.insertTimeRange(CMTimeRange(start: CMTime(seconds: a, preferredTimescale: 6000), end: CMTime(seconds: b, preferredTimescale: 6000)), of: vt, at: .zero) }
+        catch { return error.localizedDescription }
+        let tf = vt.preferredTransform
+        ct.preferredTransform = tf
+        let nat = vt.naturalSize, up = nat.applying(tf); let upW = abs(up.width), upH = abs(up.height)
+        // (how the video is turned to be upright)
+        let orient: CGImagePropertyOrientation = {
+            switch (Int(tf.a.rounded()), Int(tf.b.rounded()), Int(tf.c.rounded()), Int(tf.d.rounded())) {
+            case (0, 1, -1, 0): return .right
+            case (0, -1, 1, 0): return .left
+            case (-1, 0, 0, -1): return .down
+            default: return .up
+            }
+        }()
+        let cx = crop.count == 4 ? crop[0] : 0, cy = crop.count == 4 ? crop[1] : 0
+        let cw = crop.count == 4 ? max(2, crop[2]) : Double(upW), ch = crop.count == 4 ? max(2, crop[3]) : Double(upH)
+        let ov = Over(fps: fps, w: W, h: H)
+        let vc = AVMutableVideoComposition(asset: comp) { [weak ov] req in
+            guard let ov = ov else { req.finish(with: NSError(domain: "stand", code: 1)); return }
+            let t = req.compositionTime.seconds
+            let k = max(0, Int((t * ov.fps + 1e-3).rounded(.down)))
+            ov.cond.lock()
+            let until = Date().addingTimeInterval(120)
+            while ov.got <= k && !ov.jsDone && !ov.cancelled && Date() < until { _ = ov.cond.wait(until: Date().addingTimeInterval(0.5)) }
+            var j = min(k, ov.got - 1); while j >= 0 && ov.frames[j] == nil { j -= 1 }
+            let pic: CIImage? = j >= 0 ? ov.frames[j] : nil
+            if j >= 0 { for key in ov.frames.keys where key < j { ov.frames.removeValue(forKey: key) }; ov.used = j }
+            let stop = ov.cancelled
+            ov.cond.broadcast(); ov.cond.unlock()
+            if stop { req.finish(with: NSError(domain: "stand", code: 2)); return }
+            // upright (the picture may come as filmed, or already turned)
+            var img = req.sourceImage
+            let ex = img.extent
+            let isUp = abs(ex.width - upW) < 2 && abs(ex.height - upH) < 2
+            if !isUp { img = img.oriented(orient) }
+            img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
+            let Hd = img.extent.height
+            let r = CGRect(x: cx, y: Double(Hd) - cy - ch, width: cw, height: ch)
+            var base = img.cropped(to: r)
+                .transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+                .transformed(by: CGAffineTransform(scaleX: CGFloat(Double(W) / cw), y: CGFloat(Double(H) / ch)))
+            if let pic = pic { base = pic.composited(over: base) }
+            req.finish(with: base.cropped(to: CGRect(x: 0, y: 0, width: W, height: H)), context: nil)
+        }
+        vc.renderSize = CGSize(width: W, height: H)
+        let presets = AVAssetExportSession.exportPresets(compatibleWith: comp)
+        let preset = presets.contains(AVAssetExportPresetHEVCHighestQuality) ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
+        guard let session = AVAssetExportSession(asset: comp, presetName: preset) else { return "export" }
+        session.videoComposition = vc
+        session.outputURL = job.url
+        session.outputFileType = .mp4
+        ov.session = session
+        job.over = ov
+        let id = job.id
+        // (the job is held until the film is made: the page may have finished sending long before)
+        session.exportAsynchronously { [weak self] in
+            guard let self = self, let ov = job.over else { return }
+            ov.cond.lock()
+            ov.exported = session.status == .completed
+            if session.status != .completed { ov.error = session.error?.localizedDescription ?? "export"; StandLog.write("studio over: " + (ov.error ?? "")) }
+            let ended = ov.jsDone
+            ov.cond.broadcast(); ov.cond.unlock()
+            if ended { self.queue.async { self.overDone(id, job) } }
+        }
+        return nil
+    }
+    // the film is made and the page has sent all it had: the sound goes in, as for the other films
+    private func overDone(_ id: String, _ job: Job) {
+        guard let ov = job.over else { return }
+        if ov.exported != true { outEvent(id, ["type": "error", "message": ov.error ?? "export"]); clean(job); return }
+        let body = ov.endBody ?? [:]
+        let audio = body["audio"] as? String ?? "none"
+        let a = body["a"] as? Double ?? 0, b = body["b"] as? Double ?? 0
+        let gain = Float(body["gain"] as? Double ?? 1)
+        let fromSrc = audio == "src" || audio == "mix"
+        let sound: URL? = fromSrc ? job.src?.1 : audio == "wav" ? job.wav?.1 : nil
+        guard let snd = sound else { finished(id, job.url, job); return }
+        outEvent(id, ["type": "progress", "f": 0.97])
+        addSound(to: job.url, from: snd, range: fromSrc ? (a, b) : nil, gain: fromSrc ? gain : 1, wet: audio == "mix" ? job.wav?.1 : nil) { final, err in
+            if let final = final { self.finished(id, final, job) }
+            else { StandLog.write("studio over: sound failed: " + (err ?? "?")); self.outEvent(id, ["type": "error", "message": err ?? "sound"]); self.clean(job) }
         }
     }
 

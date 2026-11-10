@@ -158,7 +158,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
