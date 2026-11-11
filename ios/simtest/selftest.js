@@ -78,8 +78,17 @@ async function bgRun() {
   await step('background: put away at least twice while playing', async () => seenAway >= 2 ? `${seenAway} of 3` : false);
   // (pause and play from the lock screen, as iOS does them: the sound system paused, later started, from outside)
   await step('lock screen pause: the metronome stops and stays stopped', async () => { const m = window.__standMetro, c = m._ctx; if (!window.__standOutside) return false;
-    await window.__standOutside.pause(c); await sleep(2500); const d = `metro ${m.running} sound ${c.state} same ${c === m._ctx} ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}`;
-    if (!(!m.running && c.state === 'suspended')) say('SELFTEST detail lock pause: ' + d + ' log: ' + alogTail()); return !m.running && c.state === 'suspended' ? d : false; });
+    const T0 = Date.now() - 4000, seen = [];
+    const look = setInterval(() => { const k = c.state[0] + (m.running ? 'M' : '-'); if (seen[seen.length - 1] !== k) seen.push(k); }, 100);
+    let pr = 'none'; try { await window.__standOutside.pause(c); pr = 'done ' + c.state; } catch (e) { pr = 'refused ' + e; }
+    await sleep(2500); clearInterval(look);
+    const d = `metro ${m.running} sound ${c.state} same ${c === m._ctx} ${navigator.mediaSession ? navigator.mediaSession.playbackState : ''}`;
+    if (!(!m.running && c.state === 'suspended')) {
+      say(`SELFTEST detail lock pause: ${d} pause ${pr} hidden ${document.hidden} states ${seen.join(' ')} sound ${JSON.stringify(S())}`);
+      const L = (window.__audioLog || []).filter((e) => e.t >= T0).map((e) => `${((e.t - Date.now()) / 1000).toFixed(1)}s ${e.what} [${e.state}]`);
+      for (let i = 0; i < L.length; i += 4) say('SELFTEST detail lock pause log: ' + L.slice(i, i + 4).join(' | '));
+    }
+    return !m.running && c.state === 'suspended' ? d : false; });
   await step('lock screen play: the metronome starts again', async () => { const m = window.__standMetro, c = m._ctx;
     await window.__standOutside.play(c); await sleep(1500); const d = `metro ${m.running} sound ${c.state} beats ${S().beats}`;
     if (!(m.running && c.state === 'running')) say('SELFTEST detail lock play: ' + d + ' log: ' + alogTail()); return m.running && c.state === 'running' ? d : false; });
