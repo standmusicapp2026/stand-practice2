@@ -2011,7 +2011,10 @@ async function layout(fade) {
 // moves the column (and it runs on a little, as on the iPhone); turning a page (a tap at the side, a
 // pedal, listening, a jump) brings the next page to the top.
 const SC = { boxes: [], doc: null, token: 0, spread: null, raf: 0, mom: 0, anim: 0, placeT: 0 };
-const SCROLL = () => !!(S.scrollPages && V.doc && !TURN() && !(typeof DUO !== 'undefined' && DUO.on));
+// (Scroll down is for notebooks only, chosen for each one: a score always turns like a book, and so
+// does a notebook until Scroll down is chosen for it)
+const isNotebook = () => !!(V.base && V.base.paper);
+const SCROLL = () => !!(V.score && V.score.scroll && (isNotebook() || window.__scrollAny) && V.doc && !TURN() && !(typeof DUO !== 'undefined' && DUO.on));
 function scrollWidth(sr) { return Math.floor(Math.min(sr.width - 16, Math.max(sr.height * 1.05, 560))); }
 // (where a page is in the column; a moved column is the pages' own frame for offsetTop, a still one is not)
 const scTop0 = (b) => (b.pg.offsetParent === SC.spread ? b.pg.offsetTop : b.pg.offsetTop - SC.spread.offsetTop);
@@ -2215,13 +2218,19 @@ stage.addEventListener('wheel', (e) => {
   Z.y -= e.deltaY; if (Z.s > 1) Z.x -= e.deltaX; applyZoom(); clearTimeout(SC.wheelT); SC.wheelT = setTimeout(scheduleSharpen, 200);
 }, { passive: false });
 function setScrollPages(on) {
-  S.scrollPages = !!on; saveSettings();
-  for (const b of $$('[data-flow]')) b.classList.toggle('on', (b.dataset.flow === 'scroll') === !!on);
+  if (!V.score || !(isNotebook() || window.__scrollAny)) return;
+  if (!!V.score.scroll === !!on) { syncFlowSeg(); return; }
+  V.score.scroll = !!on; db.put('scores', V.score).catch(() => {});
+  syncFlowSeg();
   if (V.doc) { V.half = false; clearCache(); layout(); }
 }
 for (const b of $$('[data-flow]')) b.addEventListener('click', () => setScrollPages(b.dataset.flow === 'scroll'));
-function syncFlowSeg() { for (const b of $$('[data-flow]')) b.classList.toggle('on', (b.dataset.flow === 'scroll') === !!S.scrollPages); }
-window.__scroll = { SC, where: scrollWhere, to: scrollToPage, set: setScrollPages, nat: () => spreadNatural(), yfor: (i) => scrollYFor(i, 0) };   // (tests)
+function syncFlowSeg() {
+  const nb = isNotebook() || !!window.__scrollAny, on = !!(V.score && V.score.scroll);
+  for (const s2 of $$('.flow-seg')) s2.hidden = !nb;
+  for (const b of $$('[data-flow]')) b.classList.toggle('on', (b.dataset.flow === 'scroll') === on);
+}
+window.__scroll = { SC, where: scrollWhere, to: scrollToPage, set: (on) => { window.__scrollAny = true; setScrollPages(on); }, nat: () => spreadNatural(), yfor: (i) => scrollYFor(i, 0) };   // (tests)
 // ---------- the tempo printed in the score ----------
 // Where a page says how fast (♩ = 108, Allegretto…), a tap there starts the metronome at that
 // tempo. The first time a score is opened, each mark glows softly once, so it is found; after
@@ -3024,6 +3033,15 @@ function sharpenInk() {
 // for the memory): the paper's lines, the printed music and the notes went soft from about 150%.
 // So, as for the markings, just the part of the page on screen is drawn again at the screen's own
 // pixels, over the page (the whole page stays under it, so moving the page never shows a gap).
+// (is that part of the page itself — v, as parts of it — blank paper?)
+function regionBlank(art, v) {
+  try {
+    const W = art.width, H = art.height; if (!W || !H) return true;
+    const c = document.createElement('canvas'); c.width = 48; c.height = 48;
+    c.getContext('2d').drawImage(art, v.x * W, v.y * H, Math.max(1, v.w * W), Math.max(1, v.h * H), 0, 0, 48, 48);
+    return looksBlank(c, 48, 48);
+  } catch { return false; }
+}
 function dropArtTile(p) { p.tileKey = null; if (p.tile) { const t = p.tile; p.tile = null; t.remove(); t.width = t.height = 0; } }
 function sharpArtTile(p, r, sr, dpr) {
   const doc = V.doc;
@@ -3044,6 +3062,9 @@ function sharpArtTile(p, r, sr, dpr) {
     // (this score cannot be drawn in pieces — a heavy scan: the whole page is drawn sharp instead)
     if (ok === false && SCROLL() && !SC.noTile) { SC.noTile = true; scheduleSharpen(); }
     if (!ok || p.tileKey !== key || token !== layoutToken || !p.art || p.art.parentNode !== p.inner) { c.width = c.height = 0; return; }
+    // (iOS short of memory — the markings just made sharp too — may hand back a piece left white: it
+    // is never put over the music, the page stays as it is and the piece is made again later)
+    if (looksBlank(c) && !regionBlank(p.art, v)) { c.width = c.height = 0; p.tileKey = null; clearTimeout(p.tileRetry); p.tileRetry = setTimeout(() => { if (Z.s > 1.05) scheduleSharpen(); }, 1200); return; }
     Object.assign(c.style, { inset: 'auto', left: v.x * 100 + '%', top: v.y * 100 + '%', width: v.w * 100 + '%', height: v.h * 100 + '%' });
     const old = p.tile; p.tile = c;
     if (old && old.parentNode === p.inner) { old.replaceWith(c); old.width = old.height = 0; } else p.art.after(c);

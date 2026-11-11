@@ -64,12 +64,12 @@ export async function openStudio(takeId) {
   $('#studio').hidden = false; document.body.classList.add('in-studio');
   $('#stTitle').textContent = take.name || 'Studio';
   ST.sel = ST.P.overlays.find((o) => o.kind === 'score') ? { id: ST.P.overlays.find((o) => o.kind === 'score').id } : null;
-  ST.want = null; ST.gradeKey = null; ST.media.currentTime = ST.P.trim.a;
+  ST.at = null; ST.pend = null; ST.gradeKey = null; ST.media.currentTime = ST.P.trim.a;
   // (a picture of the first frame to show, and to draw the looks with)
   if (ST.media.readyState < 2) await new Promise((res) => { const done = () => { ST.media.removeEventListener('loadeddata', done); ST.media.removeEventListener('seeked', done); res(); }; ST.media.addEventListener('loadeddata', done); ST.media.addEventListener('seeked', done); setTimeout(done, 2500); });
   ST.tv = null; sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
   makeStrip();
-  ST.media.addEventListener('seeked', () => { if (ST.want != null) { const t = ST.want; ST.want = null; if (Math.abs(ST.media.currentTime - t) > 0.0005) { ST.seekAt = performance.now(); ST.media.currentTime = t; } }
+  ST.media.addEventListener('seeked', () => { if (ST.pend) { const q = ST.pend; ST.pend = null; jump(q.t, q.quick); }
     // (the picture may come a moment after the jump: drawn again then, made afresh)
     ST.gradeKey = null; frame(); clearTimeout(ST.reGrade); ST.reGrade = setTimeout(() => { if (!ST.media.seeking) { ST.gradeKey = null; frame(); } }, 150); });
   ST.media.addEventListener('ended', () => { ST.playing = false; syncPlay(); lsStop(); });
@@ -165,7 +165,7 @@ async function addScore(opt = {}) {
     const o = {
       id: uid(), kind: 'score', title: region.source && region.source.title || 'Score', src: { scoreId: region.source && region.source.scoreId, page: region.page, box: region.box },
       img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: { '9:16': 2, '4:5': 2, '1:1': 3 }[ST.P.format] || 4, size: ST.P.format === '9:16' || ST.P.format === '4:5' ? 0.96 : 0.9, pos: { x: 0.5, y: ST.P.format === '16:9' ? 0.8 : 0.78 }, opacity: 1, highlight: true,
-      layout: stripLayout(A, region.canvas.width, region.canvas.height), times: null, synced: 'even',
+      layout: stripLayout(A, region.canvas.width, region.canvas.height, region.canvas), times: null, synced: 'even',
     };
     if (!o.layout.bars.length) { busy(null); D.toast('No bars found there.', 4000); return; }
     o.times = evenTimes(o.layout.bars.length);
@@ -237,8 +237,27 @@ function jointOf(o) {
 // a change to how a line looks: both lines, so the two read as one system
 function sharedChange(o, fn) { const ls = scoreLines(); for (const x of ls.length > 1 && ls.includes(o) ? ls : [o]) fn(x); }
 // Bars in reading order: each system cut at its barlines; later systems without their clef.
-function stripLayout(A, W, H) {
+function stripLayout(A, W, H, canvas) {
   const sp = A.sp;
+  // (where the clef — and key — at the start of a later line ends: the first clear gap of about a
+  // space after them, between the staff's own lines. The first note read is not enough: an open
+  // note, a half or a whole, may not be read as a note, and the bar it is in was lost)
+  let px = null;
+  try { if (canvas) px = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data; } catch { px = null; }
+  const clefEnd = (st) => {
+    if (!px) return null;
+    const ya = Math.max(0, Math.round(st.top)), yb = Math.min(H - 1, Math.round(st.bottom)), xa = Math.max(0, Math.round(st.x0));
+    const lim = Math.min(W - 1, Math.round(st.x0 + sp * 12));
+    const dark = (x) => { let n = 0; for (let y = ya; y <= yb; y++) if (px[(y * W + x) * 4] < 150) n++; return n; };
+    const cs = []; for (let x = xa; x <= lim; x++) cs.push(dark(x));
+    const base = [...cs].sort((a, b) => a - b)[Math.floor(cs.length * 0.3)];
+    const busy = (k) => cs[k] > base + Math.max(2, sp * 0.15);
+    let k = 0; while (k < cs.length && !busy(k)) k++;
+    if (k >= sp * 3) return null;   // (no clef there)
+    const need = Math.round(sp * 0.9);
+    for (let run = 0; k < cs.length; k++) { if (busy(k)) run = 0; else if (++run >= need) return xa + k - run + 1; }
+    return null;
+  };
   const segs = [], bars = [], notes = [], events = [];
   let sx = 0;
   // every note of a staff as sounding pitch classes, with the clef and key as they change along the
@@ -263,6 +282,7 @@ function stripLayout(A, W, H) {
     const s0 = sts[0];
     const firstHead = s0.heads.length ? Math.min(...s0.heads.map((h) => h.x)) : s0.x0 + sp * 4;
     let x0 = si === 0 ? Math.max(0, s0.x0 - sp * 0.5) : Math.max(s0.x0, firstHead - sp * 1.6);
+    if (si > 0) { const ce = clefEnd(s0); if (ce != null && ce + sp * 0.3 < x0) x0 = ce + sp * 0.3; }
     const x1 = Math.min(W, s0.x1 + sp * 0.4);
     const lines = s0.bars.map((b) => b.x).filter((x) => x > x0 + sp * 1.2 && x < x1 - sp * 1.2).sort((a, b) => a - b);
     // a barline right at the start belongs to the previous line
@@ -507,7 +527,24 @@ function straightStrip(L, bmp) {
       if (thin.length !== 5 || runs.length !== 5) continue;
       // (each line's middle weighed by how dark each of its rows is: to a part of a pixel)
       const mids = thin.map((r) => { let sw = 0, sy = 0; for (let y = Math.max(0, r[0] - 1); y <= Math.min(h - 1, r[1] + 1); y++) { const wv = 255 - d[(y * w + x) * 4]; sw += wv; sy += wv * y; } return sw > 0 ? sy / sw : (r[0] + r[1]) / 2; }), gaps = mids.slice(1).map((m, i) => m - mids[i]);
-      if (gaps.every((gg) => Math.abs(gg - sp0) < sp0 * 0.3)) { mids.x = x; mids.col = Float32Array.from({ length: h }, (_, y) => d[(y * w + x) * 4]); return mids; }
+      if (gaps.every((gg) => Math.abs(gg - sp0) < sp0 * 0.3)) {
+        mids.x = x;
+        // (the lines as they look on average over the columns beside it that hold nothing but them —
+        // one column alone may be a little darker or lighter than the staff around it, and the join
+        // then showed as darker pieces of line)
+        const col = new Float32Array(h); let n = 0;
+        for (let j = 0; j < sp0 * 4 && n < 16; j++) {
+          const xx = Math.round(x + dir * j); if (xx < 0 || xx >= w) break;
+          const rr = []; let r0 = -1;
+          for (let y = 0; y <= h; y++) { const dk = y < h && d[(y * w + xx) * 4] < 205; if (dk && r0 < 0) r0 = y; if (!dk && r0 >= 0) { rr.push([r0, y - 1]); r0 = -1; } }
+          if (rr.length !== 5 || rr.some((r, i2) => r[1] - r[0] > sp0 * 0.35 || Math.abs((r[0] + r[1]) / 2 - mids[i2]) > 1.2)) continue;
+          for (let y = 0; y < h; y++) col[y] += d[(y * w + xx) * 4];
+          n++;
+        }
+        if (!n) for (let y = 0; y < h; y++) col[y] = d[(y * w + x) * 4]; else for (let y = 0; y < h; y++) col[y] /= n;
+        mids.col = col; mids.n = n || 1;
+        return mids;
+      }
     }
     return null;
   };
@@ -573,7 +610,7 @@ function straightStrip(L, bmp) {
         const gw = Math.max(1, Math.ceil(xb + 1 - xa)), gh = CH0, hs = sp0 * 0.3;
         const gc = document.createElement('canvas'); gc.width = gw; gc.height = gh;
         const gg2 = gc.getContext('2d'), im = gg2.createImageData(gw, gh), dd = im.data; dd.fill(255);
-        const px = (col, y) => (y >= 0 && y < col.length && col[y] < 225 ? col[y] : 255);   // (the line itself, never a faint shade beside it)
+        const px = (col, y) => (y >= 0 && y < col.length ? col[y] : 255);   // (the line with its own soft edge, as on the page)
         const samp = (col, y) => { const y0 = Math.floor(y), f = y - y0; return px(col, y0) * (1 - f) + px(col, y0 + 1) * f; };
         for (let i = 0; i < gw; i++) {
           const f = Math.min(1, Math.max(0, (i + 0.5) / gw)), ff = f * f * (3 - 2 * f);
@@ -979,7 +1016,7 @@ function startTap(o, from = 0) {
   from = o.times && from > 0 && from < o.layout.bars.length ? from : 0;
   ST.tapping = { o, k: from, from, times: from ? o.times.slice(0, from) : [] };
   const t0 = Math.max(ST.P.trim.a, (o.times ? o.times[from] : ST.P.trim.a) - 2);
-  ST.media.currentTime = t0;
+  ST.at = null; ST.pend = null; clearTimeout(ST.exactT); ST.media.currentTime = t0;
   $('#stTap').hidden = false; $('#stTapInfo').textContent = `Tap on the first beat of bar ${from + 1}`;
   // (the notes' starts, found while you tap)
   if (ST.pcm && !(ST.onsets && ST.onsets.a === ST.P.trim.a && ST.onsets.b === ST.P.trim.b)) {
@@ -1175,6 +1212,8 @@ function lookThumb(c, look) {
   const g = c.getContext('2d'); const vw = m.videoWidth, vh = m.videoHeight, s = Math.max(c.width / vw, c.height / vh);
   const graded = isNeutral(look) ? m : grader.render(m, vw * s, vh * s, look);
   g.drawImage(graded || m, (c.width - vw * s) / 2, (c.height - vh * s) / 2, vw * s, vh * s);
+  // (the look's picture is made in the same place as the preview's: the preview's is made again)
+  if (graded && graded !== m) ST.gradeKey = null;
 }
 function rr(g, x, y, w, h, r) { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); }
 function barAt(o, t) {
@@ -1383,7 +1422,8 @@ function frame() {
 }
 function loop() { frame(); lsKeep(); if (ST.playing) ST.raf = requestAnimationFrame(loop); }
 function play() {
-  if (ST.want != null) { ST.media.currentTime = ST.want; ST.want = null; }
+  clearTimeout(ST.exactT); ST.pend = null;
+  if (ST.at != null) { if (Math.abs(ST.media.currentTime - ST.at) > 0.001) ST.media.currentTime = ST.at; ST.at = null; }
   if (ST.media.currentTime >= ST.P.trim.b - 0.05 || ST.media.currentTime < ST.P.trim.a) ST.media.currentTime = ST.P.trim.a;
   ST.media.play().catch(() => {}); ST.playing = true; syncPlay(); loop();
   ST.stopAt = setInterval(() => { if (ST.media.currentTime >= ST.P.trim.b) { pause(); if (ST.tapping) finishTap(); } }, 50);
@@ -1522,22 +1562,30 @@ function drawWave() {
   // (what is cut away, dimmed)
   if (pics.length) { g.fillStyle = 'rgba(0,0,0,0.55)'; if (ax > 0) g.fillRect(0, 0, Math.min(c.width, ax), c.height); if (bx < c.width) g.fillRect(Math.max(0, bx), 0, c.width - Math.max(0, bx), c.height); }
 }
-// (while the finger moves along the timeline: one seek at a time, the newest place kept for when it lands.
-// A big video asked to jump on every move never finishes any jump, so the picture came in leaps; the line
-// under the finger and the music follow at once, the picture as fast as the iPad can find it)
-function seek(t) {
-  const m = ST.media; t = clamp(t, 0, ST.dur);
-  if (m.seeking && ST.seekAt && performance.now() - ST.seekAt < 700) {
-    ST.want = t; clearTimeout(ST.wantT);
-    // (a jump that never says it landed: the newest place is asked for anyway)
-    ST.wantT = setTimeout(() => { if (ST.want != null) { const w = ST.want; ST.want = null; ST.seekAt = performance.now(); m.currentTime = w; frame(); } }, 700);
-  } else { ST.want = null; ST.seekAt = performance.now(); m.currentTime = t; }
-  if (!ST.seekRaf) ST.seekRaf = requestAnimationFrame(() => { ST.seekRaf = 0; frame(); });
+// Moving along the timeline. The line under the finger, the time and the music on the picture go
+// exactly where the finger is, at once. The video follows as fast as the iPhone or iPad can find
+// its pictures: while the finger moves, the nearest picture it can show quickly (one jump at a time,
+// the newest place kept for when it lands — a big video asked to jump on every move never finished
+// any jump, and stood still under the finger); the finger resting or let go, the exact picture.
+function seek(t, how = 'exact') {
+  t = clamp(t, 0, ST.dur);
+  ST.at = t; clearTimeout(ST.exactT);
+  if (how === 'scrub') { jump(t, true); ST.exactT = setTimeout(() => { if (ST.at != null) jump(ST.at, false); }, 140); }
+  else jump(t, false);
+  updateHead();
+  onceAFrame('seek', frame);
+}
+function jump(t, quick) {
+  const m = ST.media;
+  if (m.seeking && ST.seekAt && performance.now() - ST.seekAt < 700) { ST.pend = { t, quick }; return; }
+  ST.pend = null; ST.seekAt = performance.now();
+  if (quick && typeof m.fastSeek === 'function') { try { m.fastSeek(t); return; } catch {} }
+  m.currentTime = t;
 }
 // (work asked for many times while a finger moves, done once for each picture the screen shows)
 const onceAFrame = (k, fn) => { ST.af = ST.af || {}; if (ST.af[k]) return; ST.af[k] = requestAnimationFrame(() => { ST.af[k] = 0; fn(); }); };
 // (the moment on show: where the finger is, even while the picture is still on its way there)
-const nowT = () => (ST.want != null ? ST.want : ST.media.currentTime);
+const nowT = () => (!ST.playing && ST.at != null ? ST.at : ST.media.currentTime);
 // the time over a trim handle while it is moved (to the hundredth when opened out)
 function trimTip(side) {
   const tip = $('#stTrimTip'), t = ST.P.trim[side];
@@ -1589,12 +1637,12 @@ function wireTimeline() {
     }
     if (edge && edge.dataset.k !== undefined) { drag = { kind: 'bar', k: +edge.dataset.k }; pause(); return; }
     if (img) { const o = ST.P.overlays.find((x) => x.id === img.dataset.img); drag = { kind: 'img', o, side: img.dataset.side, t0: t, a: o.t0, b: o.t1 }; return; }
-    drag = { kind: 'seek' }; seek(t);
+    drag = { kind: 'seek' }; seek(t, 'scrub');
   });
   tracks.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const t = tAt(e.clientX);
-    if (drag.kind === 'seek') seek(t);
+    if (drag.kind === 'seek') seek(t, 'scrub');
     else if (drag.kind === 'trim') {
       if (Math.abs(e.clientX - drag.x0) > 6) drag.moved = true;
       drag.lastX = e.clientX;
@@ -1602,7 +1650,7 @@ function wireTimeline() {
       if (drag.side === 'a') ST.P.trim.a = clamp(want, 0, ST.P.trim.b - 0.5); else ST.P.trim.b = clamp(want, ST.P.trim.a + 0.5, ST.dur);
       // (opened out: the view follows the handle when it nears an edge)
       if (ST.tv && drag.zoomed) { const v = ST.tv, span = v.b - v.a, h = ST.P.trim[drag.side]; if (h < v.a + span * 0.12 || h > v.b - span * 0.12) { const a2 = clamp(h - span / 2, 0, Math.max(0, ST.dur - span)); ST.tv = { a: a2, b: a2 + span }; drag.off = ST.P.trim[drag.side] - tAt(e.clientX); } }
-      seek(ST.P.trim[drag.side]); onceAFrame('tl', () => { renderTimeline(); drawWave(); if (drag && drag.kind === 'trim') trimTip(drag.side); });
+      seek(ST.P.trim[drag.side], 'scrub'); onceAFrame('tl', () => { renderTimeline(); drawWave(); if (drag && drag.kind === 'trim') trimTip(drag.side); });
     }
     else if (drag.kind === 'bar') {
       const o = ST.P.overlays.find((x) => x.kind === 'score'); const T = o.times, k = drag.k;
@@ -1610,17 +1658,18 @@ function wireTimeline() {
       o.synced = 'hand';
       // (two parts on one grid keep the same bar times: a bar moved is moved in both)
       const two = scoreLines()[1]; if (two && two.times && two.times.length === T.length) { two.times[k] = T[k]; two.synced = 'hand'; }
-      seek(Math.max(0, T[k] + 0.01)); onceAFrame('tl', renderTimeline);
+      seek(Math.max(0, T[k] + 0.01), 'scrub'); onceAFrame('tl', renderTimeline);
     } else if (drag.kind === 'img') {
       const o = drag.o, d = t - drag.t0;
       if (drag.side === 'a') o.t0 = clamp(drag.a + d, 0, o.t1 - 0.3);
       else if (drag.side === 'b') o.t1 = clamp(drag.b + d, o.t0 + 0.3, ST.dur);
       else { const len = drag.b - drag.a; o.t0 = clamp(drag.a + d, 0, ST.dur - len); o.t1 = o.t0 + len; }
-      onceAFrame('tl', renderTimeline); seek(o.t0 + 0.05);
+      onceAFrame('tl', renderTimeline); seek(o.t0 + 0.05, 'scrub');
     }
   });
   const end = () => {
     if (drag && drag.kind === 'trim') { clearTimeout(drag.hold); if (drag.zoomed) zoomTrim(drag, false); $('#stTrimTip').hidden = true; }
+    if (drag && ST.at != null) { clearTimeout(ST.exactT); jump(ST.at, false); }
     if (drag && drag.kind !== 'seek') saveSoon(); const was = drag && drag.kind; drag = null; if ((was === 'bar' || was === 'seek') && ST.sel && ST.P.overlays.find((x) => x.id === ST.sel.id && x.kind === 'score')) renderSide(); };
   tracks.addEventListener('pointerup', end); tracks.addEventListener('pointercancel', end);
 }
@@ -1640,10 +1689,11 @@ function wireStage() {
   c.addEventListener('pointermove', (e) => {
     if (!d) return;
     const r = c.getBoundingClientRect();
-    if (d.o) { d.o.pos = { x: clamp(d.pos.x + (e.clientX - d.x) / r.width, 0, 1), y: clamp(d.pos.y + (e.clientY - d.y) / r.height, 0, 1) }; frame(); }
-    else if (d.video && ST.P.fit !== 'fit') { ST.P.pan = { x: clamp(d.pan.x - (e.clientX - d.x) / r.width, 0, 1), y: clamp(d.pan.y - (e.clientY - d.y) / r.height, 0, 1) }; frame(); }
+    // (drawn once for each picture the screen shows, however many moves of the finger come in)
+    if (d.o) { d.o.pos = { x: clamp(d.pos.x + (e.clientX - d.x) / r.width, 0, 1), y: clamp(d.pos.y + (e.clientY - d.y) / r.height, 0, 1) }; onceAFrame('stage', frame); }
+    else if (d.video && ST.P.fit !== 'fit') { ST.P.pan = { x: clamp(d.pan.x - (e.clientX - d.x) / r.width, 0, 1), y: clamp(d.pan.y - (e.clientY - d.y) / r.height, 0, 1) }; onceAFrame('stage', frame); }
   });
-  const end = () => { if (d) saveSoon(); d = null; };
+  const end = () => { if (d) { saveSoon(); frame(); } d = null; };
   c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
 }
 
@@ -2299,7 +2349,7 @@ export const _alignChords = (e, o) => alignChords(e, o);
 export async function _addScoreFrom(canvas, opt = {}) {
   const A = await analyse(canvas);
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
-  const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height), times: null, synced: 'even' };
+  const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height, canvas), times: null, synced: 'even' };
   o.times = evenTimes(o.layout.bars.length);
   putScore(o, !!opt.second);
   await prepareOverlay(o); ST.sel = { id: o.id }; stackLines(); renderSide(); renderTimeline(); frame();
