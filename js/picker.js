@@ -4,7 +4,7 @@
 import { db, getSetting, setSetting } from './db.js';
 import { openDocument, mapDoc } from './score.js';
 import { analyse } from './omr.js';
-import { linesOf } from './picker-lines.js';
+import { linesOf, ownInk } from './picker-lines.js';
 import { cleanPhoto } from './review.js';
 
 const $ = (s) => document.querySelector(s);
@@ -362,12 +362,18 @@ async function linesOut() {
     const scale = outScale ? outScale * (PK.doc.sizes[pages[0]][0] / pw) : Math.min(PK.long > 2600 ? 6 : 4, Math.max(1.6, (PK.long || 2600) / pw));
     if (!outScale) outScale = scale;
     const full = document.createElement('canvas');
-    await PK.doc.render(page, full, pw * scale, ph * scale);
+    await PK.doc.render(page, full, pw * scale, ph * scale, { sharp: true });
     const W = full.width, H = full.height;
+    // (each line with its own ink only, every mark of it whole: see ownInk. Some staves only: cut
+    // between the staves, as before)
+    let own = null;
+    if (!pick.cut && lines.every((L) => L.top !== undefined && L.sp)) { try { own = ownInk(full.getContext('2d', { willReadFrequently: true }), W, H, lines, pick.sel); } catch (err) { console.warn('own ink', err); own = null; } }
     pick.sel.forEach((i, k) => {
       const L = lines[i];
       const a = k === 0 ? pick.trim.a : 0, b = k === pick.sel.length - 1 ? pick.trim.b : L.cuts.length - 1;
-      const [sy0, sy1] = lineSpan(L, pick.cut); const y0 = Math.floor(sy0 * H), y1 = Math.ceil(sy1 * H);
+      const mine = own && own.get(i);
+      const [sy0, sy1] = lineSpan(L, pick.cut); const y0 = mine ? mine.y0 : Math.floor(sy0 * H), y1 = mine ? mine.y1 : Math.ceil(sy1 * H);
+      const from = mine ? mine.canvas : full, fy = mine ? 0 : y0;
       const pieces = [];
       const pad = 0.004 * W;
       if (a > 0) pieces.push([L.x0 * W, L.cuts[0] * W]);       // keep the clef and key of the line
@@ -375,11 +381,12 @@ async function linesOut() {
       const xb = b < L.cuts.length - 1 ? L.cuts[b] * W + pad : L.x1 * W;
       pieces.push([xa, xb]);
       // each piece is copied now, so the page can be let go
-      const cv = pieces.map(([x0, x1]) => { const w = Math.max(1, Math.round(x1 - x0)), h = y1 - y0; const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(full, Math.round(x0), y0, w, h, 0, 0, w, h); return c; });
+      const cv = pieces.map(([x0, x1]) => { const w = Math.max(1, Math.round(x1 - x0)), h = y1 - y0; const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(from, Math.round(x0), fy, w, h, 0, 0, w, h); return c; });
       // some of the staves only: the barlines ran on to the staves left out; the pieces of them
       // sticking out past the kept staves are taken away (the reader would not see them as barlines)
       if (pick.cut && L.staves && L.staves.length > 1) for (const c of cv) cutStubs(c, (L.staves[Math.min(pick.cut.from, L.staves.length - 1)][0] * H) - y0, (L.staves[Math.min(pick.cut.to, L.staves.length - 1)][1] * H) - y0, pick.cut.from > 0, pick.cut.to < L.staves.length - 1);
-      parts.push({ h: y1 - y0, cv, gap: Math.round(0.01 * H) });
+      parts.push({ h: y1 - y0, cv, gap: Math.max(Math.round(0.01 * H), Math.round((L.sp || 0) * H * 2)) });
+      if (mine) mine.canvas.width = mine.canvas.height = 0;
     });
     full.width = full.height = 0;
   }
@@ -387,12 +394,15 @@ async function linesOut() {
   const outH = parts.reduce((s, p) => s + p.h + p.gap, 0);
   const c = document.createElement('canvas'); c.width = outW; c.height = outH;
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, outW, outH);
-  let y = 0;
+  let y = 0; const bands = [];
   for (const p of parts) {
     let x = 10;
     for (const piece of p.cv) { g.drawImage(piece, x, y); x += piece.width; piece.width = piece.height = 0; }
+    bands.push([y, y + p.h]);
     y += p.h + p.gap;
   }
+  // (where each line is in the picture: what lies in a line's rows is that line's, see straightStrip)
+  c.bands = bands;
   return c;
 }
 // The barlines of a system run from its first staff to its last. Keeping some staves only, what is

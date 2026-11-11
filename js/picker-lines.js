@@ -114,3 +114,131 @@ export function eraseCrossings(crop, sw, sh, page, sx, sy, H) {
   }
   if (changed) crop.putImageData(img, 0, 0);
 }
+
+// Each chosen line of a page with only its own ink, every mark whole. A cut straight across the page
+// between two lines cut through what reached over it — a slur over a high note, a tempo mark, the
+// stems of the next line's low notes — and half a mark was then thrown away with what it touched (a
+// note went with its slur). Instead each piece of ink on the page goes, whole, to one line: what
+// touches a line's staves is that line's; the rest (words, numbers, dynamics, hairpins, slurs between
+// the lines) goes, nearest first, to the line whose ink it lies closest to, so a word goes with its
+// neighbours and a tempo mark over a line with that line's other marks. What lies far from every
+// line (a title, a page number, a footnote) goes with none. A piece reaching over two lines' staves
+// (a stem of one touching a ledger line of the next) is shared out, each point to the nearer line.
+// g: the page's 2d context, W x H; lines: all the page's lines (as linesOf gives them); want: the
+// indices of the lines wanted. Returns, for each wanted line, { y0, y1, canvas } — the rows of the page
+// it covers and a W x (y1 - y0) picture of them with only that line's ink, on white.
+export function ownInk(g, W, H, lines, want) {
+  const P = lines.map((L) => ({ top: L.top * H, bot: L.bot * H, sp: Math.max(2, L.sp * H), x0: L.x0 * W, x1: L.x1 * W, staves: (L.staves && L.staves.length ? L.staves : [[L.top, L.bot]]).map(([t, b]) => [t * H, b * H]) }));
+  const lo = Math.max(0, Math.min(...want) - 1), hi = Math.min(P.length - 1, Math.max(...want) + 1);
+  const spm = Math.max(...P.map((q) => q.sp));
+  const yA = Math.max(0, Math.floor(P[lo].top - spm * 9)), yB = Math.min(H, Math.ceil(P[hi].bot + spm * 9));
+  const bh = yB - yA;
+  const img = g.getImageData(0, yA, W, bh), d = img.data;
+  // (on a grid of half the size: four times less to go through; marks a point apart are one anyway)
+  const hw = (W + 1) >> 1, hh = (bh + 1) >> 1, N = hw * hh;
+  const ink = new Uint8Array(N);
+  for (let y = 0; y < bh; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114 < 205000) ink[(y >> 1) * hw + (x >> 1)] = 1; }
+  const lab = new Int32Array(N).fill(-1);
+  let par = new Int32Array(1 << 14), nl = 0;
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  for (let y = 0; y < hh; y++) for (let x = 0; x < hw; x++) {
+    const i = y * hw + x; if (!ink[i]) continue;
+    let l = -1;
+    const nb = [x > 0 ? lab[i - 1] : -1, y > 0 && x > 0 ? lab[i - hw - 1] : -1, y > 0 ? lab[i - hw] : -1, y > 0 && x < hw - 1 ? lab[i - hw + 1] : -1];
+    for (const q of nb) if (q >= 0) { if (l < 0) l = find(q); else { const a = find(l), b = find(q); if (a !== b) { if (a < b) par[b] = a; else par[a] = b; l = Math.min(a, b); } } }
+    if (l < 0) { if (nl >= par.length) { const p2 = new Int32Array(par.length * 2); p2.set(par); par = p2; } par[nl] = nl; l = nl++; }
+    lab[i] = l;
+  }
+  // the pieces: their boxes (in page points)
+  const C = new Map();
+  for (let i = 0; i < N; i++) {
+    if (lab[i] < 0) continue;
+    const r = find(lab[i]); lab[i] = r;
+    const x = (i % hw) * 2, y = ((i / hw) | 0) * 2 + yA;
+    let c = C.get(r); if (!c) C.set(r, (c = { x0: x, y0: y, x1: x + 1, y1: y + 1, n: 0, own: -1 }));
+    if (x < c.x0) c.x0 = x; if (x + 1 > c.x1) c.x1 = x + 1; if (y < c.y0) c.y0 = y; if (y + 1 > c.y1) c.y1 = y + 1; c.n++;
+  }
+  // (on its staves: the lines whose staves the piece reaches into, across their width)
+  const onStaff = (c) => {
+    const hits = [];
+    P.forEach((q, k) => { if (c.x1 < q.x0 - q.sp || c.x0 > q.x1 + q.sp) return; for (const [t, b] of q.staves) if (c.y1 >= t - q.sp * 0.25 && c.y0 <= b + q.sp * 0.25) { hits.push(k); return; } });
+    return hits;
+  };
+  const gapOnes = [];
+  for (const c of C.values()) {
+    const h = onStaff(c);
+    if (h.length === 1) c.own = h[0];
+    else if (h.length > 1) c.own = -2;   // (shared out point by point)
+    else gapOnes.push(c);
+  }
+  // where each line's ink reaches, column by column (on the half grid): its lowest and highest point
+  const low = P.map(() => new Float32Array(hw).fill(-1e9)), high = P.map(() => new Float32Array(hw).fill(1e9));
+  const nearestLine = (y) => { let best = 0, bd = Infinity; P.forEach((q, k) => { for (const [t, b] of q.staves) { const dd = y < t ? t - y : y > b ? y - b : 0; if (dd < bd) { bd = dd; best = k; } } }); return best; };
+  const rowLine = new Int16Array(hh); for (let y = 0; y < hh; y++) rowLine[y] = nearestLine(y * 2 + yA);
+  const ownerAt = (i) => { const r = lab[i]; if (r < 0) return -1; const c = C.get(r); if (c.own !== -2) return c.own; return rowLine[(i / hw) | 0]; };
+  for (let i = 0; i < N; i++) {
+    const k = ownerAt(i); if (k < 0) continue;
+    const x = i % hw, y = ((i / hw) | 0) * 2 + yA;
+    if (y > low[k][x]) low[k][x] = y; if (y < high[k][x]) high[k][x] = y;
+  }
+  // the pieces off the staves, nearest first: each to the line whose ink it is closest to (above it or
+  // below it, beside it within a space and a half), and that line's ink then reaches that far
+  const dist = (c, k) => {
+    const q = P[k], r = q.sp * 1.5, a = Math.max(0, Math.floor((c.x0 - r) / 2)), b = Math.min(hw - 1, Math.ceil((c.x1 + r) / 2));
+    let best = Infinity;
+    for (let x = a; x <= b; x++) {
+      const lo2 = low[k][x], hi2 = high[k][x]; if (lo2 < -1e8) continue;
+      // (vertically from the box to that line's ink in this column: 0 when side by side)
+      const dv = c.y0 > lo2 ? c.y0 - lo2 : c.y1 < hi2 ? hi2 - c.y1 : 0;
+      // (and sideways, so a word's next letter counts as near, a mark far to the side as far)
+      const xx = x * 2, dh = xx < c.x0 ? c.x0 - xx : xx > c.x1 ? xx - c.x1 : 0;
+      const dd = Math.hypot(dv, dh); if (dd < best) best = dd;
+    }
+    return best / q.sp;
+  };
+  // (only the line just above a piece and the one just below it can have it)
+  const around = (c) => { const m = (c.y0 + c.y1) / 2; let up = -1, dn = -1; P.forEach((q, k) => { if (q.bot <= m && (up < 0 || q.bot > P[up].bot)) up = k; if (q.top >= m && (dn < 0 || q.top < P[dn].top)) dn = k; }); return [up, dn].filter((k) => k >= 0); };
+  const left = gapOnes.map((c) => ({ c, ks: around(c), d: null }));
+  for (const e of left) e.d = e.ks.map((k) => dist(e.c, k));
+  for (;;) {
+    let be = null, bj = -1, bd = Infinity;
+    for (const e of left) { if (e.c.own >= 0) continue; e.d.forEach((dd, j) => { if (dd < bd) { bd = dd; be = e; bj = j; } }); }
+    // (nothing left within three spaces of any line: a title, a page number, a footnote)
+    if (!be || bd > 3) break;
+    const bc = be.c, bk = be.ks[bj]; bc.own = bk;
+    for (let x = Math.max(0, bc.x0 >> 1); x <= Math.min(hw - 1, bc.x1 >> 1); x++) { if (bc.y1 > low[bk][x]) low[bk][x] = bc.y1; if (bc.y0 < high[bk][x]) high[bk][x] = bc.y0; }
+    // (the pieces beside it are now nearer that line)
+    const r = P[bk].sp * 1.6;
+    for (const e of left) if (e.c.own < 0 && e.c.x1 >= bc.x0 - r && e.c.x0 <= bc.x1 + r) e.ks.forEach((k, j) => { if (k === bk) e.d[j] = dist(e.c, k); });
+  }
+  // each wanted line: the rows its ink covers, and its ink alone
+  const out = new Map();
+  for (const k of want) {
+    const q = P[k];
+    let y0 = q.top, y1 = q.bot;
+    for (let x = Math.max(0, Math.floor(q.x0 / 2)); x <= Math.min(hw - 1, Math.ceil(q.x1 / 2)); x++) { if (high[k][x] < y0) y0 = high[k][x]; if (low[k][x] > y1) y1 = low[k][x]; }
+    y0 = Math.max(yA, Math.floor(Math.max(y0, q.top - q.sp * 9) - q.sp * 0.6)); y1 = Math.min(yB, Math.ceil(Math.min(y1 + 2, q.bot + q.sp * 9) + q.sp * 0.6));
+    // (a point is kept when it, or a point next to it, is this line's: the soft edge of each mark too)
+    // (1: this line's ink; 2: ink of another line, or of none; 0: paper — and the faint grey of a thin
+    // line drawn small, never taken for ink, stays as it is)
+    const mine = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { if (lab[i] < 0) continue; mine[i] = ownerAt(i) === k ? 1 : 2; }
+    const c = document.createElement('canvas'); c.width = W; c.height = y1 - y0;
+    const cg = c.getContext('2d'); const o = cg.createImageData(W, y1 - y0), od = o.data;
+    for (let y = y0; y < y1; y++) {
+      const hy = (y - yA) >> 1;
+      for (let x = 0; x < W; x++) {
+        const hx = x >> 1, j = ((y - y0) * W + x) * 4, s = ((y - yA) * W + x) * 4;
+        // (a point is taken away only near another's ink and away from this line's own)
+        let me = false, them = false;
+        for (let dy = -1; dy <= 1 && !me; dy++) { const yy = hy + dy; if (yy < 0 || yy >= hh) continue; for (let dx = -1; dx <= 1; dx++) { const xx = hx + dx; if (xx < 0 || xx >= hw) continue; const v = mine[yy * hw + xx]; if (v === 1) { me = true; break; } if (v === 2) them = true; } }
+        const keep = me || !them;
+        if (keep) { od[j] = d[s]; od[j + 1] = d[s + 1]; od[j + 2] = d[s + 2]; } else od[j] = od[j + 1] = od[j + 2] = 255;
+        od[j + 3] = 255;
+      }
+    }
+    cg.putImageData(o, 0, 0);
+    out.set(k, { y0, y1, canvas: c });
+  }
+  return out;
+}

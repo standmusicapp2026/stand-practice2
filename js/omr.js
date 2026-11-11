@@ -3104,3 +3104,21 @@ export async function recogniseBest(canvas, opts = {}) {
   return best;
 }
 let sharpNext = 0, softNext = 0;
+// For a picture read once and shown large (the music of a video): read as it is, and when its edges
+// are soft (a scan drawn bigger than it was made, a photo), read again with its edges made crisper;
+// the reading that finds the same staves and more notes is kept. Soft edges fill the open heads (a
+// half, a whole) and thicken the staff lines into them, and those notes were not read.
+export async function analyseCrisp(canvas, opts = {}) {
+  softNext = null;
+  const a = await analyse(canvas, false, false, opts);
+  const soft = softNext ?? 0; softNext = 0;
+  if (globalThis.__crispDbg) globalThis.__crispDbg.soft = soft;
+  if (!(soft > (globalThis.__crispAt ?? 1.5)) || !a.staves.length) return a;
+  let b = null;
+  try { sharpNext = 1; b = await analyse(canvas, false, false, opts); } catch (err) { console.warn(err); } finally { sharpNext = 0; }
+  if (!b || b.staves.length !== a.staves.length) return a;
+  const heads = (A) => A.staves.reduce((s, st) => s + st.heads.length, 0), bars = (A) => A.staves.reduce((s, st) => s + st.bars.length, 0);
+  if (globalThis.__crispDbg) Object.assign(globalThis.__crispDbg, { a: heads(a), b: heads(b), ba: bars(a), bb: bars(b) });
+  // (the same bars: the crisper reading must not find barlines in what is not one, nor lose one)
+  return heads(b) > heads(a) && bars(b) === bars(a) ? b : a;
+}

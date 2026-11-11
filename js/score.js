@@ -260,7 +260,8 @@ async function openDocumentOne(file, known) {
         const W = Math.round(w), H = Math.round(h);
         if (Math.max(W, H) > 500) cur = i;   // (a page on the stand, not a small picture)
         // the light copy of a heavy scan, when its page is ready
-        if (fid && (heavy || lightHave === null || lightHave.size)) {
+        // (not when the page is wanted sharp, bigger than the light copy: the music cut out for a video)
+        if (fid && !opts.sharp && (heavy || lightHave === null || lightHave.size)) {
           if (lightHave === null) lightHave = await lightKeys(fid);
           if (lightHave.size) heavy = true;
           const lb = lightHave.has(i) ? await lightGet(fid, i) : null;

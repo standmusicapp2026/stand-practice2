@@ -7,7 +7,7 @@
 import { db, uid } from './db.js';
 import { getCtx, wantAudio } from './audio.js';
 import { detectPitch } from './tuner.js';
-import { analyse, staffEvents } from './omr.js';
+import { analyseCrisp, staffEvents } from './omr.js';
 import { makeImpulse, ROOMS, computePeaks, peakOf, encodeWav } from './recorder.js';
 import { videoThumb } from './video.js';
 import { CLEFS, keyAlter, midiOf } from './compose/model.js';
@@ -159,7 +159,7 @@ async function addScore(opt = {}) {
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
-    const A = await analyse(region.canvas);
+    const A = await analyseCrisp(region.canvas);
     if (!A.staves.length) { busy(null); D.toast('No staves found there. Draw a little wider than the music, around whole lines.', 5000); return; }
     const blob = await new Promise((res) => region.canvas.toBlob(res, 'image/png'));
     const o = {
@@ -254,9 +254,24 @@ function stripLayout(A, W, H, canvas) {
     const busy = (k) => cs[k] > base + Math.max(2, sp * 0.15);
     let k = 0; while (k < cs.length && !busy(k)) k++;
     if (k >= sp * 3) return null;   // (no clef there)
-    const need = Math.round(sp * 0.9);
-    for (let run = 0; k < cs.length; k++) { if (busy(k)) run = 0; else if (++run >= need) return xa + k - run + 1; }
-    return null;
+    // (the clef is about two and a half spaces wide: past at least one and a half of them, it ends at
+    // the first clear column. A note may follow it closely — a gap of a space was not always there, and
+    // the first note went with the clef)
+    const k0 = k, gapNeed = Math.max(2, Math.round(sp * 0.2));
+    const runEnd = (from) => { let j = from; while (j < cs.length && busy(j)) j++; return j; };
+    const gapEnd = (from) => { let j = from; while (j < cs.length && !busy(j)) j++; return j; };
+    k = k0 + Math.round(sp * 1.6);
+    for (let run = 0; k < cs.length; k++) { if (busy(k)) run = 0; else if (++run >= gapNeed) break; }
+    if (k >= cs.length) return null;
+    let end = k - gapNeed + 1;
+    // (then the key: as many marks as it has sharps or flats, each a narrow one)
+    const nk = Math.min(7, Math.abs(st.key || 0));
+    for (let j = 0, at = end; j < nk; j++) {
+      const a = gapEnd(at); if (a >= cs.length || a - at > sp * 1.2) break;
+      const b = runEnd(a); if (b - a > sp * 1.3) break;
+      end = at = b;
+    }
+    return xa + end;
   };
   const segs = [], bars = [], notes = [], events = [];
   let sx = 0;
@@ -318,8 +333,12 @@ function stripLayout(A, W, H, canvas) {
   // (each staff's lines along it, and the line of music it belongs to: for laying each line straight
   // and keeping with it the slurs and marks that belong to it, wherever they reach)
   const sysOf = new Map(); A.systems.forEach((sys, si) => sys.forEach((i) => sysOf.set(i, si)));
-  const staffs = A.staves.every((st) => st.edge) ? A.staves.map((st, i) => ({ sys: sysOf.has(i) ? sysOf.get(i) : -1, sp: st.sp, top: st.top, bottom: st.bottom, edge: st.edge })) : null;
-  return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key, staffs, v: staffs ? 2 : 1 };
+  // (the rows of the picture each chosen line was put in, when the picker gave them: what lies there is
+  // that line's, never the next one's however near)
+  const bands = canvas && Array.isArray(canvas.bands) && canvas.bands.length ? canvas.bands : null;
+  const bandOf = (st) => { if (!bands) return -1; const m = (st.top + st.bottom) / 2; return bands.findIndex(([a, b]) => m >= a && m <= b); };
+  const staffs = A.staves.every((st) => st.edge) ? A.staves.map((st, i) => ({ sys: sysOf.has(i) ? sysOf.get(i) : -1, sp: st.sp, top: st.top, bottom: st.bottom, edge: st.edge, band: bandOf(st) })) : null;
+  return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key, staffs, bands, v: staffs ? 2 : 1 };
 }
 function evenTimes(n) {
   const a = ST.P.trim.a + 0.4, b = ST.P.trim.b - 0.2;
@@ -410,9 +429,11 @@ function straightStrip(L, bmp) {
   const owner = new Map(), loose = [];
   for (const [r, b] of box) {
     if (b[4] < 3) continue;   // (specks)
-    const cx = (b[0] + b[2]) / 2;
+    const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
     let best = -1, bo = 0, gap = Infinity, near = -1;
-    for (const st of staffs) {
+    const bi = L.bands ? L.bands.findIndex(([a, z]) => cy >= a && cy <= z) : -1;
+    const cands = bi >= 0 && staffs.some((st) => st.band === bi) ? staffs.filter((st) => st.band === bi) : staffs;
+    for (const st of cands) {
       const [yT, yB] = edgeAt(st, cx), m = st.sp * 0.3;
       const ov = Math.min(b[3], yB + m) - Math.max(b[1], yT - m);
       if (ov > bo) { bo = ov; best = st.sys; }
@@ -840,6 +861,7 @@ async function autoSync(o, { from = 0 } = {}) {
       best.evs = L.notes.map((nt, i) => ({ bar: nt.bar, x: nt.x, src: nt.src, t: best.match[i] >= 0 ? played[best.match[i]].t : null }));
       best.how = 'notes';
     }
+    const notesBest = best;
     if (L.events && L.events.length >= 3 && (!best || best.good < 0.8 || L.events.some((e) => e.pcs.length > 1))) {
       busy('Following your playing…', 'Listening for chords.', 0.5);
       const ons = await onsetsOf(ST.pcm, ST.sr, A, B, (f) => busy('Following your playing…', 'Listening for chords.', 0.5 + f * 0.35));
@@ -862,43 +884,60 @@ async function autoSync(o, { from = 0 } = {}) {
     if (!best) { busy(null); D.toast('Not enough clear notes were heard. Use Tap along.', 4500); return; }
     busy('Following your playing…', 'Lining them up with the score.', 0.9);
     await new Promise((r) => setTimeout(r, 30));
-    // bar times from the first matched note of each bar
     const nb = L.bars.length;
-    const first = new Array(nb).fill(null);
     const byBar = Array.from({ length: nb }, () => []);
     for (const e of best.evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
-    let prevLast = null;
-    for (let k = 0; k < nb; k++) {
-      const ns = byBar[k].sort((a, b) => a.x - b.x), hit = ns.filter((n) => n.t !== null);
-      if (!hit.length) continue;
-      const fm = hit[0];
-      if (fm === ns[0]) first[k] = fm.t;
-      else {
-        // the first note of the bar was not heard: step back from the first one that was,
-        // at the pace of the notes around it
-        const nm = hit[1];
-        let rate = nm && nm.x > fm.x ? (nm.t - fm.t) / (nm.x - fm.x) : prevLast && fm.x > prevLast.x ? (fm.t - prevLast.t) / (fm.x - prevLast.x) : 0;
-        if (!(rate > 0) || !isFinite(rate)) rate = 0;
-        let t = fm.t - (fm.x - ns[0].x) * rate;
-        if (prevLast) t = Math.max(t, prevLast.t + 0.08);
-        first[k] = Math.min(t, fm.t);
-      }
-      prevLast = hit[hit.length - 1];
+    // the bar times: every note heard, where it stands in its bar, against when it was heard, with
+    // the pace allowed to change only gradually (a slowing down, a speeding up) — see fitBarTimes
+    let fitT = fitBarTimes(best.evs, L.bars, L.notes);
+    // and the whole playing against the whole page in time (see pacedAlign): note by note, music that
+    // repeats itself (a tremolo, the same bar again) can be matched a bar or two out, the page squeezed
+    // into the first part of the playing; in time it cannot. Of the two, the one under which more of
+    // what was heard is what the page says at that moment is kept.
+    // (a line of single notes: the pitches heard are the soloist's. With an orchestra or a piano
+    // behind, or notes the pitch could not be heard clearly in, this is tried too, in the keys the
+    // instrument most likely sounds in, and kept only when it clearly fits better)
+    if (L.notes.length >= 4) {
+      try {
+        const clef = (notesBest && notesBest.clef) || L.clef || 'treble';
+        const solo = best.how === 'notes';
+        const kinds = [obsOfPitches(frames)];
+        // (with something behind the soloist: what sounds as a whole, too)
+        if (!solo) kinds.push(obsOfChroma(await chromaFrames(ST.pcm, ST.sr, A, B)));
+        if (cancelled) return;
+        const shifts = solo ? [notesBest.shift || 0] : [...new Set([notesBest ? notesBest.shift || 0 : 0, best.shift !== undefined && best.how !== 'notes' ? best.shift : 0, -2, 0, -9, 2])];
+        const ref = fitT ? medianDur(fitT) : null;
+        const paces = ref && solo ? [ref] : [ref, 1.2, 1.8, 2.6].filter((q) => q > 0.2);
+        let pick = null;
+        for (const obs of kinds) for (const sh of shifts) {
+          const sn = pitchSamples(L, clef, sh);
+          const a0 = fitT ? frameAgreement(sn, L.bars.length, fitT, obs) : -1;
+          for (const pc of paces) {
+            const T = pacedAlign(sn, L.bars.length, obs, pc, A, B);
+            if (!T) continue;
+            const a = frameAgreement(sn, L.bars.length, T, obs);
+            if (!pick || a - a0 > pick.gain) pick = { T, a, a0, gain: a - a0 };
+            if (globalThis.__fitDbg) (globalThis.__fitDbg.cands ||= []).push({ kind: obs === kinds[0] ? 'p' : 'c', sh, pc: Math.round(pc * 100) / 100, a: Math.round(a * 1000) / 1000, a0: Math.round(a0 * 1000) / 1000, T: T.map((x) => Math.round(x * 10) / 10) });
+          }
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        const a1 = pick ? pick.a0 : -1, a2 = pick ? pick.a : -1, paced = pick && pick.T;
+        if (globalThis.__fitDbg) Object.assign(globalThis.__fitDbg, { a1, a2 });
+        if (paced && a2 > a1 + (best.how === 'notes' ? 0.02 : 0.1) && a2 > 0.3) {
+          fitT = paced;
+          // (the notes matched far from where the page now puts them were matched wrongly: left out)
+          for (const e of best.evs) { if (e.t === null) continue; const b = L.bars[e.bar], f = clamp((e.x - b.x0) / Math.max(1, b.x1 - b.x0), 0, 1), want = fitT[e.bar] + f * (fitT[e.bar + 1] - fitT[e.bar]); if (Math.abs(e.t - want) > (fitT[e.bar + 1] - fitT[e.bar]) * 0.3) e.t = null; }
+          for (let k = 0; k < nb; k++) byBar[k] = [];
+          for (const e of best.evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
+        }
+      } catch (err) { console.warn('paced', err); }
     }
-    const known = first.map((t, k) => (t !== null ? k : -1)).filter((k) => k >= 0);
-    if (known.length < 2) { busy(null); D.toast('Your playing could not be matched with the score. Use Tap along.', 5000); return; }
-    const times = new Array(nb + 1);
-    for (let k = 0; k < nb; k++) {
-      if (first[k] !== null) { times[k] = first[k] - 0.05; continue; }
-      // in between two known bars: share the time out; before or after: keep the pace
-      const prev = known.filter((q) => q < k).pop(), next = known.find((q) => q > k);
-      if (prev !== undefined && next !== undefined) times[k] = first[prev] + ((first[next] - first[prev]) * (k - prev)) / (next - prev);
-      else if (next !== undefined) { const pace = (first[known[1]] - first[known[0]]) / (known[1] - known[0]); times[k] = first[next] - pace * (next - k); }
-      else { const a2 = known[known.length - 2], b2 = known[known.length - 1]; const pace = (first[b2] - first[a2]) / (b2 - a2); times[k] = first[b2] + pace * (k - b2); }
-    }
+    if (!fitT) { busy(null); D.toast('Your playing could not be matched with the score. Use Tap along.', 5000); return; }
+    const times = fitT.slice(0, nb);
+    // (the end of the last bar: where the pace puts it, not past the last note heard by much)
     const lastPlayed = Math.max(...best.evs.map((e) => e.t || 0)) + 0.6;
     const pace = (times[nb - 1] - times[0]) / Math.max(1, nb - 1);
-    times[nb] = Math.min(ST.P.trim.b, Math.max(times[nb - 1] + pace * 0.5, Math.min(lastPlayed, times[nb - 1] + pace * 1.5)));
+    times[nb] = Math.min(ST.P.trim.b, Math.max(times[nb - 1] + pace * 0.5, Math.min(Math.max(fitT[nb], lastPlayed), times[nb - 1] + pace * 1.5)));
     // (from a bar: that bar starts where it was put, the ones before are kept)
     if (from) times[0] = o.times[from];
     for (let k = 1; k <= nb; k++) if (times[k] < times[k - 1] + 0.12) times[k] = times[k - 1] + 0.12;
@@ -916,6 +955,157 @@ async function autoSync(o, { from = 0 } = {}) {
     saveSoon(); renderSide(); renderTimeline(); frame();
     D.toast(best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
+}
+// ---- following in time ----
+// The page as pitches through time: each bar cut into small steps, each step with the pitch classes
+// the page has sounding there (a note lasts to the next one), or none.
+const PSTEPS = 24;
+function pitchSamples(L, clef, shift) {
+  const nb = L.bars.length, out = Array.from({ length: nb * PSTEPS }, () => null);
+  const cl = CLEFS[clef] || CLEFS.treble;
+  for (let k = 0; k < nb; k++) {
+    const b = L.bars[k], ns = L.notes.filter((n) => n.bar === k).sort((p, q) => p.x - q.x);
+    ns.forEach((n, i) => {
+      const fa = clamp((n.x - b.x0) / Math.max(1, b.x1 - b.x0), 0, 1), fb = i + 1 < ns.length ? clamp((ns[i + 1].x - b.x0) / Math.max(1, b.x1 - b.x0), 0, 1) : 1;
+      const pcs = n.ps.map(({ p, acc }) => { const s2 = cl.bottom + p; const a = acc !== undefined ? acc : keyAlter(L.key || 0, s2); return (((midiOf(s2, a) + shift) % 12) + 12) % 12; });
+      // (the first note of a bar from the bar's start: what stands before it is the bar's beginning)
+      const a0 = i === 0 ? 0 : Math.round(fa * PSTEPS);
+      for (let q = a0; q < Math.max(a0 + 1, Math.round(fb * PSTEPS)); q++) if (q < PSTEPS) out[k * PSTEPS + q] = pcs;
+    });
+  }
+  return out;
+}
+function medianDur(T) { const d = []; for (let k = 1; k < T.length; k++) d.push(T[k] - T[k - 1]); d.sort((a, b) => a - b); return d[d.length >> 1]; }
+// What was heard, as moments { t, w (how strongly each of the 12 pitch classes sounds, the
+// strongest 1; null: no clear pitch), rms }: from the pitches found (one at a time) or from the
+// harmony heard (all that sounds: the soloist with an orchestra or a piano behind).
+function obsOfPitches(frames) { return frames.map((f) => { if (isNaN(f.midi)) return { t: f.t, w: null, rms: f.rms }; const w = new Float32Array(12); w[((Math.round(f.midi) % 12) + 12) % 12] = 1; return { t: f.t, w, rms: f.rms }; }); }
+function obsOfChroma(fr) { const loud = Math.max(...fr.map((f) => f.rms), 1e-6); return fr.map((f) => { if (f.rms < loud * 0.03) return { t: f.t, w: null, rms: f.rms }; const mx = Math.max(...f.c, 1e-9), w = new Float32Array(12); for (let x = 0; x < 12; x++) w[x] = f.c[x] / mx; return { t: f.t, w, rms: f.rms }; }); }
+// (how well what sounds fits the pitch classes the page has: 1, the strongest heard is one of them)
+const fitPcs = (w, q) => { let m = 0; for (const pc of q) if (w[pc] > m) m = w[pc]; return m; };
+// how much of what was heard is what the page has sounding at that moment, with the bars at times T
+function frameAgreement(sn, nb, T, obs) {
+  let ok = 0, all = 0;
+  for (const f of obs) {
+    if (!f.w || f.t < T[0] || f.t >= T[nb]) continue;
+    let k = 0; while (k < nb - 1 && f.t >= T[k + 1]) k++;
+    const u = (f.t - T[k]) / Math.max(1e-3, T[k + 1] - T[k]), q = sn[k * PSTEPS + Math.min(PSTEPS - 1, Math.floor(u * PSTEPS))];
+    all++; if (q) ok += fitPcs(f.w, q);
+  }
+  // (what was heard outside the bars counts against: the page squeezed into part of the playing)
+  const out = obs.filter((f) => f.w && (f.t < T[0] - 0.3 || f.t > T[nb] + 0.3)).length;
+  return ok / Math.max(1, all + out);
+}
+// The whole playing against the whole page through time (dynamic time warping with the pace held:
+// one step of the page against one moment of the playing, or two against one, or one against two or
+// three — never much faster or slower than the pace from moment to moment). The playing may begin
+// late and go on after the page ends. Returns the bar starts (nb + 1), or null.
+function pacedAlign(sn, nb, obs, pace, A, B) {
+  if (!(pace > 0.2)) return null;
+  // (what was heard in moments a page step long at the pace found)
+  const dt = pace / PSTEPS, fr = [];
+  let q0 = 0;
+  for (let t = A; t < B; t += dt) {
+    while (q0 < obs.length && obs[q0].t < t) q0++;
+    let w = null, nv = 0, n2 = 0, rms = 0;
+    for (let q = q0; q < obs.length && obs[q].t < t + dt; q++) { n2++; rms = Math.max(rms, obs[q].rms); if (obs[q].w) { if (!w) w = new Float32Array(12); for (let x = 0; x < 12; x++) w[x] += obs[q].w[x]; nv++; } }
+    if (w && nv * 2 >= n2) { const mx = Math.max(...w); for (let x = 0; x < 12; x++) w[x] /= mx; } else w = null;
+    fr.push({ t, w, rms });
+  }
+  const n = sn.length, m = fr.length;
+  if (m < 4 || n < 4 || n * m > 1.2e7) return null;
+  const loud = Math.max(...fr.map((f) => f.rms), 1e-6);
+  const cost = (i, j) => { const q = sn[i], f = fr[j]; if (!f.w) return f.rms < loud * 0.05 ? (q ? 0.45 : 0.1) : 0.5; if (!q) return 0.75; return 1 - fitPcs(f.w, q); };
+  const SKIP = 0.4;
+  const W = m + 1, D = new Float32Array((n + 1) * W).fill(1e9), P = new Uint8Array((n + 1) * W);
+  for (let j = 0; j <= m; j++) D[j] = j * SKIP * 0.5;   // (the playing may begin later)
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+    const c = cost(i - 1, j - 1);
+    let v = D[(i - 1) * W + j - 1] + c, how = 1;
+    if (i >= 2) { const v2 = D[(i - 2) * W + j - 1] + cost(i - 2, j - 1) + c; if (v2 < v) { v = v2; how = 2; } }
+    if (j >= 2) { const v3 = D[(i - 1) * W + j - 2] + cost(i - 1, j - 2) + c; if (v3 < v) { v = v3; how = 3; } }
+    // (a note held three times as long: a pause, the end of a phrase)
+    if (j >= 3) { const v4 = D[(i - 1) * W + j - 3] + cost(i - 1, j - 3) + cost(i - 1, j - 2) + c + 0.35; if (v4 < v) { v = v4; how = 4; } }
+    D[i * W + j] = v; P[i * W + j] = how;
+  }
+  let bj = m, bc = 1e9; for (let j = 1; j <= m; j++) { const v = D[n * W + j] + (m - j) * SKIP * 0.5; if (v < bc) { bc = v; bj = j; } }
+  // back along the path: the moment each page step is at
+  const at = new Float64Array(n).fill(-1);
+  let i = n, j = bj;
+  while (i > 0 && j > 0) {
+    at[i - 1] = fr[j - 1].t;
+    const h = P[i * W + j];
+    if (h === 1) { i--; j--; } else if (h === 2) { at[i - 2] = fr[j - 1].t; i -= 2; j--; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; }
+  }
+  if (at[0] < 0) return null;
+  // (where each note of the page begins, and when: the points the bars are then laid through; the
+  // steps between notes and the bars of rests follow the pace)
+  const pts = [];
+  for (let q = 0; q < n; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q]) && at[q] >= 0) pts.push({ k: Math.floor(q / PSTEPS), f: (q % PSTEPS) / PSTEPS, t: at[q], w: 1 });
+  // (many points, each placed in time already: the pace may turn quickly, a held note, a breath)
+  return smoothFit(pts, nb, 0.08);
+}
+// The bar times from the notes heard. Each note heard is a point: where it stands in the score (its
+// bar, and how far along the bar it is printed) against when it was heard. The bar starts are then
+// those that pass closest to all the points at once while the pace changes only gradually from bar
+// to bar — a slowing down at the end, a speeding up, a held note are followed, but one note matched
+// in the wrong place cannot pull a bar out of line (points far from the rest count less and less),
+// a bar whose first note was not read or not heard still starts where the pace puts it (not at its
+// first note heard, later in the bar), and bars where nothing was heard (rests, a first bar that
+// is only a rest) take the pace of the bars around them.
+function fitBarTimes(evs, bars, notes) {
+  const nb = bars.length; if (!nb) return null;
+  // (where a bar's music begins: a little after its barline; as far as the first note usually stands)
+  const lead = (() => {
+    const fs = []; for (let k = 0; k < nb; k++) { const ns = notes.filter((n) => n.bar === k); if (!ns.length) continue; const b = bars[k]; fs.push((Math.min(...ns.map((n) => n.x)) - b.x0) / Math.max(1, b.x1 - b.x0)); }
+    fs.sort((a, b) => a - b); return fs.length ? clamp(fs[fs.length >> 1], 0.02, 0.2) : 0.08;
+  })();
+  const pts = [];
+  for (const e of evs) {
+    if (e.t === null || e.t === undefined || e.rep) continue;
+    const b = bars[e.bar], xs = b.x0 + (b.x1 - b.x0) * lead;
+    pts.push({ k: e.bar, f: clamp((e.x - xs) / Math.max(1, b.x1 - xs), 0, 0.98), t: e.t, w: 1 });
+  }
+  if (globalThis.__fitDbg) globalThis.__fitDbg.pts = pts;
+  return smoothFit(pts, nb);
+}
+// bar starts (nb + 1) through points { k: bar, f: share of the bar, t: time }, the pace changing gradually
+function smoothFit(pts, nb, lam = 0.6) {
+  if (pts.length < 2 || new Set(pts.map((q) => q.k)).size < 2) return null;
+  // unknowns: the starts of bars 0..nb (nb + 1). A first guess: an even pace through the points.
+  const n = nb + 1;
+  pts.sort((a, b) => a.k + a.f - (b.k + b.f));
+  const p0 = pts[0], p1 = pts[pts.length - 1];
+  const pace0 = Math.max(0.2, (p1.t - p0.t) / Math.max(0.5, p1.k + p1.f - p0.k - p0.f));
+  let T = Array.from({ length: n }, (_, k) => p0.t + (k - p0.k - p0.f) * pace0);
+  for (let it = 0; it < 12; it++) {
+    // weights: near the line, full; far, less (a wrong match among the right ones)
+    const res = pts.map((q) => q.t - (T[q.k] + q.f * (T[q.k + 1] - T[q.k])));
+    const ab = res.map(Math.abs).sort((a, b) => a - b), med = ab[ab.length >> 1] || 0;
+    const c = Math.max(0.12, med * 2.5);
+    pts.forEach((q, i) => { const r = Math.abs(res[i]); q.w = it < 2 ? 1 : r <= c ? 1 : r > c * 4 ? 0.02 : c / r; });
+    // the normal equations (banded): data terms and the even-pace terms
+    const M = Array.from({ length: n }, () => new Float64Array(n)), v = new Float64Array(n);
+    for (const q of pts) {
+      const a = 1 - q.f, b = q.f, i = q.k, j = q.k + 1;
+      M[i][i] += q.w * a * a; M[i][j] += q.w * a * b; M[j][i] += q.w * a * b; M[j][j] += q.w * b * b;
+      v[i] += q.w * a * q.t; v[j] += q.w * b * q.t;
+    }
+    // (the pace from bar to bar: T[k+1] - 2T[k] + T[k-1] near 0)
+    for (let k = 1; k < n - 1; k++) { const ix = [k - 1, k, k + 1], cf = [1, -2, 1]; for (let x = 0; x < 3; x++) for (let y = 0; y < 3; y++) M[ix[x]][ix[y]] += lam * cf[x] * cf[y]; }
+    for (let k = 0; k < n; k++) M[k][k] += 1e-6;
+    // (solved: the system is symmetric and positive, and banded — elimination along the band)
+    const A2 = M.map((r) => Array.from(r)), bb = Array.from(v), BW = 3;
+    for (let col = 0; col < n; col++) {
+      const d = A2[col][col]; if (Math.abs(d) < 1e-12) continue;
+      for (let r = col + 1; r < Math.min(n, col + BW); r++) { const m = A2[r][col] / d; if (!m) continue; for (let x = col; x < Math.min(n, col + BW); x++) A2[r][x] -= m * A2[col][x]; bb[r] -= m * bb[col]; }
+    }
+    const X = new Array(n).fill(0);
+    for (let r = n - 1; r >= 0; r--) { let sum = bb[r]; for (let x = r + 1; x < Math.min(n, r + BW); x++) sum -= A2[r][x] * X[x]; X[r] = Math.abs(A2[r][r]) > 1e-12 ? sum / A2[r][r] : T[r]; }
+    T = X;
+  }
+  for (let k = 1; k < n; k++) if (T[k] < T[k - 1] + 0.12) T[k] = T[k - 1] + 0.12;
+  return T;
 }
 // inside each bar: where each heard note is, as a share of the bar's width and of its time
 function knotsOf(byBar, times, bars) {
@@ -2347,7 +2537,7 @@ export const _posAt = (o, t) => posAt(o, t);
 export const _alignChords = (e, o) => alignChords(e, o);
 // (for the tests: a score put on the video without the picker)
 export async function _addScoreFrom(canvas, opt = {}) {
-  const A = await analyse(canvas);
+  const A = await analyseCrisp(canvas);
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
   const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height, canvas), times: null, synced: 'even' };
   o.times = evenTimes(o.layout.bars.length);
