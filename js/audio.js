@@ -143,7 +143,11 @@ if (typeof window !== 'undefined' && window.AudioContext) {
   if (res0) AP.resume = function (...a) {
     if (remotePaused && this.__outside) { alog('not woken (paused from outside Stand)'); return Promise.resolve(); }
     // (a pause of Stand's own not yet taken effect is undone; one that has stays Stand's until it plays)
-    ourResumeAt = performance.now(); this.__outside = false; if (this.state === 'running') this.__ours = false; return res0.apply(this, a); };
+    ourResumeAt = performance.now(); this.__outside = false; if (this.state === 'running') this.__ours = false;
+    // (once it is playing again, Stand's own pause is over: a pause after that, from the lock screen, is
+    // iOS's — it was taken for Stand's own when Stand had rested the sound earlier, and the metronome
+    // was woken again at once)
+    const pr = res0.apply(this, a); try { pr.then(() => { if (this.state === 'running') this.__ours = false; }, () => {}); } catch {} return pr; };
   window.__standOutside = { pause: (c) => sus0.call(c), play: (c) => res0.call(c) };   // (tests: as iOS does)
 }
 let wantSound = false;
