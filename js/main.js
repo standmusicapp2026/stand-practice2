@@ -2014,21 +2014,29 @@ const SC = { boxes: [], doc: null, token: 0, spread: null, raf: 0, mom: 0, anim:
 const SCROLL = () => !!(S.scrollPages && V.doc && !TURN() && !(typeof DUO !== 'undefined' && DUO.on));
 function scrollWidth(sr) { return Math.floor(Math.min(sr.width - 16, Math.max(sr.height * 1.05, 560))); }
 // (where a page is in the column; a moved column is the pages' own frame for offsetTop, a still one is not)
-const scTop = (b) => (b.pg.offsetParent === SC.spread ? b.pg.offsetTop : b.pg.offsetTop - SC.spread.offsetTop);
+const scTop0 = (b) => (b.pg.offsetParent === SC.spread ? b.pg.offsetTop : b.pg.offsetTop - SC.spread.offsetTop);
+// (where each page is, how tall, and the size of the screen: measured once, not at every move of the
+// finger — reading them while the pages move made the iPad work out the whole layout again each time)
+const scTop = (b) => (b.top != null ? b.top : (b.top = scTop0(b)));
+const scH = (b) => (b.h != null ? b.h : (b.h = b.pg.offsetHeight));
+function scNat() { const t = performance.now(); if (!SC.nat || t - SC.natT > 600) { SC.nat = spreadNatural(); SC.natT = t; SC.pad = scPad(); } return SC.nat; }
+function scDirty() { SC.nat = null; for (const b of SC.boxes) { b.top = null; b.h = null; } }
+try { new MutationObserver(() => { SC.nat = null; }).observe($('#score'), { attributes: true, attributeFilter: ['class'] }); } catch {}
+window.addEventListener('resize', () => scDirty());
 function scrollReady() { return SCROLL() && SC.spread && Z.el === SC.spread && SC.doc === V.doc && SC.boxes.length === V.doc.pages; }
 // the page at the top of the screen, and how far into it (0 … 1)
 function scrollWhere() {
   if (!SC.spread || !SC.boxes.length) return { page: V.page, f: 0 };
-  const n = spreadNatural(), y = (scPad() + 14 - n.oy - Z.y) / Z.s;
+  const n = scNat(), y = (SC.pad + 14 - n.oy - Z.y) / Z.s;
   let page = 0;
   for (const b of SC.boxes) { if (scTop(b) <= y) page = b.i; else break; }
-  const b = SC.boxes[page], h = b.pg.offsetHeight || 1;
+  const b = SC.boxes[page], h = scH(b) || 1;
   return { page, f: clamp((y - 14 / Z.s - scTop(b)) / h, 0, 1) };
 }
 function scrollYFor(page, f = 0) {
   const b = SC.boxes[clamp(page, 0, SC.boxes.length - 1)]; if (!b) return 0;
-  const n = spreadNatural();
-  return scPad() - n.oy - (scTop(b) + f * b.pg.offsetHeight) * Z.s;
+  const n = scNat();
+  return SC.pad - n.oy - (scTop(b) + f * scH(b)) * Z.s;
 }
 // the top of the pages: just under the toolbar (when it shows)
 function scPad() {
@@ -2060,7 +2068,7 @@ async function layoutScroll(token) {
   V.pages = [];
   stage.textContent = '';
   stage.append(spread);
-  SC.boxes = boxes; SC.doc = V.doc; SC.token = token; SC.spread = spread;
+  SC.boxes = boxes; SC.doc = V.doc; SC.token = token; SC.spread = spread; SC.nat = null; SC.noTile = false;
   cancelAnimationFrame(SC.mom); cancelAnimationFrame(SC.anim); SC.mom = SC.anim = 0;
   Z.el = spread; Z.s = 1; Z.x = 0; Z.sharp = 1;
   Z.y = scrollYFor(keep.page, keep.f);
@@ -2077,7 +2085,7 @@ function scrollSync(now) {
   const run = () => {
     SC.raf = 0;
     if (!scrollReady()) return;
-    const n = spreadNatural(), top = (0 - n.oy - Z.y) / Z.s, bot = (n.sh - n.oy - Z.y) / Z.s, scr = n.sh / Z.s;
+    const n = scNat(), top = (0 - n.oy - Z.y) / Z.s, bot = (n.sh - n.oy - Z.y) / Z.s, scr = n.sh / Z.s;
     const w = scrollWhere();
     if (w.page !== V.page) {
       V.page = w.page; if (V.score) V.score.lastPage = V.page;
@@ -2086,7 +2094,7 @@ function scrollSync(now) {
       syncPaperPlus(); follow.pages();
     }
     for (const b of SC.boxes) {
-      const t = scTop(b), h = b.pg.offsetHeight;
+      const t = scTop(b), h = scH(b);
       const shown = t + h > top && t < bot, near = t + h > top - scr * 0.8 && t < bot + scr * 0.8;
       const far = t + h < top - scr * 2.2 || t > bot + scr * 2.2;
       const e = V.pages.find((x) => x.index === b.i);
@@ -2100,7 +2108,10 @@ async function scrollMake(b, prio) {
   b.loading = true;
   const token = SC.token, doc = V.doc, sc = V.score;
   let art = null;
-  try { art = await renderPage(b.i, b.iw, b.ih, 1, prio); } catch { art = null; }
+  // (flying past: a lighter picture first, a quarter of the pixels, drawn again sharp when the column stops)
+  const fast = SC.speed > 0.6 || !!(GS && GS.kind === 'nav' && GS.vs && GS.vs.length > 2 && Math.abs(GS.vs[GS.vs.length - 1][1] - GS.vs[0][1]) / Math.max(1, GS.vs[GS.vs.length - 1][0] - GS.vs[0][0]) > 0.6);
+  const zq = fast && !V.doc.composite ? 0.5 : 1;
+  try { art = await renderPage(b.i, b.iw, b.ih, zq, prio); } catch { art = null; }
   b.loading = false;
   if (token !== layoutToken || V.doc !== doc || V.score !== sc || !b.pg.isConnected) return;
   // (not drawn: asked again in a moment, if it is still wanted)
@@ -2113,9 +2124,10 @@ async function scrollMake(b, prio) {
   b.inner.insertBefore(ink, b.inner.firstChild); b.inner.insertBefore(art, ink);
   const i = b.i;
   const layer = new InkLayer(ink, sc.id, doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i));
-  const entry = { index: i, orig: doc.orig(i), pg: b.pg, inner: b.inner, art, ink, layer, iw: b.iw, ih: b.ih };
+  const entry = { index: i, orig: doc.orig(i), pg: b.pg, inner: b.inner, art, ink, layer, iw: b.iw, ih: b.ih, low: zq < 1 };
   layer.onItems = () => renderNotes(entry);
   V.pages.push(entry); V.pages.sort((x, y) => x.index - y.index);
+  if (entry.low && !SC.mom && !(GS && GS.kind === 'nav')) setTimeout(() => scrollSettle(), 50);
   if (Z.s > 1.05) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 120); }
   showTempoMarks(layoutToken, [entry]);
 }
@@ -2148,16 +2160,53 @@ function scrollMomentum(v) {
   cancelAnimationFrame(SC.mom);
   if (Math.abs(v) < 0.15) { scheduleSharpen(); return; }
   let last = performance.now();
+  SC.speed = Math.abs(v);
   const step = () => {
     const now2 = performance.now(), dt = Math.min(40, now2 - last); last = now2;
     const y0 = Z.y; Z.y += v * dt; applyZoom();
-    v *= Math.pow(0.0035, dt / 1000);   // (slows as on the iPhone)
-    if (Math.abs(v) < 0.02 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; scrollSync(true); scheduleSharpen(); return; }
+    v *= Math.pow(0.998, dt);   // (slows as on the iPhone: about a seventh of its speed left after a second)
+    SC.speed = Math.abs(v);
+    if (Math.abs(v) < 0.015 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; SC.speed = 0; scrollSync(true); scrollSettle(); scheduleSharpen(); return; }
     SC.mom = requestAnimationFrame(step);
   };
   SC.mom = requestAnimationFrame(step);
 }
-function scrollStop() { cancelAnimationFrame(SC.mom); SC.mom = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; }
+function scrollStop() { cancelAnimationFrame(SC.mom); SC.mom = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; SC.speed = 0; }
+// pulled past an end and let go: back to the end, gently
+function scrollSpringBack() {
+  cancelAnimationFrame(SC.anim);
+  const from = Z.y, to = clamp(Z.y, SC.lo, SC.hi), t0 = performance.now(), T = 380;
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / T), e2 = 1 - Math.pow(1 - k, 3);
+    Z.y = from + (to - from) * e2; applyZoom();
+    if (k < 1) SC.anim = requestAnimationFrame(step); else { SC.anim = 0; scrollSync(true); scrollSettle(); }
+  };
+  SC.anim = requestAnimationFrame(step);
+}
+// (the pages drawn quickly while the column flew past, drawn again properly once it is still)
+function scrollSettle() {
+  if (!scrollReady()) return;
+  const n = scNat(), top = (0 - n.oy - Z.y) / Z.s, bot = (n.sh - n.oy - Z.y) / Z.s, scr = n.sh / Z.s;
+  for (const e of V.pages) {
+    if (!e.low) continue;
+    const b = SC.boxes[e.index]; if (!b) continue;
+    const t = scTop(b), h = scH(b);
+    if (t + h > top - scr * 0.8 && t < bot + scr * 0.8) scrollSharp(e);
+  }
+}
+async function scrollSharp(e) {
+  if (e.lowBusy) return; e.lowBusy = true;
+  const token = layoutToken;
+  let art = null; try { art = await renderPage(e.index, e.iw, e.ih, 1, 0); } catch { art = null; }
+  e.lowBusy = false;
+  if (token !== layoutToken || !V.pages.includes(e) || !art || !art.width || !e.art || e.art.parentNode !== e.inner) return;
+  if (SC.speed > 0.6) { e.low = true; return; }
+  if (art.parentNode && art.parentNode !== e.inner) { const c = document.createElement('canvas'); c.width = art.width; c.height = art.height; c.getContext('2d').drawImage(art, 0, 0); art = c; }
+  art.className = 'art';
+  const old = e.art; e.inner.replaceChild(art, old); e.art = art; e.low = false;
+  if (!INCACHE.has(old)) freeCanvas(old);
+  inkFollowsArt(e);
+}
 // a trackpad or mouse wheel moves it too
 stage.addEventListener('wheel', (e) => {
   if (!scrollReady()) return;
@@ -2824,14 +2873,19 @@ function clampZoom() {
     Z.y = ch <= b.sh ? 0 : clamp(Z.y, -(ch - b.sh) / 2, (ch - b.sh) / 2);
     return;
   }
-  const n = spreadNatural();
+  const scr = SCROLL() && Z.el === SC.spread;
+  const n = scr ? scNat() : spreadNatural();
   const cw = n.w * Z.s, ch = n.h * Z.s;
-  if (SCROLL() && Z.el === SC.spread) {
+  if (scr) {
     // the column: across, as a page; down, from its top to its last page's foot (with room left
     // under it, to write at the bottom of the last page above the writing tools)
     if (cw <= n.sw) Z.x = (n.sw - cw) / 2 - n.ox; else Z.x = clamp(Z.x, n.sw - cw - n.ox, -n.ox);
-    const hi = -n.oy + scPad() - 10, lo = Math.min(hi, n.sh * 0.55 - ch - n.oy);
-    Z.y = clamp(Z.y, lo, hi);
+    const hi = -n.oy + SC.pad - 10, lo = Math.min(hi, n.sh * 0.55 - ch - n.oy);
+    SC.lo = lo; SC.hi = hi;
+    // (pulled past the first page's top or the last page's foot: it gives a little, as on the iPhone,
+    // and springs back when let go)
+    if (SC.rubber) { const rb = (d) => (d * 0.5) / (1 + d / 400); if (Z.y > hi) Z.y = hi + rb(Z.y - hi); else if (Z.y < lo) Z.y = lo - rb(lo - Z.y); }
+    else Z.y = clamp(Z.y, lo, hi);
     return;
   }
   if (NBPAN()) {
@@ -2881,6 +2935,9 @@ function scheduleSharpen() {
 // After zooming, render the visible pages again at the new size so the music stays crisp.
 async function sharpen() {
   const want = Z.s > 1.15 ? Math.min(Z.s, 4) : 1;
+  // (pages scrolled down, zoomed in: only the part on screen is drawn sharp, as a piece over the page —
+  // the whole page drawn again four times bigger held everything up after each pinch)
+  if (want > 1 && SCROLL() && Z.el === SC.spread && V.doc && V.doc.renderView && !SC.noTile) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 30); return; }
   if (Math.abs(want - Z.sharp) < 0.2 && !(want === 1 && Z.sharp !== 1)) return;
   Z.sharp = want;
   const token = layoutToken;
@@ -2984,6 +3041,8 @@ function sharpArtTile(p, r, sr, dpr) {
   p.tileKey = key;
   const token = layoutToken, c = el('canvas', 'art art-tile');
   rqAdd(0, (ctl) => doc.renderView(p.index, c, v, pw, ph, { ctl }), () => V.doc !== doc || token !== layoutToken || p.tileKey !== key).then((ok) => {
+    // (this score cannot be drawn in pieces — a heavy scan: the whole page is drawn sharp instead)
+    if (ok === false && SCROLL() && !SC.noTile) { SC.noTile = true; scheduleSharpen(); }
     if (!ok || p.tileKey !== key || token !== layoutToken || !p.art || p.art.parentNode !== p.inner) { c.width = c.height = 0; return; }
     Object.assign(c.style, { inset: 'auto', left: v.x * 100 + '%', top: v.y * 100 + '%', width: v.w * 100 + '%', height: v.h * 100 + '%' });
     const old = p.tile; p.tile = c;
@@ -3003,7 +3062,7 @@ function setZoomAt(s, cx, cy, base) {
     applyZoom();
     return;
   }
-  const n = spreadNatural();
+  const n = SCROLL() && Z.el === SC.spread ? scNat() : spreadNatural();
   const wx = (cx - n.left - n.ox - base.x) / base.s, wy = (cy - n.top - n.oy - base.y) / base.s;
   Z.s = clamp(s, zoomMin(), 5);
   Z.x = cx - n.left - n.ox - wx * Z.s; Z.y = cy - n.top - n.oy - wy * Z.s;
@@ -6178,9 +6237,12 @@ window.addEventListener('pointermove', (e) => {
     const dx = e.clientX - GS.x, dy = e.clientY - GS.y;
     if (Math.hypot(dx, dy) > 8) { GS.moved = true; clearTimeout(GS.holdT); }
     if (scrollReady() && GS.moved) {
-      // (pages one under the other: one finger moves the column)
-      if (Z.s > 1.001) Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom();
-      GS.vs.push([now(), Z.y]); if (GS.vs.length > 8) GS.vs.shift();
+      // (pages one under the other: one finger moves the column, once a screen picture however many
+      // moves of the finger come in; the column starts from where the finger is, without a jump)
+      if (GS.sy0 == null) { const hh = Math.hypot(dx, dy) || 1; GS.sy0 = (dy * 8) / hh; GS.sx0 = (dx * 8) / hh; }
+      GS.want = { dx: dx - GS.sx0, dy: dy - GS.sy0 };
+      GS.vs.push([e.timeStamp || now(), e.clientY]); if (GS.vs.length > 12) GS.vs.shift();
+      if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); }); }
       return;
     }
     if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
@@ -6207,6 +6269,7 @@ function pointerEnd(e) {
     if (touches().length < 2) {
       const g = GS; GS = PT.size ? { kind: 'wait' } : null;
       if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; if (g.want) pinchApply(g); }
+      if (SC.rubber) { SC.rubber = false; if (scrollReady() && (Z.y > SC.hi + 0.5 || Z.y < SC.lo - 0.5)) scrollSpringBack(); }
       scheduleSharpen();
       // a quick two-finger swipe without zooming turns the page (in a notebook, where two fingers
       // also move the page, only a quick, clearly sideways one)
@@ -6219,15 +6282,26 @@ function pointerEnd(e) {
   if (GS.kind === 'nav' && GS.id === e.pointerId) {
     const g = GS; GS = null;
     clearTimeout(g.holdT);
-    if (g.held) return;   // the hold menu is open
-    if (!p || p.palm || e.type === 'pointercancel') return;
-    if (penDown || (V.inking && now() - lastPenUp < 500)) return;   // the Pencil came down meanwhile: it was the hand
+    // (a column pulled past its end goes back, however the finger left)
+    const rubEnd = () => { if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; } if (!SC.rubber) return; SC.rubber = false; if (scrollReady() && (Z.y > SC.hi + 0.5 || Z.y < SC.lo - 0.5)) scrollSpringBack(); };
+    if (g.held) { rubEnd(); return; }   // the hold menu is open
+    if (!p || p.palm || e.type === 'pointercancel') { rubEnd(); return; }
+    if (penDown || (V.inking && now() - lastPenUp < 500)) { rubEnd(); return; }   // the Pencil came down meanwhile: it was the hand
     const dx = e.clientX - g.x, dy = e.clientY - g.y, dt = now() - g.t0;
     if (scrollReady() && g.moved) {
-      // let go: it runs on as fast as it was moving
-      const vs = g.vs.filter((q) => now() - q[0] < 90);
-      const v = vs.length >= 2 ? (vs[vs.length - 1][1] - vs[0][1]) / Math.max(8, vs[vs.length - 1][0] - vs[0][0]) : 0;
-      scrollMomentum(clamp(v, -6, 6));
+      if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; if (g.want) { if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); } }
+      // let go: it runs on as fast as it was moving (the finger's speed over its last tenth of a second,
+      // fitted through all the moves in it), or, pulled past an end, springs back
+      const tEnd = e.timeStamp || now(), vs = g.vs.filter((q) => tEnd - q[0] < 100);
+      let v = 0;
+      if (vs.length >= 2 && tEnd - vs[vs.length - 1][0] < 60) {
+        const mt = vs.reduce((a, q) => a + q[0], 0) / vs.length, my = vs.reduce((a, q) => a + q[1], 0) / vs.length;
+        let num = 0, den = 0; for (const q of vs) { num += (q[0] - mt) * (q[1] - my); den += (q[0] - mt) * (q[0] - mt); }
+        v = den > 0 ? num / den : 0;
+      }
+      SC.rubber = false;
+      if (Z.y > SC.hi + 0.5 || Z.y < SC.lo - 0.5) { scrollSpringBack(); return; }
+      scrollMomentum(clamp(v, -7, 7));
       return;
     }
     if (Z.s !== 1) {

@@ -2140,8 +2140,9 @@ body.phone #lgPrevC { height: min(58vh, 560px); }
 body.phone #lgPrevC.land { width: 86vw; }
 body.phone .lg-prev-side { width: 100%; }
 /* My scores on the iPhone: Scan and Import score, as at the top of the iPad's library */
-.phs-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; padding: 0 16px 10px; }
-.phs-actions .btn { justify-content: center; height: 44px; }
+.phs-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 0; padding: 0; }
+.phs-actions .btn { justify-content: center; height: 40px; min-height: 40px; padding: 0 12px; border-radius: 12px; font-size: 15px; gap: 7px; box-shadow: none; }
+.phs-actions .btn svg { width: 18px; height: 18px; }
 .phs-actions[hidden] { display: none; }
 /* export: clean lists of choices (grouped, as in Settings) */
 .exp-group { margin: 6px 4px 6px; font: 700 12px var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
