@@ -387,7 +387,7 @@ function straightStrip(L, bmp) {
     const z = e[e.length - 1]; return [z[1], z[2]];
   };
   const staffs = L.staffs.filter((st) => st.sys >= 0);
-  const owner = new Map();
+  const owner = new Map(), loose = [];
   for (const [r, b] of box) {
     if (b[4] < 3) continue;   // (specks)
     const cx = (b[0] + b[2]) / 2;
@@ -400,9 +400,48 @@ function straightStrip(L, bmp) {
       if (g < gap) { gap = g; near = st.sys; }
     }
     // (a mark cut by the edge of the picture — words or a number above the first line or below the
-    // last, half in the picture — is left out: only whole marks go on the line, never halves)
-    if (best < 0 && (b[1] <= 1 || b[3] >= H - 2)) { owner.set(r, -3); continue; }
+    // last, half in the picture, or the bottom of the line above — is left out: only whole marks go on
+    // the line, never halves. A note whose stem is cut stays: most of it is on its staff)
+    const edge = b[1] <= 1 || b[3] >= H - 2 || b[0] <= 1 || b[2] >= W - 2;
+    if (edge && bo < 0.3 * (b[3] - b[1] + 1)) { owner.set(r, -3); continue; }
     owner.set(r, best >= 0 ? best : near);
+    if (best < 0) loose.push(r);
+  }
+  // (and what was written with it: the other letters of the same words, the dot of an i, the rest of a
+  // number — marks off the staves lying close beside one left out go too, so no word is left half there)
+  {
+    const reach = Math.max(3, (L.sp || 10) * 0.6);
+    let gone = [...owner].filter(([, v]) => v === -3).map(([r]) => box.get(r));
+    for (let pass = 0; pass < 12 && gone.length; pass++) {
+      const next = [];
+      for (let k = loose.length - 1; k >= 0; k--) {
+        const r = loose[k], b = box.get(r);
+        if (gone.some((q) => b[0] - reach <= q[2] && q[0] - reach <= b[2] && b[1] - reach <= q[3] && q[1] - reach <= b[3])) { owner.set(r, -3); next.push(b); loose.splice(k, 1); }
+      }
+      gone = next;
+    }
+  }
+  // (marks of the line before or after, whole but cut off from their own staff by the edge of the
+  // picture — the dynamics and numbers under a line half in the picture — go with that line, not this
+  // one: a mark between what the edge cut and the first (or last) staff goes with whichever it is nearer)
+  {
+    const topSt = (x) => Math.min(...staffs.map((st) => edgeAt(st, x)[0])), botSt = (x) => Math.max(...staffs.map((st) => edgeAt(st, x)[1]));
+    const cut = [];
+    for (const [r, v] of owner) if (v === -3) cut.push(box.get(r));
+    const span = (L.sp || 10) * 3;
+    if (staffs.length && cut.length) for (const r of loose) {
+      if (owner.get(r) === -3) continue;
+      const b = box.get(r), cx = (b[0] + b[2]) / 2, yT = topSt(cx), yB = botSt(cx);
+      // (only what the edge cut near it, side by side with it, counts)
+      let up = Infinity, down = Infinity;
+      for (const q of cut) {
+        if (q[2] < b[0] - span || q[0] > b[2] + span) continue;
+        if (q[3] < b[1]) up = Math.min(up, b[1] - q[3]);
+        if (q[1] > b[3]) down = Math.min(down, q[1] - b[3]);
+      }
+      if (b[3] < yT && up < (yT - b[3]) * 0.75) owner.set(r, -3);
+      else if (b[1] > yB && down < (b[1] - yB) * 0.75) owner.set(r, -3);
+    }
   }
   const ownerAt = (i) => (lab[i] >= 0 ? (owner.has(lab[i]) ? owner.get(lab[i]) : -2) : -1);
   // each line of music, laid straight
@@ -410,25 +449,44 @@ function straightStrip(L, bmp) {
     const first = staffs.find((st) => st.sys === s.sys) || staffs[0];
     const x0 = Math.max(0, Math.round(s.x)), w = Math.max(1, Math.min(W - x0, Math.round(s.w)));
     const mid = x0 + w / 2, [mT, mB] = edgeAt(first, mid), yc0 = (mT + mB) / 2;
-    const d = new Int16Array(w); let dmin = 0, dmax = 0;
-    for (let x = 0; x < w; x++) { const [yT, yB] = edgeAt(first, x0 + x); d[x] = Math.round(yc0 - (yT + yB) / 2); if (d[x] < dmin) dmin = d[x]; if (d[x] > dmax) dmax = d[x]; }
+    // (how far each column is moved to lay the staff level: a smooth curve through where the staff was
+    // found — a slight turn and bow of a scan — never the little jumps of each measurement, which drew
+    // a step in the staff lines; a staff already level is not moved at all)
+    const spS = first.sp || L.sp || 10;
+    const cen = new Float64Array(w); for (let x = 0; x < w; x++) { const [yT, yB] = edgeAt(first, x0 + x); cen[x] = (yT + yB) / 2; }
+    // (averaged over about four spaces each side: the staff's own gentle curve kept, the jitter gone)
+    const R = Math.max(6, Math.round(spS * 2)), pre = new Float64Array(w + 1); for (let x = 0; x < w; x++) pre[x + 1] = pre[x] + cen[x];
+    const sm = (x) => { const a0 = Math.max(0, x - R), a1 = Math.min(w, x + R + 1); return (pre[a1] - pre[a0]) / (a1 - a0); };
+    // (in whole pixels: a part of a pixel would blend each staff line over two rows, greyer and softer)
+    const d = new Float32Array(w); { const c0 = sm(Math.floor(w / 2)); for (let x = 0; x < w; x++) d[x] = Math.round(c0 - sm(x)); }
+    let dmin = 0, dmax = 0; for (let x = 0; x < w; x++) { if (d[x] < dmin) dmin = d[x]; if (d[x] > dmax) dmax = d[x]; }
+    if (dmax - dmin < 0.75) { d.fill(0); dmin = dmax = 0; }
     // the rows its ink reaches
     let top = Infinity, bot = -Infinity;
     for (const [r, b] of box) if (owner.get(r) === s.sys && b[2] >= x0 && b[0] < x0 + w) { if (b[1] < top) top = b[1]; if (b[3] > bot) bot = b[3]; }
     if (!isFinite(top)) { top = Math.max(0, Math.round(mT - s.staff)); bot = Math.min(H - 1, Math.round(top + s.h)); }
     top = Math.max(0, top - 2); bot = Math.min(H - 1, bot + 2);
-    const oTop = top + dmin, h = bot - top + 1 + (dmax - dmin);
+    const oTop = top + Math.floor(dmin), h = bot - top + 2 + Math.ceil(dmax) - Math.floor(dmin);
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const g = c.getContext('2d'); const out = g.createImageData(w, h); const od = out.data; od.fill(255);
+    const col = new Uint8Array(bot - top + 1);
     for (let x = 0; x < w; x++) {
       const X = x0 + x, dx = d[x];
+      // (this column's ink that belongs to this line: the rest is paper)
       for (let y = top; y <= bot; y++) {
-        const i = y * W + X, v = lum[i]; if (v >= SOFT) continue;
+        const i = y * W + X, v = lum[i]; col[y - top] = 255; if (v >= SOFT) continue;
         let mine = ownerAt(i) === s.sys;
         // (the soft edge of a mark goes with the mark)
         if (!mine && lab[i] < 0) for (let dy = -1; dy <= 1 && !mine; dy++) for (let ddx = -1; ddx <= 1; ddx++) { const yy = y + dy, xx = X + ddx; if (yy < 0 || yy >= H || xx < 0 || xx >= W) continue; if (ownerAt(yy * W + xx) === s.sys) { mine = true; break; } }
-        if (!mine) continue;
-        const o = ((y + dx - oTop) * w + x) * 4; od[o] = od[o + 1] = od[o + 2] = v;
+        if (mine) col[y - top] = v;
+      }
+      // moved by dx (a part of a pixel too: the two rows it falls between, blended)
+      const fl = Math.floor(dx), fr = dx - fl;
+      for (let k = 0; k <= bot - top + 1; k++) {
+        const a0 = k < col.length ? col[k] : 255, a1 = k > 0 ? col[k - 1] : 255;
+        const v = fr ? a0 * (1 - fr) + a1 * fr : a0; if (v >= 254.5) continue;
+        const oy = top + k + fl - oTop; if (oy < 0 || oy >= h) continue;
+        const o = (oy * w + x) * 4; od[o] = od[o + 1] = od[o + 2] = v;
       }
     }
     g.putImageData(out, 0, 0);
@@ -444,11 +502,12 @@ function straightStrip(L, bmp) {
     const d = cv.getContext('2d').getImageData(0, 0, w, h).data;
     for (let k = 0; k < sp0 * 14 && from + dir * k >= 0 && from + dir * k < w; k += 1) {
       const x = Math.round(from + dir * k), runs = []; let run = -1;
-      for (let y = 0; y <= h; y++) { const dk = y < h && d[(y * w + x) * 4] < 170; if (dk && run < 0) run = y; if (!dk && run >= 0) { runs.push([run, y - 1]); run = -1; } }
+      for (let y = 0; y <= h; y++) { const dk = y < h && d[(y * w + x) * 4] < 205; if (dk && run < 0) run = y; if (!dk && run >= 0) { runs.push([run, y - 1]); run = -1; } }
       const thin = runs.filter((r) => r[1] - r[0] <= sp0 * 0.35);
       if (thin.length !== 5 || runs.length !== 5) continue;
-      const mids = thin.map((r) => (r[0] + r[1]) / 2), gaps = mids.slice(1).map((m, i) => m - mids[i]);
-      if (gaps.every((gg) => Math.abs(gg - sp0) < sp0 * 0.3)) return mids;
+      // (each line's middle weighed by how dark each of its rows is: to a part of a pixel)
+      const mids = thin.map((r) => { let sw = 0, sy = 0; for (let y = Math.max(0, r[0] - 1); y <= Math.min(h - 1, r[1] + 1); y++) { const wv = 255 - d[(y * w + x) * 4]; sw += wv; sy += wv * y; } return sw > 0 ? sy / sw : (r[0] + r[1]) / 2; }), gaps = mids.slice(1).map((m, i) => m - mids[i]);
+      if (gaps.every((gg) => Math.abs(gg - sp0) < sp0 * 0.3)) { mids.x = x; mids.col = Float32Array.from({ length: h }, (_, y) => d[(y * w + x) * 4]); return mids; }
     }
     return null;
   };
@@ -482,7 +541,7 @@ function straightStrip(L, bmp) {
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, CW, CH);
   g.imageSmoothingQuality = 'high';
   g.scale(K, K);
-  L.segs.forEach((s, k) => { const q = outs[k]; s.dy = Math.round(q.top * 4) / 4; s.h = q.h; s.staff = q.staffTop; g.drawImage(q.c, s.sx, s.dy); });
+  L.segs.forEach((s, k) => { const q = outs[k]; s.dy = Math.round(q.top); s.h = q.h; s.staff = q.staffTop; g.drawImage(q.c, s.sx, s.dy); });
   L.height = CH0;
   // and the staff running on from one line to the next (each of its five lines, where it ends to
   // where the next one begins)
@@ -507,10 +566,34 @@ function straightStrip(L, bmp) {
       const xa = A.sx + ea, xb = B.sx + eb;
       g.fillStyle = '#fff'; g.fillRect(xa + 1, 0, Math.max(0, xb - xa - 1), CH0);
       const [aT, aB] = qa.lines(ea), [bT, bB] = qb.lines(eb);
+      if (qa.R && qb.L && qa.R.col && qb.L.col && xb > xa) {
+        // (the page's own staff carried across: each line as it is at the end of one line of music,
+        // turning little by little into the same line as it is at the start of the next — the same
+        // darkness and thickness at both ends, no join to be seen)
+        const gw = Math.max(1, Math.ceil(xb + 1 - xa)), gh = CH0, hs = sp0 * 0.3;
+        const gc = document.createElement('canvas'); gc.width = gw; gc.height = gh;
+        const gg2 = gc.getContext('2d'), im = gg2.createImageData(gw, gh), dd = im.data; dd.fill(255);
+        const px = (col, y) => (y >= 0 && y < col.length && col[y] < 225 ? col[y] : 255);   // (the line itself, never a faint shade beside it)
+        const samp = (col, y) => { const y0 = Math.floor(y), f = y - y0; return px(col, y0) * (1 - f) + px(col, y0 + 1) * f; };
+        for (let i = 0; i < gw; i++) {
+          const f = Math.min(1, Math.max(0, (i + 0.5) / gw)), ff = f * f * (3 - 2 * f);
+          for (let k = 0; k < 5; k++) {
+            const ya = A.dy + qa.R[k], yb = B.dy + qb.L[k], yk = ya + ff * (yb - ya);
+            for (let y = Math.max(0, Math.floor(yk - hs)); y <= Math.min(gh - 1, Math.ceil(yk + hs)); y++) {
+              const dy = y - yk, v = (1 - ff) * samp(qa.R.col, qa.R[k] + dy) + ff * samp(qb.L.col, qb.L[k] + dy);
+              const o = (y * gw + i) * 4; if (v < dd[o]) dd[o] = dd[o + 1] = dd[o + 2] = v;
+            }
+          }
+        }
+        gg2.putImageData(im, 0, 0);
+        g.drawImage(gc, xa, 0);
+        continue;
+      }
       for (let k = 0; k < 5; k++) {
         // (from where each line really ends to where the next one really begins)
         const ya = A.dy + (qa.R ? qa.R[k] : aT + (k * (aB - aT)) / 4), yb = B.dy + (qb.L ? qb.L[k] : bT + (k * (bB - bT)) / 4);
-        g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb + 1, yb); g.stroke();
+        // (a row of pixels n is drawn from n to n + 1: its middle is n + ½)
+        g.beginPath(); g.moveTo(xa, ya + 0.5); g.lineTo(xb + 1, yb + 0.5); g.stroke();
       }
     }
   }
