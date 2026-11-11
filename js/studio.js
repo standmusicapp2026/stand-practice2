@@ -2137,7 +2137,7 @@ async function exportNative({ share = true, noOver = false } = {}) {
       if (pending) await pending;
       if (cancelled) return;
       post({ op: 'frame', i: k, t: t - a, data });
-      pending = outNext(id, ['ack'], 60000);
+      pending = outNext(id, ['ack'], 60000); pending.catch(() => {});   // (a refused picture is told by the next one's wait, never left unheard)
     }); return chain; };
     if (isVideo && m.requestVideoFrameCallback) {
       // The video plays (silently) and stops at each of its pictures: it is drawn the moment it is
