@@ -543,18 +543,47 @@ export class InkLayer {
   eraseMany(pts, r, whole) {
     const W = this.fullW, H = this.fullH;
     let changed = false, items = this.items;
+    // (where something went: only there is the page drawn again)
+    let d = null;
+    const grow = (x0, y0, x1, y1) => { if (!d) d = { x0, y0, x1, y1 }; else { d.x0 = Math.min(d.x0, x0); d.y0 = Math.min(d.y0, y0); d.x1 = Math.max(d.x1, x1); d.y1 = Math.max(d.y1, y1); } };
     for (const [x, y] of pts) {
       let hit = false; const out = [];
       for (const s of items) {
         if (s.t === 'img' || s.t === 'tb' || s.t === 'shape' || s.t === 'bg' || s.lock || !itemHit(s, x, y, r, W, H)) { out.push(s); continue; }
         hit = true;
-        if (whole || !s.p || s.p.length < 2) continue;
+        const reach = r + (s.s || 0);
+        if (whole || !s.p || s.p.length < 2) { const b = itemBounds(s); if (b) grow(b.x0 - 0.004, b.y0 - 0.004, b.x1 + 0.004, b.y1 + 0.004); else grow(0, 0, 1, 1); continue; }
+        grow(x - reach - 0.004, y - (reach * W) / H - 0.004, x + reach + 0.004, y + (reach * W) / H + 0.004);
         for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * 0.35, W, H)) out.push({ ...s, p: part });
       }
       if (hit) { items = out; changed = true; }
     }
-    if (changed) { this.items = items; this.redraw(); this.save(); }
+    if (changed) { this.items = items; this.redrawArea(d); this.save(); }
     return changed;
+  }
+  // Only the part of the page where something was rubbed out drawn again: the whole page's markings
+  // drawn again at every move of the eraser made it slow on an older iPad. (b: page fractions)
+  redrawArea(b) {
+    if (!b || b.x1 - b.x0 > 0.6 || b.y1 - b.y0 > 0.6) { this.redraw(); return; }
+    const c = this.canvas, ctx = c.getContext('2d'), W = this.fullW, H = this.fullH, v = this.view;
+    const ox = v ? v.x * W : 0, oy = v ? v.y * H : 0;
+    const px0 = Math.max(0, Math.floor(b.x0 * W - ox) - 2), py0 = Math.max(0, Math.floor(b.y0 * H - oy) - 2);
+    const px1 = Math.min(c.width, Math.ceil(b.x1 * W - ox) + 2), py1 = Math.min(c.height, Math.ceil(b.y1 * H - oy) + 2);
+    if (px1 <= px0 || py1 <= py0) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.beginPath(); ctx.rect(px0, py0, px1 - px0, py1 - py0); ctx.clip();
+    ctx.clearRect(px0, py0, px1 - px0, py1 - py0);
+    this.prep(ctx);
+    // (in the box, back to page fractions, for choosing what to draw)
+    const fx0 = (px0 + ox) / W, fy0 = (py0 + oy) / H, fx1 = (px1 + ox) / W, fy1 = (py1 + oy) / H, hide = this._hide;
+    this.items.forEach((s, i) => {
+      if (hide && hide.has(i)) return;
+      if (s.t !== 'bg' && s.t !== 'passage') { const bb = itemBounds(s); if (bb && (bb.x1 + 0.01 < fx0 || bb.x0 - 0.01 > fx1 || bb.y1 + 0.01 < fy0 || bb.y0 - 0.01 > fy1)) return; }
+      drawItem(ctx, s, W, H, false);
+    });
+    ctx.restore();
+    if (v) this._baseLater();
   }
   flushErase() { if (!this.erasing) return; this.erasing = false; this.redraw(); this.save(); }
   // (things added at the end are new: they go in the layer being written in; undo passes raw)

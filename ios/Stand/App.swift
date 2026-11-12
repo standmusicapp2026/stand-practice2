@@ -141,6 +141,8 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
 
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, UIPencilInteractionDelegate {
     private var webView: WKWebView!
+    /// keeps the page from sliding sideways (see below)
+    private var sideLock: NSKeyValueObservation?
     private var pageReady = false
     private var pending: [[String: Any]] = []
     private let face = FaceTurner()
@@ -170,6 +172,13 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         webView.allowsBackForwardNavigationGestures = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.bounces = false
+        // Stand fits the screen exactly: the page itself never slides sideways, even when something
+        // waiting off to the side (a closed panel) makes it a little wider on some iPad
+        webView.scrollView.alwaysBounceHorizontal = false
+        webView.scrollView.showsHorizontalScrollIndicator = false
+        sideLock = webView.scrollView.observe(\.contentOffset, options: [.new]) { sv, _ in
+            if sv.contentOffset.x != 0 { sv.contentOffset = CGPoint(x: 0, y: sv.contentOffset.y) }
+        }
         webView.isOpaque = false
         // the colour of the launch screen and of Stand's own background (light and dark): no white flash
         // between the launch screen and the first picture of the page

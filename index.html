@@ -1623,15 +1623,8 @@
 <section class="studio" id="studio" hidden aria-label="Studio">
   <header class="topbar st-top">
     <button class="icon-btn" id="stBack" aria-label="Back to the recording"><svg><use href="#i-back"/></svg></button>
-    <div class="tb-title"><strong id="stTitle">Studio</strong><span class="num" id="stTime">0:00</span></div>
-    <div class="tb-tools">
-      <button class="tb-btn" id="stPlay"><svg><use href="#i-play"/></svg><span>Play</span></button>
-      <button class="tb-btn" id="stAddScore"><svg><use href="#i-passage"/></svg><span>Add score</span></button>
-      <button class="tb-btn" id="stAddImage"><svg><use href="#i-image"/></svg><span>Add image</span></button>
-      <button class="tb-btn" id="stSyncBtn"><svg><use href="#i-sync"/></svg><span>Sync</span></button>
-      <button class="tb-btn" id="stFormatBtn"><svg><use href="#i-crop"/></svg><span>Format</span></button>
-      <button class="tb-btn st-export" id="stExport"><svg><use href="#i-share"/></svg><span>Export</span></button>
-    </div>
+    <div class="tb-title"><strong id="stTitle">Studio</strong></div>
+    <button class="btn primary small st-export" id="stExport"><svg><use href="#i-share"/></svg><span>Export</span></button>
   </header>
   <div class="st-main">
     <div class="st-stage" id="stStage">
@@ -1642,20 +1635,41 @@
         <span>Choose the score (from your library, a photo or a PDF) and tap the lines you play. Stand follows your playing and moves the music along with you.</span>
         <button class="btn primary" id="stEmptyAdd"><svg><use href="#i-plus"/></svg><span>Add score</span></button>
       </div>
-      <button class="st-tap" id="stTap" hidden><b>Tap</b><span id="stTapInfo">at the start of each bar</span></button>
     </div>
-    <aside class="st-side" id="stSide"></aside>
+    <aside class="st-side" id="stPanelWrap">
+      <nav class="st-tabs" id="stTabs" role="tablist" aria-label="Studio tools">
+        <button role="tab" data-tab="score" id="stTabScore"><svg><use href="#i-passage"/></svg><span>Score</span></button>
+        <button role="tab" data-tab="timing" id="stSyncBtn"><svg><use href="#i-sync"/></svg><span>Timing</span></button>
+        <button role="tab" data-tab="image" id="stAddImage"><svg><use href="#i-image"/></svg><span>Image</span></button>
+        <button role="tab" data-tab="frame" id="stFormatBtn"><svg><use href="#i-crop"/></svg><span>Frame</span></button>
+        <button role="tab" data-tab="look" id="stTabLook"><svg><use href="#i-sun"/></svg><span>Look</span></button>
+      </nav>
+      <div class="st-panel" id="stSide"></div>
+    </aside>
+  </div>
+  <div class="st-transport" id="stTransport">
+    <div class="st-clock"><b class="num" id="stTime">0:00.0</b><span id="stBarNow"></span></div>
+    <button class="st-playbtn" id="stPlay" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+    <div class="st-tzoom">
+      <button class="icon-btn" id="stZoomOut" aria-label="Show more of the recording"><svg><use href="#i-minus"/></svg></button>
+      <button class="icon-btn" id="stLoupe" aria-label="Magnify around the red line"><svg><use href="#i-zoom"/></svg></button>
+    </div>
   </div>
   <div class="st-timeline" id="stTimeline">
-    <div class="st-ruler" id="stRuler"></div>
+    <div class="st-ruler" id="stRuler"><canvas id="stRulerC"></canvas></div>
     <div class="st-tracks" id="stTracks">
-      <div class="st-track st-media"><span class="st-tlabel"><svg><use href="#i-video"/></svg></span><canvas id="stWave"></canvas><div class="st-trimbox" id="stTrimBox"></div><div class="st-trim l" id="stTrimL"><i></i></div><div class="st-trim r" id="stTrimR"><i></i></div><div class="st-trimtip" id="stTrimTip" hidden></div></div>
-      <div class="st-track st-scoretrack" id="stScoreTrack"><span class="st-tlabel"><svg><use href="#i-passage"/></svg></span><div class="st-lane" id="stScoreLane"></div></div>
-      <div class="st-track st-imgtrack" id="stImgTrack"><span class="st-tlabel"><svg><use href="#i-image"/></svg></span><div class="st-lane" id="stImgLane"></div></div>
+      <div class="st-track st-media"><span class="st-tlabel"><svg><use href="#i-video"/></svg></span><div class="st-lane st-medialane" id="stMediaLane"><canvas id="stWave"></canvas><div class="st-roll" id="stMediaRoll"><div class="st-trimbox" id="stTrimBox"></div><div class="st-trim l" id="stTrimL"><i></i></div><div class="st-trim r" id="stTrimR"><i></i></div></div></div><div class="st-trimtip" id="stTrimTip" hidden></div></div>
+      <div class="st-track st-scoretrack" id="stScoreTrack"><span class="st-tlabel"><svg><use href="#i-passage"/></svg></span><div class="st-lane" id="stScoreLane"><div class="st-roll" id="stScoreRoll"></div></div></div>
+      <div class="st-track st-imgtrack" id="stImgTrack"><span class="st-tlabel"><svg><use href="#i-image"/></svg></span><div class="st-lane" id="stImgLane"><div class="st-roll" id="stImgRoll"></div></div></div>
       <div class="st-head" id="stHead"></div>
     </div>
   </div>
+  <div class="st-tappad" id="stTapPad" hidden>
+    <button class="st-tap" id="stTap"><b id="stTapBar">Bar 1</b><span id="stTapInfo">Tap on its first beat</span></button>
+    <button class="btn small st-tapstop" id="stTapStop">Stop tapping</button>
+  </div>
   <input type="file" id="stImageInput" accept="image/*" hidden>
+  <div class="st-eraser" id="stEraser" hidden></div>
   <div class="st-busy" id="stBusy" hidden><div class="st-busy-card"><b id="stBusyTitle">Working…</b><div class="cut-progress"><i id="stBusyBar"></i></div><span class="hint" id="stBusyText"></span><button class="btn small" id="stBusyCancel">Cancel</button></div></div>
 </section>
 <!-- ======================= iPhone: camera for the iPad ======================= -->

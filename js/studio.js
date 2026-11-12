@@ -67,7 +67,8 @@ export async function openStudio(takeId) {
   ST.at = null; ST.pend = null; ST.gradeKey = null; ST.media.currentTime = ST.P.trim.a;
   // (a picture of the first frame to show, and to draw the looks with)
   if (ST.media.readyState < 2) await new Promise((res) => { const done = () => { ST.media.removeEventListener('loadeddata', done); ST.media.removeEventListener('seeked', done); res(); }; ST.media.addEventListener('loadeddata', done); ST.media.addEventListener('seeked', done); setTimeout(done, 2500); });
-  ST.tv = null; sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
+  ST.tv = null; ST.tz = null; ST.tzT = null; ST.viewC = null; ST.selBar = null; ST.tapFrom = null; ST.tab = sheetMode() ? null : 'score';
+  sizeCanvas(); renderSide(); renderTimeline(); frame();
   makeStrip();
   ST.media.addEventListener('seeked', () => { if (ST.pend) { const q = ST.pend; ST.pend = null; jump(q.t, q.quick); }
     // (the picture may come a moment after the jump: drawn again then, made afresh)
@@ -177,7 +178,7 @@ async function addScore(opt = {}) {
     saveSoon(); renderSide(); renderTimeline(); frame();
     // line it up with the playing straight away
     if (ST.pcm) { if (second && scoreLines().length === 2) syncBoth(); else autoSync(o); }
-    else D.toast(`${o.layout.bars.length} bars. Use Sync › Tap along to line them up with the video.`, 4500);
+    else { ST.tab = 'timing'; renderSide(); D.toast(`${o.layout.bars.length} bars. Tap along to line them up with the video.`, 4500); }
   } catch (err) { console.error(err); busy(null); D.toast('That part of the score could not be read.'); }
 }
 // The score's lines on the video: one, or two (a part on each). A second line looks like the first
@@ -237,6 +238,7 @@ function jointOf(o) {
 // a change to how a line looks: both lines, so the two read as one system
 function sharedChange(o, fn) { const ls = scoreLines(); for (const x of ls.length > 1 && ls.includes(o) ? ls : [o]) fn(x); }
 // Bars in reading order: each system cut at its barlines; later systems without their clef.
+const s0Of = (sts) => sts[0];
 function stripLayout(A, W, H, canvas) {
   const sp = A.sp;
   // (where the clef — and key — at the start of a later line ends: the first clear gap of about a
@@ -293,6 +295,9 @@ function stripLayout(A, W, H, canvas) {
   A.systems.forEach((sys, si) => {
     const sts = sys.map((i) => A.staves[i]);
     const evAll = sts.map((st, k) => pcsOf(st, k, sts.length));
+    // (the rests read in the top staff: a bar of rests only, at the start, is not played — tapping
+    // along starts after them)
+    const restXs = []; try { for (const b of staffEvents(s0Of(sts))) for (const it of b) if (it.rest) restXs.push(it.x); } catch {}
     const top = clamp(Math.min(...sts.map((s) => s.top)) - sp * 3.6, 0, H), bot = clamp(Math.max(...sts.map((s) => s.bottom)) + sp * 3.6, 0, H);
     const s0 = sts[0];
     const firstHead = s0.heads.length ? Math.min(...s0.heads.map((h) => h.x)) : s0.x0 + sp * 4;
@@ -308,7 +313,7 @@ function stripLayout(A, W, H, canvas) {
       const a = cuts[k], b = cuts[k + 1];
       if (b - a < sp * 1.5) continue;
       const bi = bars.length;
-      bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1 });
+      bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1, rests: restXs.filter((x) => x >= a && x < b).length });
       // the notes of this bar (top staff), for following the playing
       const inBar = s0.heads.filter((h) => h.x >= a && h.x < b).sort((p, q) => p.x - q.x);
       const groups = [];
@@ -351,10 +356,16 @@ async function prepareOverlay(o) {
     if (bmp) ST.images.set(o.id, bmp);
     return;
   }
+  const st = await buildStrip(o);
+  // (what was wiped away by hand, wiped again; what was brought back, brought back)
+  if (o.erase && o.erase.length) { try { applyErase(st, o.erase); } catch (e) { console.warn('erase', e); } }
+  ST.strips.set(o.id, st);
+}
+async function buildStrip(o) {
   const bmp = await createImageBitmap(o.img);
   const L = o.layout;
   if (L.staffs && L.segs.every((q) => q.sys !== undefined)) {
-    try { const st = straightStrip(L, bmp); bmp.close && bmp.close(); ST.strips.set(o.id, st); return; }
+    try { const st = straightStrip(L, bmp); bmp.close && bmp.close(); return st; }
     catch (e) { console.warn('straight strip', e); }
   }
   const c = document.createElement('canvas'); c.width = Math.ceil(L.width); c.height = Math.ceil(L.height);
@@ -374,11 +385,43 @@ async function prepareOverlay(o) {
     }
   }
   // the ink alone: dark becomes opaque, paper becomes clear
-  const m = document.createElement('canvas'); m.width = c.width; m.height = c.height;
-  const id = g.getImageData(0, 0, c.width, c.height); const d = id.data;
+  return { canvas: c, mask: inkMask(c), tinted: new Map() };
+}
+function inkMask(c, m = document.createElement('canvas')) {
+  m.width = c.width; m.height = c.height;
+  const id = c.getContext('2d').getImageData(0, 0, c.width, c.height); const d = id.data;
   for (let i = 0; i < d.length; i += 4) { const v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000; const a = clamp((235 - v) * 1.6, 0, 255); d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = a; }
   m.getContext('2d').putImageData(id, 0, 0);
-  ST.strips.set(o.id, { canvas: c, mask: m, tinted: new Map() });
+  return m;
+}
+// Strokes on the long line (wipe away: paper over it; bring back: the line as it was, there). Kept in
+// the line's own measure (its height is 1), so they fit however big the line is made.
+function strokePath(g, k, H) {
+  const p = k.p; g.beginPath(); g.moveTo(p[0] * H, p[1] * H);
+  if (p.length === 2) g.lineTo(p[0] * H + 0.01, p[1] * H);
+  for (let i = 2; i < p.length; i += 2) g.lineTo(p[i] * H, p[i + 1] * H);
+  g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = k.r * 2 * H;
+}
+function paintStroke(c, k, orig) {
+  const g = c.getContext('2d'), H = c.height;
+  if (k.m === 'e' || !orig) { g.save(); strokePath(g, k, H); g.strokeStyle = '#fff'; g.stroke(); g.restore(); return; }
+  // (brought back: only inside the stroke, the line as it first was)
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < k.p.length; i += 2) { x0 = Math.min(x0, k.p[i]); x1 = Math.max(x1, k.p[i]); y0 = Math.min(y0, k.p[i + 1]); y1 = Math.max(y1, k.p[i + 1]); }
+  const r = k.r * H, X0 = Math.max(0, Math.floor(x0 * H - r - 2)), Y0 = Math.max(0, Math.floor(y0 * H - r - 2)), X1 = Math.min(c.width, Math.ceil(x1 * H + r + 2)), Y1 = Math.min(H, Math.ceil(y1 * H + r + 2));
+  if (X1 <= X0 || Y1 <= Y0) return;
+  const t = document.createElement('canvas'); t.width = X1 - X0; t.height = Y1 - Y0;
+  const tg = t.getContext('2d'); tg.translate(-X0, -Y0); strokePath(tg, k, H); tg.strokeStyle = '#000'; tg.stroke();
+  tg.setTransform(1, 0, 0, 1, 0, 0); tg.globalCompositeOperation = 'source-in'; tg.drawImage(orig, X0, Y0, t.width, t.height, 0, 0, t.width, t.height);
+  g.drawImage(t, X0, Y0); t.width = t.height = 0;
+}
+function applyErase(st, strokes) {
+  const needOrig = strokes.some((k) => k.m === 'r');
+  let orig = null;
+  if (needOrig) { orig = document.createElement('canvas'); orig.width = st.canvas.width; orig.height = st.canvas.height; orig.getContext('2d').drawImage(st.canvas, 0, 0); }
+  for (const k of strokes) paintStroke(st.canvas, k, orig);
+  if (orig) orig.width = orig.height = 0;
+  inkMask(st.canvas, st.mask); st.tinted.clear();
 }
 // The long line, laid straight and whole. Every mark on the picture (a note, a slur, a dynamic, a
 // fingering) is a piece of ink: each piece goes with the line of music it belongs to (the staff it
@@ -658,11 +701,7 @@ function straightStrip(L, bmp) {
   g.setTransform(1, 0, 0, 1, 0, 0);
   for (const q of outs) q.c.width = q.c.height = 0;
   // the ink alone: dark becomes opaque, paper becomes clear
-  const m = document.createElement('canvas'); m.width = CW; m.height = CH;
-  const id = g.getImageData(0, 0, CW, CH); const d2 = id.data;
-  for (let i = 0; i < d2.length; i += 4) { const v = (d2[i] * 299 + d2[i + 1] * 587 + d2[i + 2] * 114) / 1000; const a = clamp((235 - v) * 1.6, 0, 255); d2[i] = d2[i + 1] = d2[i + 2] = 255; d2[i + 3] = a; }
-  m.getContext('2d').putImageData(id, 0, 0);
-  return { canvas: c, mask: m, tinted: new Map(), k: K };
+  return { canvas: c, mask: inkMask(c), tinted: new Map(), k: K };
 }
 function tintedMask(st, color) {
   if (st.tinted.has(color)) return st.tinted.get(color);
@@ -1201,19 +1240,46 @@ async function syncBoth() {
 // and the sound reaching the ear a moment after the picture's clock), so each tap is then drawn to
 // the note that starts nearest to it in the recording, when one starts clearly there.
 function startTap(o, from = 0) {
-  pause();
-  // (from a bar: the bars before it are kept; the recording starts a little before that bar)
-  from = o.times && from > 0 && from < o.layout.bars.length ? from : 0;
-  ST.tapping = { o, k: from, from, times: from ? o.times.slice(0, from) : [] };
-  const t0 = Math.max(ST.P.trim.a, (o.times ? o.times[from] : ST.P.trim.a) - 2);
+  pause(); stopGlide();
+  // (from a bar: the bars before it are kept, or, when they are only rests and nothing was set yet,
+  // put before it at the pace of the taps; the recording starts a little before that bar)
+  from = from > 0 && from < o.layout.bars.length ? from : 0;
+  const unset = !o.times || o.synced === 'even';
+  ST.tapping = { o, k: from, from, times: from && !unset ? o.times.slice(0, from) : Array(from).fill(null), orig: o.times ? o.times.slice() : null, back: from > 0 && unset };
+  const t0 = Math.max(ST.P.trim.a, (o.times && !unset ? o.times[from] : ST.P.trim.a) - 2);
   ST.at = null; ST.pend = null; clearTimeout(ST.exactT); ST.media.currentTime = t0;
-  $('#stTap').hidden = false; $('#stTapInfo').textContent = `Tap on the first beat of bar ${from + 1}`;
+  $('#studio').classList.add('tapping');
+  { const pad = $('#stTapPad'), st = $('#studio').getBoundingClientRect(), tt = $('#stTransport').getBoundingClientRect(); pad.style.top = Math.max(0, tt.top - st.top) + 'px'; pad.hidden = false; }
+  tapLabel();
   // (the notes' starts, found while you tap)
   if (ST.pcm && !(ST.onsets && ST.onsets.a === ST.P.trim.a && ST.onsets.b === ST.P.trim.b)) {
     const a = ST.P.trim.a, b = ST.P.trim.b;
     ST.onsets = { a, b, list: null, job: onsetsOf(ST.pcm, ST.sr, a, b).then((l) => { if (ST.onsets && ST.onsets.a === a && ST.onsets.b === b) ST.onsets.list = l; return l; }).catch(() => null) };
   }
   play();
+}
+// the big button says which bar the next tap is for
+function tapLabel() {
+  const T = ST.tapping; if (!T) return;
+  const n = T.o.layout.bars.length;
+  $('#stTapBar').textContent = T.k < n ? `Bar ${T.k + 1}` : 'End';
+  $('#stTapInfo').textContent = T.k < n ? (T.k === T.from ? 'Tap on its first beat' : `of ${n}`) : 'Tap where the last bar ends';
+}
+// while tapping: the bars tapped so far, and the ones to come at their pace, so the music on the
+// picture already moves with you and you see which bar comes next
+function tapPreview() {
+  const T = ST.tapping; if (!T) return;
+  const n = T.o.layout.bars.length, tp = T.times.slice(T.from);
+  if (!tp.length) return;
+  const iv = []; for (let i = 1; i < tp.length; i++) iv.push(tp[i] - tp[i - 1]);
+  const pace = iv.length ? iv.slice(-4).reduce((a, b) => a + b, 0) / Math.min(4, iv.length) : (T.orig && T.orig[T.from + 1] - T.orig[T.from] > 0.2 ? T.orig[T.from + 1] - T.orig[T.from] : 2);
+  const out = [];
+  for (let k = 0; k <= n; k++) {
+    if (k < T.from) out.push(T.times[k] != null ? T.times[k] : tp[0] - (T.from - k) * pace);
+    else if (k - T.from < tp.length) out.push(tp[k - T.from]);
+    else out.push(out[k - 1] + pace);
+  }
+  T.o.times = out;
 }
 // the clock of what is heard: the media's own time, made smooth between its updates
 function heardTime() {
@@ -1230,7 +1296,8 @@ function tap(e) {
   const t = heardTime() - lag * (ST.media.playbackRate || 1);
   T.times.push(t); T.k++;
   const n = T.o.layout.bars.length;
-  $('#stTapInfo').textContent = T.k < n ? `Bar ${T.k + 1} of ${n}` : 'Tap where the last bar ends';
+  const pad = $('#stTap'); pad.classList.add('hit'); setTimeout(() => pad.classList.remove('hit'), 90);
+  tapLabel(); tapPreview(); TL.curB = -2;
   if (T.k > n) finishTap();
 }
 // each tap to the clearest note start near it (from a little before to a little after the tap)
@@ -1254,38 +1321,40 @@ export function snapTaps(times, onsets, sr = 48000, win = [-0.2, 0.12]) {
 }
 async function finishTap() {
   const T = ST.tapping; if (!T) return; ST.tapping = null;
-  $('#stTap').hidden = true;
+  $('#stTapPad').hidden = true; $('#studio').classList.remove('tapping');
   pause();
   const n = T.o.layout.bars.length, from = T.from || 0;
-  if (T.times.length - from >= (from ? 1 : 2)) {
-    let raw = T.times.slice(0, n + 1);
-    if (ST.onsets && (ST.onsets.list || ST.onsets.job)) {
-      if (!ST.onsets.list) busy('Lining up your taps…', 'Listening for the notes.', 0.5);
-      const list = ST.onsets.list || await ST.onsets.job; busy(null);
-      // (only the new taps: the bars kept stay exactly where they were)
-      raw = [...raw.slice(0, from), ...snapTaps(raw.slice(from), list, ST.sr)];
-      for (let i = Math.max(1, from); i < raw.length; i++) if (raw[i] <= raw[i - 1] + 0.05) raw[i] = raw[i - 1] + 0.05;
-    }
-    const times = raw;
-    const old = T.o.times || [];
-    // (stopped before the end: the bars after keep their times when they still come after the last
-    // tap; else they go on at the pace of the taps)
-    const pace = (times[times.length - 1] - times[0]) / Math.max(1, times.length - 1);
-    const lastTap = times[times.length - 1];
-    if (from && old.length === n + 1 && times.length < n + 1 && old[times.length] > lastTap + 0.12) times.push(...old.slice(times.length));
-    while (times.length < n + 1) times.push(Math.min(ST.P.trim.b, times[times.length - 1] + pace));
-    // (a tap clearly off the pace of the ones around it, a slip of the finger, is put back on it; a
-    // real slowing down stays)
-    const nt = Math.min(times.length, T.times.length) - from;
-    if (nt >= 6) { const st2 = steadyTimes(times.slice(from, from + nt)); for (let i = 0; i < nt; i++) times[from + i] = st2[i]; }
-    for (let i = Math.max(1, from); i < times.length; i++) if (times[i] <= times[i - 1] + 0.05) times[i] = times[i - 1] + 0.05;
-    T.o.times = times; T.o.synced = 'tap';
-    if (T.o.knots) T.o.knots = T.o.knots.map((kn, k) => (k < from || (from && k >= T.times.length && old[k] === times[k]) ? kn : []));
-    // (two parts of one piece: the same bars at the same moments, in both lines)
-    const other = scoreLines().find((x) => x !== T.o);
-    if (other && other.layout.bars.length === n) { other.times = times.slice(); other.synced = 'tap'; other.knots = other.knots ? other.knots.map((kn, k) => (k < from ? kn : [])) : null; }
-    saveSoon(); D.toast(from ? `Bars from ${from + 1} set from your taps.` : 'Bars set from your taps.', 2200);
+  const tapped = T.times.length - from;
+  // (too few taps to go by: everything as it was)
+  if (tapped < (from && !T.back ? 1 : 2)) { if (T.orig) T.o.times = T.orig; renderSide(); renderTimeline(); frame(); return; }
+  let raw = T.times.slice(from, n + 1);
+  if (ST.onsets && (ST.onsets.list || ST.onsets.job)) {
+    if (!ST.onsets.list) busy('Lining up your taps…', 'Listening for the notes.', 0.5);
+    const list = ST.onsets.list || await ST.onsets.job; busy(null);
+    // (only the new taps: the bars kept stay exactly where they were)
+    raw = snapTaps(raw, list, ST.sr);
   }
+  for (let i = 1; i < raw.length; i++) if (raw[i] <= raw[i - 1] + 0.05) raw[i] = raw[i - 1] + 0.05;
+  // (a tap clearly off the pace of the ones around it, a slip of the finger, is put back on it; a
+  // real slowing down stays)
+  if (raw.length >= 6) raw = steadyTimes(raw);
+  const pace = (raw[raw.length - 1] - raw[0]) / Math.max(1, raw.length - 1);
+  // the bars before: kept, or (only rests, nothing set before) counted back at the pace of the taps
+  const head = T.back ? Array.from({ length: from }, (_, k) => raw[0] - (from - k) * pace) : (T.orig || []).slice(0, from);
+  const times = [...head, ...raw];
+  // (stopped before the end: the bars after keep their times when they still come after the last
+  // tap; else they go on at the pace of the taps)
+  const old = T.orig || [], lastTap = times[times.length - 1];
+  if (from && !T.back && old.length === n + 1 && times.length < n + 1 && old[times.length] > lastTap + 0.12) times.push(...old.slice(times.length));
+  while (times.length < n + 1) times.push(Math.min(ST.P.trim.b, times[times.length - 1] + pace));
+  for (let i = Math.max(1, from); i < times.length; i++) if (times[i] <= times[i - 1] + 0.05) times[i] = times[i - 1] + 0.05;
+  T.o.times = times; T.o.synced = 'tap';
+  const kept = (k) => k < from && !T.back;
+  if (T.o.knots) T.o.knots = T.o.knots.map((kn, k) => (kept(k) || (from && k >= T.times.length && old[k] === times[k]) ? kn : []));
+  // (two parts of one piece: the same bars at the same moments, in both lines)
+  const other = scoreLines().find((x) => x !== T.o);
+  if (other && other.layout.bars.length === n) { other.times = times.slice(); other.synced = 'tap'; other.knots = other.knots ? other.knots.map((kn, k) => (kept(k) ? kn : [])) : null; }
+  saveSoon(); D.toast(from ? `Bars from ${from + 1} set from your taps.` : 'Bars set from your taps.', 2200);
   renderSide(); renderTimeline(); frame();
 }
 
@@ -1619,75 +1688,116 @@ function play() {
   ST.stopAt = setInterval(() => { if (ST.media.currentTime >= ST.P.trim.b) { pause(); if (ST.tapping) finishTap(); } }, 50);
 }
 function pause() { if (!ST.media) return; ST.media.pause(); ST.playing = false; clearInterval(ST.stopAt); cancelAnimationFrame(ST.raf); syncPlay(); frame(); }
-function syncPlay() { const b = $('#stPlay'); b.innerHTML = ST.playing ? '<svg><use href="#i-pause"/></svg><span>Pause</span>' : '<svg><use href="#i-play"/></svg><span>Play</span>'; if (!ST.playing) ST.playing = false; }
+function syncPlay() { const b = $('#stPlay'); b.innerHTML = ST.playing ? '<svg><use href="#i-pause"/></svg>' : '<svg><use href="#i-play"/></svg>'; b.setAttribute('aria-label', ST.playing ? 'Pause' : 'Play'); }
 const selected = () => (ST.sel ? ST.P.overlays.find((o) => o.id === ST.sel.id) : null);
 
 // =====================================================================
 // Timeline
 // =====================================================================
-// (the part of the recording the timeline shows: all of it, or a few seconds around a trim handle held)
-const tview = () => (ST.tv && ST.tv.b > ST.tv.a ? ST.tv : { a: 0, b: ST.dur });
-function tx(t) { const lane = $('#stScoreLane').getBoundingClientRect(); const v = tview(); return ((t - v.a) / (v.b - v.a)) * lane.width; }
-function tAt(clientX) { const lane = $('#stScoreLane').getBoundingClientRect(); const v = tview(); return clamp(v.a + ((clientX - lane.left) / lane.width) * (v.b - v.a), 0, ST.dur); }
+// The timeline's red line stays in the middle, at the moment on show, and the recording moves under
+// it (as in iMovie): a finger drags the recording along, and flicked it runs on and slows. z is the
+// points one second takes: the whole recording across the lane, or closer (two fingers, the
+// magnifier, or a finger held still a moment opens it out around what it holds).
+const TL = { W: 600, left: 0, z: 0, mom: 0, curB: -2 };
+function laneBox() { const r = $('#stScoreLane').getBoundingClientRect(); if (r.width > 0) { TL.W = r.width; TL.left = r.left; } return r; }
+const zFit = () => TL.W / Math.max(0.5, ST.dur);
+const zMax = () => 700;   // (a hundredth of a second: 7 points)
+const zNow = () => clamp(ST.tzT || ST.tz || zFit(), zFit() * 0.5, zMax());
+// the moment in the middle: the one on show, or, while something is moved along, where it was then
+const tCenter = () => (ST.viewC != null ? ST.viewC : nowT());
+function tx(t) { return TL.W / 2 + (t - tCenter()) * zNow(); }
+function tAt(clientX) { return clamp(tCenter() + (clientX - TL.left - TL.W / 2) / zNow(), 0, ST.dur); }
+const tview = () => { const z = zNow(), c = tCenter(); return { a: c - TL.W / 2 / z, b: c + TL.W / 2 / z }; };
+const scoreOv = () => ST.P.overlays.find((x) => x.kind === 'score');
 function renderTimeline() {
-  const ruler = $('#stRuler'); ruler.textContent = '';
-  const V = tview(), span = V.b - V.a;
-  const LW = $('#stScoreLane').getBoundingClientRect().width || 600;
-  // (marks far enough apart to read: about one per 64 points)
-  const step = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((q) => (span / q) * 64 <= LW) || 600;
-  for (let s = Math.ceil(V.a / step) * step; s <= V.b + 1e-6; s += step) { const sp = el('span', '', step < 1 || s % 1 ? fmt(s) : fmt(s).replace(/\.\d$/, '')); sp.style.left = tx(s) + 'px'; ruler.append(sp); }
-  const sl = $('#stScoreLane'); sl.textContent = '';
-  const o = ST.P.overlays.find((x) => x.kind === 'score');
+  if (!ST.media) return;
+  laneBox();
+  const z = zNow(); TL.z = z; TL.curB = -2;
+  const W = Math.max(1, ST.dur * z);
+  for (const id of ['stScoreRoll', 'stImgRoll', 'stMediaRoll']) $('#' + id).style.width = W + 'px';
+  const roll = $('#stScoreRoll'); roll.textContent = '';
+  const lane = $('#stScoreLane'); lane.querySelector('.st-lanehint')?.remove();
+  const o = scoreOv();
   if (o && o.times) {
-    const { b } = barAt(o, ST.media ? ST.media.currentTime : 0);
     o.layout.bars.forEach((bar, k) => {
-      const d = el('div', 'st-bar' + (k === b ? ' cur' : ''), String(k + 1));
-      const l0 = tx(Math.max(0, o.times[k])); d.style.left = l0 + 'px'; d.style.width = Math.max(2, tx(o.times[k + 1]) - l0 - 1) + 'px';
-      const edge = el('span', 'edge'); edge.dataset.k = k; d.append(edge);
-      d.addEventListener('pointerdown', (e) => { if (e.target === edge) return; ST.sel = { id: o.id }; seek(Math.max(0, o.times[k] + 0.01)); renderSide(); });
-      sl.append(d);
+      const d = el('div', 'st-bar' + (ST.selBar === k ? ' sel' : ''));
+      d.dataset.bar = k;
+      const edge = el('span', 'edge'); edge.dataset.k = k; d.append(edge); placeBarEl(d, o, k, z);
+      roll.append(d);
     });
     // the end of the last bar
-    const end = el('div', 'st-bar'); end.style.left = tx(o.times[o.times.length - 1]) + 'px'; end.style.width = '0'; end.style.border = '0'; const e2 = el('span', 'edge'); e2.dataset.k = o.times.length - 1; end.append(e2); sl.append(end);
-  } else {
-    const hint = el('div', 'st-bar', 'Add the score to see its bars here'); hint.style.left = '6px'; hint.style.right = '6px'; hint.style.background = 'transparent'; hint.style.border = '1px dashed var(--line)'; hint.style.color = 'var(--muted)'; sl.append(hint);
-  }
-  const il = $('#stImgLane'); il.textContent = '';
+    const end = el('div', 'st-bar end'); end.style.left = (o.times[o.times.length - 1] * z) + 'px';
+    const e2 = el('span', 'edge'); e2.dataset.k = o.times.length - 1; end.append(e2); roll.append(end);
+  } else lane.append(el('div', 'st-lanehint', o ? 'The bars of the score come here' : 'Add the score to see its bars here'));
+  const il = $('#stImgRoll'); il.textContent = '';
   for (const im of ST.P.overlays.filter((x) => x.kind === 'image')) {
     const d = el('div', 'st-img' + (ST.sel && ST.sel.id === im.id ? ' sel' : ''));
-    d.style.left = tx(im.t0) + 'px'; d.style.width = Math.max(14, tx(im.t1) - tx(im.t0)) + 'px';
-    const bmp = ST.images.get(im.id);
+    d.style.left = (im.t0 * z) + 'px'; d.style.width = Math.max(14, (im.t1 - im.t0) * z) + 'px';
     d.append(el('span', '', 'Image'));
     const l = el('span', 'edge l'), r = el('span', 'edge r'); l.dataset.img = im.id; l.dataset.side = 'a'; r.dataset.img = im.id; r.dataset.side = 'b';
     d.append(l, r); d.dataset.img = im.id; d.dataset.side = 'move';
-    d.addEventListener('pointerdown', () => { ST.sel = { id: im.id }; renderSide(); renderTimeline(); frame(); });
     il.append(d);
-    void bmp;
   }
-  // trim handles, and the yellow frame between them
-  placeTrim();
-  updateHead();
+  placeTrim(); placeRolls(true);
+  $('#stZoomOut').hidden = !(zNow() > zFit() * 1.04);
+  $('#stLoupe').classList.toggle('on', !!ST.tz && ST.tz > zFit() * 1.5);
 }
-function updateHead() {
+function placeBarEl(d, o, k, z = zNow()) {
+  const l0 = Math.max(0, o.times[k]) * z, w = Math.max(2, o.times[k + 1] * z - l0 - 1);
+  d.style.left = l0 + 'px'; d.style.width = w + 'px';
+  const label = w >= 15 ? String(k + 1) : '';
+  // (a bar's start is taken with a finger only where the bar is wide enough; narrower, a tap chooses
+  // the bar, and the magnifier or the buttons in Timing move its start)
+  const edge = d.querySelector('.edge'); if (edge) { const ew = clamp(w * 0.28, 0, 14); edge.style.width = ew + 'px'; edge.style.left = -(ew / 2) + 'px'; edge.style.pointerEvents = w < 40 ? 'none' : ''; }
+  if (d.firstChild && d.firstChild.nodeType === 3) d.firstChild.nodeValue = label; else d.insertBefore(document.createTextNode(label), d.firstChild);
+}
+// the recording moved under the red line: the lanes slide, the strip and the ruler are drawn again
+function placeRolls(force, light) {
+  const z = zNow();
+  if (!force && Math.abs(z - TL.z) > 1e-6) { renderTimeline(); return; }
+  const x = TL.W / 2 - tCenter() * z;
+  for (const id of ['stScoreRoll', 'stImgRoll', 'stMediaRoll']) $('#' + id).style.transform = `translate3d(${x}px,0,0)`;
+  // (while a finger moves: the strip and the ruler drawn once a screen picture, with everything else)
+  if (light) onceAFrame('wave', () => { drawWave(); drawRuler(); }); else { drawWave(); drawRuler(); }
+}
+function updateHead(light) {
   if (!ST.media) return;
   const t = nowT();
-  $('#stHead').style.left = (40 + tx(t)) + 'px';
-  $('#stTime').textContent = fmt(t) + ' / ' + fmt(ST.dur);
-  const o = ST.P.overlays.find((x) => x.kind === 'score');
-  if (o && o.times) {
-    const { b } = barAt(o, t);
-    const bars = $('#stScoreLane').querySelectorAll('.st-bar');
-    bars.forEach((d, k) => d.classList.toggle('cur', k === b));
+  placeRolls(false, light);
+  $('#stTime').textContent = fmt(t);
+  const o = scoreOv();
+  let b = -1;
+  if (o && o.times) b = barAt(o, t).b;
+  if (b !== TL.curB) {
+    TL.curB = b;
+    $('#stScoreRoll').querySelectorAll('.st-bar[data-bar]').forEach((d) => d.classList.toggle('cur', +d.dataset.bar === b));
+    const n = o && o.layout ? o.layout.bars.length : 0;
+    $('#stBarNow').textContent = o && o.times ? (b >= 0 && b < n ? `Bar ${b + 1} of ${n}` : t < o.times[0] ? 'Before bar 1' : 'After the last bar') : fmt(ST.dur) + ' in all';
   }
 }
 function placeTrim() {
-  const W = $('#stScoreLane').getBoundingClientRect().width;
-  const xa = tx(ST.P.trim.a), xb = tx(ST.P.trim.b);
+  const z = TL.z || zNow();
   const L = $('#stTrimL'), R = $('#stTrimR'), box = $('#stTrimBox');
-  L.style.left = (40 + xa) + 'px'; R.style.left = (40 + xb) + 'px';
-  L.style.visibility = xa >= -8 && xa <= W + 8 ? '' : 'hidden'; R.style.visibility = xb >= -8 && xb <= W + 8 ? '' : 'hidden';
-  const c0 = clamp(xa, 0, W), c1 = clamp(xb, 0, W);
-  box.style.left = (40 + c0) + 'px'; box.style.width = Math.max(0, c1 - c0) + 'px';
+  L.style.left = (ST.P.trim.a * z) + 'px'; R.style.left = (ST.P.trim.b * z) + 'px';
+  box.style.left = (ST.P.trim.a * z) + 'px'; box.style.width = Math.max(0, (ST.P.trim.b - ST.P.trim.a) * z) + 'px';
+}
+function drawRuler() {
+  const c = $('#stRulerC'); if (!c) return;
+  const r = c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+  const w = Math.max(10, Math.round(r.width * dpr)), h = Math.max(10, Math.round(r.height * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext('2d'); g.clearRect(0, 0, w, h);
+  const z = zNow(), V = tview();
+  // (marks far enough apart to read: about one per 64 points)
+  const step = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((q) => q * z >= 64) || 600;
+  g.fillStyle = css('--muted') || '#888'; g.strokeStyle = css('--line') || '#ccc';
+  g.font = `600 ${10 * dpr}px ${css('--font-num') || 'system-ui'}`; g.textAlign = 'center'; g.textBaseline = 'top';
+  const lab = (s) => { if (step >= 1) return fmt(s).replace(/\.\d$/, ''); const m = Math.floor(s / 60), sec = s - m * 60; return m + ':' + sec.toFixed(step < 0.1 ? 2 : 1).padStart(step < 0.1 ? 5 : 4, '0'); };
+  for (let s = Math.max(0, Math.ceil(V.a / step) * step); s <= Math.min(ST.dur, V.b) + 1e-6; s += step) {
+    const x = (TL.W / 2 + (s - tCenter()) * z) * dpr;
+    g.fillText(lab(+s.toFixed(3)), x, 2 * dpr);
+    g.fillRect(x - 0.5 * dpr, h - 4 * dpr, 1 * dpr, 4 * dpr);
+  }
 }
 // The strip under the trim handles: small pictures of the video along it (as in Photos), with the
 // sound's waveform over their lower part; what is trimmed away is dimmed.
@@ -1716,17 +1826,21 @@ async function makeStrip() {
 }
 function drawWave() {
   const c = $('#stWave'); const r = c.getBoundingClientRect(); const dpr = Math.min(2, devicePixelRatio || 1);
-  c.width = Math.max(10, r.width * dpr); c.height = Math.max(10, r.height * dpr);
+  const cw = Math.max(10, Math.round(r.width * dpr)), ch = Math.max(10, Math.round(r.height * dpr));
+  if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
   const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
+  if (!ST.media) return;
   const V = tview(), span = V.b - V.a;
   const X = (t) => ((t - V.a) / span) * c.width;
+  const x0 = Math.max(0, X(0)), x1 = Math.min(c.width, X(ST.dur));
   const ax = X(ST.P.trim.a), bx = X(ST.P.trim.b);
   const pics = STRIP.key === (ST.take && ST.take.id) ? STRIP.pics : [];
   if (pics.length) {
-    // the pictures, side by side, each the one nearest its place in time
+    // the pictures, side by side from the recording's start, each the one nearest its place in time
     const ph = c.height, pw = Math.max(4, Math.round(ph * (pics[0].c.width / pics[0].c.height)));
-    g.save(); rr(g, 0, 0, c.width, c.height, 9 * dpr); g.clip();
-    for (let x = 0; x < c.width; x += pw) {
+    g.save(); g.beginPath(); g.rect(x0, 0, x1 - x0, c.height); g.clip();
+    const k0 = Math.floor((x0 - X(0)) / pw);
+    for (let x = X(0) + k0 * pw; x < x1; x += pw) {
       const t = V.a + ((x + pw / 2) / c.width) * span;
       let best = pics[0]; for (const p of pics) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
       g.drawImage(best.c, x, 0, pw, ph);
@@ -1736,21 +1850,20 @@ function drawWave() {
   const peaks = ST.take.peaks;
   if (peaks && peaks.length) {
     let max = 0.0001; for (const p of peaks) max = Math.max(max, p);
-    const n = Math.floor(c.width / (3 * dpr));
+    const colW = 3 * dpr;
     const H = pics.length ? c.height * 0.42 : c.height - 10 * dpr, base = pics.length ? c.height - 3 * dpr : c.height / 2;
-    for (let i = 0; i < n; i++) {
-      const t0 = V.a + (i / n) * span, t1 = V.a + ((i + 1) / n) * span;
+    for (let x = x0; x < x1; x += colW) {
+      const t0 = V.a + (x / c.width) * span, t1 = V.a + ((x + colW) / c.width) * span;
       const a = Math.floor((t0 / ST.dur) * peaks.length), b = Math.max(a + 1, Math.floor((t1 / ST.dur) * peaks.length));
       let m = 0; for (let j = Math.max(0, a); j < Math.min(peaks.length, b); j++) m = Math.max(m, peaks[j]);
       const h = Math.max(1.5 * dpr, Math.pow(m / max, 0.8) * H);
-      const x = i * 3 * dpr;
       if (pics.length) { g.fillStyle = '#ffffff'; g.globalAlpha = 0.85; g.fillRect(x, base - h, 2 * dpr, h); }
       else { g.fillStyle = css('--accent-text'); g.globalAlpha = x >= ax && x <= bx ? 0.75 : 0.22; g.fillRect(x, (c.height - h) / 2, 2 * dpr, h); }
     }
   }
   g.globalAlpha = 1;
   // (what is cut away, dimmed)
-  if (pics.length) { g.fillStyle = 'rgba(0,0,0,0.55)'; if (ax > 0) g.fillRect(0, 0, Math.min(c.width, ax), c.height); if (bx < c.width) g.fillRect(Math.max(0, bx), 0, c.width - Math.max(0, bx), c.height); }
+  if (pics.length) { g.fillStyle = 'rgba(0,0,0,0.55)'; if (ax > x0) g.fillRect(x0, 0, Math.min(x1, ax) - x0, c.height); if (bx < x1) g.fillRect(Math.max(x0, bx), 0, x1 - Math.max(x0, bx), c.height); }
 }
 // Moving along the timeline. The line under the finger, the time and the music on the picture go
 // exactly where the finger is, at once. The video follows as fast as the iPhone or iPad can find
@@ -1762,7 +1875,7 @@ function seek(t, how = 'exact') {
   ST.at = t; clearTimeout(ST.exactT);
   if (how === 'scrub') { jump(t, true); ST.exactT = setTimeout(() => { if (ST.at != null) jump(ST.at, false); }, 140); }
   else jump(t, false);
-  updateHead();
+  updateHead(true);
   onceAFrame('seek', frame);
 }
 function jump(t, quick) {
@@ -1779,89 +1892,246 @@ const nowT = () => (!ST.playing && ST.at != null ? ST.at : ST.media.currentTime)
 // the time over a trim handle while it is moved (to the hundredth when opened out)
 function trimTip(side) {
   const tip = $('#stTrimTip'), t = ST.P.trim[side];
-  tip.hidden = false; tip.style.left = (40 + tx(t)) + 'px';
-  const s2 = ST.tv ? (Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0')) : fmt(t);
+  tip.hidden = false;
+  const s2 = zNow() > zFit() * 2 ? (Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0')) : fmt(t);
   tip.innerHTML = ''; tip.append(s2); const sm = document.createElement('small'); sm.textContent = '· ' + fmt(ST.P.trim.b - ST.P.trim.a); tip.append(sm);
-  { const W = $('#stScoreLane').getBoundingClientRect().width, half = (tip.offsetWidth || 120) / 2; tip.style.left = (40 + clamp(tx(t), half - 46, W - half)) + 'px'; }
+  const half = (tip.offsetWidth || 120) / 2; tip.style.left = (40 + clamp(tx(t), half - 40, TL.W - half + 40)) + 'px';
 }
-// opening the strip out around a handle held still, and closing it again (a short glide each way)
-function zoomTrim(drag, open) {
-  const from = tview(), full = { a: 0, b: ST.dur };
-  let to = full;
-  if (open) {
-    const span = clamp(ST.dur / 8, 2, 8), h = ST.P.trim[drag.side];
-    if (span >= ST.dur * 0.8) return;
-    // (the handle stays under the finger while the strip opens out around it)
-    const frac = (h - from.a) / Math.max(0.001, from.b - from.a);
-    const a2 = clamp(h - frac * span, 0, ST.dur - span); to = { a: a2, b: a2 + span };
-    drag.zoomed = true; try { navigator.vibrate && navigator.vibrate(8); } catch {}
-  }
-  $('#stTrim' + (drag.side === 'a' ? 'L' : 'R')).classList.toggle('zoom', open);
-  $('.st-media').classList.toggle('zoomed', open);
+// (the moment in the middle, gliding there: a tap on the timeline or on a bar)
+function stopGlide() { cancelAnimationFrame(TL.mom); TL.mom = 0; }
+function glideTo(t, ms = 260) {
+  stopGlide(); t = clamp(t, 0, ST.dur);
+  const from = nowT(), t0 = performance.now();
+  if (Math.abs(t - from) < 1e-3 || matchMedia('(prefers-reduced-motion: reduce)').matches) { seek(t); return; }
+  const step = () => {
+    const f = Math.min(1, (performance.now() - t0) / ms), e2 = 1 - Math.pow(1 - f, 3);
+    if (f < 1) { seek(from + (t - from) * e2, 'scrub'); TL.mom = requestAnimationFrame(step); } else { TL.mom = 0; seek(t); }
+  };
+  TL.mom = requestAnimationFrame(step);
+}
+// let go while moving: the recording runs on under the red line and slows (v: seconds a millisecond)
+function flingTime(v) {
+  stopGlide(); let last = performance.now();
+  const step = () => {
+    const now2 = performance.now(), dt = Math.min(40, now2 - last); last = now2;
+    let t = nowT() + v * dt;
+    if (t <= 0 || t >= ST.dur) { t = clamp(t, 0, ST.dur); v = 0; }
+    v *= Math.pow(0.997, dt);
+    if (Math.abs(v * zNow()) < 0.03) { TL.mom = 0; seek(t); return; }
+    seek(t, 'scrub'); TL.mom = requestAnimationFrame(step);
+  };
+  TL.mom = requestAnimationFrame(step);
+}
+// closer or further: two fingers, the magnifier, the wheel (null: the whole recording)
+function setZoom(z) {
+  if (z != null) z = clamp(z, zFit() * 0.5, zMax());
+  ST.tz = z == null || Math.abs(z / zFit() - 1) < 0.04 ? null : z;
+  renderTimeline();
+}
+function zoomGlide(to, ms = 220, then) {
+  const from = zNow(), t0 = performance.now();
+  cancelAnimationFrame(ST.zoomRaf);
+  const step = () => {
+    const f = Math.min(1, (performance.now() - t0) / ms), e2 = 1 - Math.pow(1 - f, 3);
+    ST.tz = from * Math.pow(to / from, e2);
+    if (f < 1) { renderTimeline(); ST.zoomRaf = requestAnimationFrame(step); } else { setZoom(to); if (then) then(); }
+  };
+  step();
+}
+function toggleLoupe() {
+  if (ST.tz && ST.tz > zFit() * 1.5) { zoomGlide(zFit()); return; }
+  // (about four seconds across, or less of a short recording)
+  zoomGlide(clamp(TL.W / Math.min(4, ST.dur / 3), zFit() * 2, zMax()));
+}
+// Held still a moment, a handle, a bar's start or the red line: the timeline opens out around it (a
+// loupe), for the exact moment; let go, it closes again.
+function loupeOn(drag) {
+  const z0 = zNow(), z1 = clamp(TL.W / clamp(ST.dur / 8, 1.5, 6), z0, zMax());
+  if (z1 < z0 * 1.3) return;
+  drag.loupe = { z0 }; try { navigator.vibrate && navigator.vibrate(8); } catch {}
+  $('#stTimeline').classList.add('loupe');
+  if (drag.kind === 'trim') { $('#stTrim' + (drag.side === 'a' ? 'L' : 'R')).classList.add('zoom'); $('.st-media').classList.add('zoomed'); }
+  const fx = drag.lastX - TL.left;   // (what is held stays under the finger)
+  const val = drag.kind === 'scrub' ? null : drag.val();
   const t0 = performance.now(), ms = 220;
   cancelAnimationFrame(ST.zoomRaf);
-  const stepZ = () => {
+  const step = () => {
     const f = Math.min(1, (performance.now() - t0) / ms), e2 = 1 - Math.pow(1 - f, 3);
-    const v = { a: from.a + (to.a - from.a) * e2, b: from.b + (to.b - from.b) * e2 };
-    ST.tv = open || f < 1 ? v : null;
-    renderTimeline(); drawWave();
-    if (f < 1) ST.zoomRaf = requestAnimationFrame(stepZ);
-    else if (open) { drag.off = ST.P.trim[drag.side] - tAt(drag.lastX ?? drag.x0); trimTip(drag.side); }
+    ST.tzT = z0 * Math.pow(z1 / z0, e2);
+    if (val != null) ST.viewC = val - (fx - TL.W / 2) / ST.tzT;
+    ST.tv = tview();
+    renderTimeline();
+    if (drag.kind === 'trim') trimTip(drag.side);
+    if (f < 1) ST.zoomRaf = requestAnimationFrame(step);
+    else { drag.x0 = drag.lastX; drag.v0 = val; drag.c0 = nowT(); }
   };
-  stepZ();
+  step();
+}
+function loupeOff(drag) {
+  const L = drag.loupe; if (!L) return; drag.loupe = null;
+  $('#stTimeline').classList.remove('loupe'); $('.st-media').classList.remove('zoomed');
+  $('#stTrimL').classList.remove('zoom'); $('#stTrimR').classList.remove('zoom');
+  const from = zNow(), to = ST.tz || zFit(), t0 = performance.now(), ms = 220;
+  cancelAnimationFrame(ST.zoomRaf);
+  const step = () => {
+    const f = Math.min(1, (performance.now() - t0) / ms), e2 = 1 - Math.pow(1 - f, 3);
+    ST.tzT = f < 1 ? from * Math.pow(to / from, e2) : null;
+    ST.tv = f < 1 ? tview() : null;
+    renderTimeline();
+    if (f < 1) ST.zoomRaf = requestAnimationFrame(step);
+  };
+  step();
+}
+// (a handle or a bar's start moved: the picture showed that moment; let go, back to the red line)
+function restoreView() {
+  if (ST.viewC == null) return;
+  const back = ST.backTo; ST.viewC = null; ST.backTo = null;
+  if (back != null) seek(back); else updateHead();
+}
+// A bar chosen on the timeline: the picture goes to its start, and Timing shows it to the hundredth
+function selectBar(k, { open = true } = {}) {
+  const o = scoreOv(); if (!o || !o.times) return;
+  ST.selBar = clamp(k, 0, o.layout.bars.length - 1); ST.sel = { id: o.id };
+  glideTo(Math.max(0, o.times[ST.selBar] + 0.005));
+  if (open) openTab('timing'); else renderSide();
+  renderTimeline();
 }
 function wireTimeline() {
-  const tracks = $('#stTracks');
-  let drag = null;
-  tracks.addEventListener('pointerdown', (e) => {
-    const t = tAt(e.clientX);
-    const edge = e.target.closest('.edge');
-    const trim = e.target.closest('.st-trim');
-    const img = e.target.closest('[data-img]');
-    try { tracks.setPointerCapture(e.pointerId); } catch {}
-    if (trim) {
-      // (held still for a moment: the strip opens out around the handle, for the exact moment)
-      const side = trim.id === 'stTrimL' ? 'a' : 'b';
-      drag = { kind: 'trim', side, x0: e.clientX, off: ST.P.trim[side] - t, hold: setTimeout(() => { if (drag && drag.kind === 'trim' && !drag.moved) zoomTrim(drag, true); }, 380) };
-      trimTip(side); pause(); return;
-    }
-    if (edge && edge.dataset.k !== undefined) { drag = { kind: 'bar', k: +edge.dataset.k }; pause(); return; }
-    if (img) { const o = ST.P.overlays.find((x) => x.id === img.dataset.img); drag = { kind: 'img', o, side: img.dataset.side, t0: t, a: o.t0, b: o.t1 }; return; }
-    drag = { kind: 'seek' }; seek(t, 'scrub');
-  });
-  tracks.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    const t = tAt(e.clientX);
-    if (drag.kind === 'seek') seek(t, 'scrub');
-    else if (drag.kind === 'trim') {
-      if (Math.abs(e.clientX - drag.x0) > 6) drag.moved = true;
-      drag.lastX = e.clientX;
-      const want = t + drag.off;
-      if (drag.side === 'a') ST.P.trim.a = clamp(want, 0, ST.P.trim.b - 0.5); else ST.P.trim.b = clamp(want, ST.P.trim.a + 0.5, ST.dur);
-      // (opened out: the view follows the handle when it nears an edge)
-      if (ST.tv && drag.zoomed) { const v = ST.tv, span = v.b - v.a, h = ST.P.trim[drag.side]; if (h < v.a + span * 0.12 || h > v.b - span * 0.12) { const a2 = clamp(h - span / 2, 0, Math.max(0, ST.dur - span)); ST.tv = { a: a2, b: a2 + span }; drag.off = ST.P.trim[drag.side] - tAt(e.clientX); } }
-      seek(ST.P.trim[drag.side], 'scrub'); onceAFrame('tl', () => { renderTimeline(); drawWave(); if (drag && drag.kind === 'trim') trimTip(drag.side); });
-    }
-    else if (drag.kind === 'bar') {
-      const o = ST.P.overlays.find((x) => x.kind === 'score'); const T = o.times, k = drag.k;
-      T[k] = clamp(t, k > 0 ? T[k - 1] + 0.08 : Math.min(0, T[0]), k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur);
+  const tl = $('#stTimeline');
+  const P = new Map(); let drag = null;
+  // (near an end of the lane while something is moved: the recording runs along under it)
+  let autoRaf = 0;
+  const autoRun = () => {
+    autoRaf = 0; if (!drag || !drag.val || !drag.moved) return;
+    const fx = drag.lastX - TL.left, edge = 34;
+    const dir = fx < edge ? -1 : fx > TL.W - edge ? 1 : 0;
+    if (!dir) return;
+    const over = dir < 0 ? edge - fx : fx - (TL.W - edge);
+    const dt = (dir * Math.min(1, over / edge) * 9) / zNow();
+    ST.viewC = clamp((ST.viewC ?? nowT()) + dt, 0, ST.dur);
+    drag.v0 += dt; applyMove(drag);
+    autoRaf = requestAnimationFrame(autoRun);
+  };
+  const applyMove = (d) => {
+    const z = zNow(), dt = (d.lastX - d.x0) / z;
+    if (d.kind === 'trim') {
+      const want = d.v0 + dt;
+      if (d.side === 'a') ST.P.trim.a = clamp(want, 0, ST.P.trim.b - 0.5); else ST.P.trim.b = clamp(want, ST.P.trim.a + 0.5, ST.dur);
+      seek(ST.P.trim[d.side], 'scrub');
+      onceAFrame('tl', () => { placeTrim(); placeRolls(); if (drag === d) trimTip(d.side); });
+    } else if (d.kind === 'bar') {
+      const o = scoreOv(); if (!o) return; const T = o.times, k = d.k;
+      T[k] = clamp(d.v0 + dt, k > 0 ? T[k - 1] + 0.08 : Math.min(0, T[0]), k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur);
       o.synced = 'hand';
       // (two parts on one grid keep the same bar times: a bar moved is moved in both)
-      const two = scoreLines()[1]; if (two && two.times && two.times.length === T.length) { two.times[k] = T[k]; two.synced = 'hand'; }
-      seek(Math.max(0, T[k] + 0.01), 'scrub'); onceAFrame('tl', renderTimeline);
-    } else if (drag.kind === 'img') {
-      const o = drag.o, d = t - drag.t0;
-      if (drag.side === 'a') o.t0 = clamp(drag.a + d, 0, o.t1 - 0.3);
-      else if (drag.side === 'b') o.t1 = clamp(drag.b + d, o.t0 + 0.3, ST.dur);
-      else { const len = drag.b - drag.a; o.t0 = clamp(drag.a + d, 0, ST.dur - len); o.t1 = o.t0 + len; }
-      onceAFrame('tl', renderTimeline); seek(o.t0 + 0.05, 'scrub');
+      const two = scoreLines()[1]; if (two && two.times && two.times.length === T.length && two !== o) { two.times[k] = T[k]; two.synced = 'hand'; }
+      seek(Math.max(0, T[k] + 0.005), 'scrub');
+      onceAFrame('tl', () => { const roll = $('#stScoreRoll'); for (const j of [k - 1, k]) { const e2 = roll.querySelector(`.st-bar[data-bar="${j}"]`); if (e2) placeBarEl(e2, o, j); } const endEl = roll.querySelector('.st-bar.end'); if (endEl && k === T.length - 1) endEl.style.left = (T[k] * zNow()) + 'px'; barCardTime(); });
+    } else if (d.kind === 'img') {
+      const o = d.o;
+      if (d.side === 'a') o.t0 = clamp(d.a + dt, 0, o.t1 - 0.3);
+      else if (d.side === 'b') o.t1 = clamp(d.b + dt, o.t0 + 0.3, ST.dur);
+      else { const len = d.b - d.a; o.t0 = clamp(d.a + dt, 0, ST.dur - len); o.t1 = o.t0 + len; }
+      onceAFrame('tl', renderTimeline); seek(d.side === 'b' ? o.t1 - 0.05 : o.t0 + 0.05, 'scrub');
     }
+  };
+  tl.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
+    P.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { tl.setPointerCapture(e.pointerId); } catch {}
+    laneBox();
+    if (P.size === 2) {
+      // two fingers: closer or further, about the red line
+      if (drag) { clearTimeout(drag.hold); if (drag.loupe) loupeOff(drag); if (drag.kind !== 'scrub') restoreView(); }
+      const [a, b] = [...P.values()]; drag = { kind: 'pinch', d0: Math.max(10, Math.abs(a.x - b.x)), z0: zNow() }; stopGlide(); return;
+    }
+    if (P.size > 2) return;
+    stopGlide();
+    const x = e.clientX;
+    const trim = e.target.closest('.st-trim'), edge = e.target.closest('.edge'), img = e.target.closest('[data-img]'), barEl = e.target.closest('.st-bar[data-bar]');
+    const base = { x0: x, lastX: x, t0: performance.now(), moved: false };
+    const holdFor = (d) => { d.hold = setTimeout(() => { if (drag === d && !d.moved) loupeOn(d); }, 380); };
+    if (trim) {
+      const side = trim.id === 'stTrimL' ? 'a' : 'b'; pause(); ST.backTo = nowT(); ST.viewC = nowT();
+      drag = { ...base, kind: 'trim', side, v0: ST.P.trim[side], val: () => ST.P.trim[side] }; holdFor(drag); trimTip(side); return;
+    }
+    if (edge && edge.dataset.k !== undefined) {
+      const o = scoreOv(); if (!o || !o.times) return;
+      const k = +edge.dataset.k; pause(); ST.backTo = nowT(); ST.viewC = nowT();
+      if (k < o.layout.bars.length) ST.selBar = k;
+      drag = { ...base, kind: 'bar', k, v0: o.times[k], val: () => o.times[k] }; holdFor(drag); return;
+    }
+    if (img) {
+      const o = ST.P.overlays.find((q) => q.id === img.dataset.img); if (!o) return;
+      ST.sel = { id: o.id }; pause(); ST.backTo = nowT(); ST.viewC = nowT();
+      drag = { ...base, kind: 'img', o, side: img.dataset.side, a: o.t0, b: o.t1, val: () => (img.dataset.side === 'b' ? o.t1 : o.t0), v0: 0 };
+      if (ST.tab !== 'image') openTab('image'); else renderSide();
+      renderTimeline(); frame(); return;
+    }
+    drag = { ...base, kind: 'scrub', c0: nowT(), bar: barEl ? +barEl.dataset.bar : null, vs: [[e.timeStamp || performance.now(), x]] }; holdFor(drag);
   });
-  const end = () => {
-    if (drag && drag.kind === 'trim') { clearTimeout(drag.hold); if (drag.zoomed) zoomTrim(drag, false); $('#stTrimTip').hidden = true; }
-    if (drag && ST.at != null) { clearTimeout(ST.exactT); jump(ST.at, false); }
-    if (drag && drag.kind !== 'seek') saveSoon(); const was = drag && drag.kind; drag = null; if ((was === 'bar' || was === 'seek') && ST.sel && ST.P.overlays.find((x) => x.id === ST.sel.id && x.kind === 'score')) renderSide(); };
-  tracks.addEventListener('pointerup', end); tracks.addEventListener('pointercancel', end);
+  tl.addEventListener('pointermove', (e) => {
+    const p = P.get(e.pointerId); if (!p) return; p.x = e.clientX; p.y = e.clientY;
+    if (!drag) return;
+    if (drag.kind === 'pinch') {
+      if (P.size < 2) return;
+      const [a, b] = [...P.values()], d = Math.max(10, Math.abs(a.x - b.x));
+      const want = drag.z0 * (d / drag.d0); onceAFrame('pinch', () => setZoom(want)); return;
+    }
+    if (drag.kind === 'none') return;
+    drag.lastX = e.clientX;
+    if (!drag.moved && Math.abs(e.clientX - drag.x0) > 6) { drag.moved = true; clearTimeout(drag.hold); if (drag.loupe) { drag.x0 = e.clientX; drag.c0 = nowT(); if (drag.val) drag.v0 = drag.val(); } }
+    if (!drag.moved) return;
+    if (drag.kind === 'scrub') {
+      if (ST.playing) pause();
+      drag.vs.push([e.timeStamp || performance.now(), e.clientX]); if (drag.vs.length > 10) drag.vs.shift();
+      seek(drag.c0 - (e.clientX - drag.x0) / zNow(), 'scrub'); return;
+    }
+    applyMove(drag);
+    if (!autoRaf) autoRaf = requestAnimationFrame(autoRun);
+  });
+  const end = (e) => {
+    P.delete(e.pointerId);
+    if (!drag) return;
+    if (drag.kind === 'pinch') { if (P.size < 2) drag = P.size ? { kind: 'none' } : null; return; }
+    if (drag.kind === 'none') { if (!P.size) drag = null; return; }
+    const d = drag; drag = null; clearTimeout(d.hold); cancelAnimationFrame(autoRaf); autoRaf = 0;
+    if (d.loupe) loupeOff(d);
+    if (d.kind === 'trim') { $('#stTrimTip').hidden = true; restoreView(); saveSoon(); renderSide(); return; }
+    if (d.kind === 'bar') { restoreView(); saveSoon(); renderTimeline(); if (ST.tab === 'timing') renderSide(); return; }
+    if (d.kind === 'img') { restoreView(); saveSoon(); renderTimeline(); return; }
+    // the red line: a tap goes there (a bar: to its start, and it is chosen); let go while moving, it runs on
+    if (!d.moved) {
+      if (e.type === 'pointercancel') return;
+      if (d.bar != null) selectBar(d.bar); else if (!d.loupe) glideTo(tAt(e.clientX));
+      return;
+    }
+    const tEnd = e.timeStamp || performance.now(), vs = d.vs.filter((q) => tEnd - q[0] < 100);
+    let v = 0;
+    if (vs.length >= 2 && tEnd - vs[vs.length - 1][0] < 80) {
+      const mt = vs.reduce((a, q) => a + q[0], 0) / vs.length, mx = vs.reduce((a, q) => a + q[1], 0) / vs.length;
+      let num = 0, den = 0; for (const q of vs) { num += (q[0] - mt) * (q[1] - mx); den += (q[0] - mt) * (q[0] - mt); }
+      v = den > 0 ? num / den : 0;
+    }
+    if (Math.abs(v) > 0.25 && !d.loupe) flingTime(clamp(-v, -8, 8) / zNow());
+    else { clearTimeout(ST.exactT); if (ST.at != null) jump(ST.at, false); }
+  };
+  tl.addEventListener('pointerup', end); tl.addEventListener('pointercancel', end);
+  // a mouse or a trackpad: the wheel moves along, with ctrl (a pinch on the trackpad) closer or further
+  tl.addEventListener('wheel', (e) => {
+    e.preventDefault(); laneBox();
+    if (e.ctrlKey) { setZoom(zNow() * Math.exp(-e.deltaY * 0.01)); return; }
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (ST.playing) pause();
+    seek(nowT() + d / zNow(), 'scrub');
+  }, { passive: false });
+  $('#stLoupe').addEventListener('click', () => { laneBox(); toggleLoupe(); });
+  $('#stZoomOut').addEventListener('click', () => { laneBox(); zoomGlide(zFit()); });
+  // (the timeline and the picture take what room there is: drawn again when it changes)
+  try {
+    const ro = new ResizeObserver(() => { if ($('#studio').hidden || !ST.media) return; onceAFrame('resize', () => { sizeCanvas(); renderTimeline(); frame(); }); });
+    ro.observe($('#stStage')); ro.observe($('#stScoreLane'));
+  } catch {}
 }
 // Drag the score or an image on the picture to place it; pinch or the slider to size it.
 function wireStage() {
@@ -1872,7 +2142,7 @@ function wireStage() {
     const px = ((e.clientX - r.left) / r.width) * ST.view.W, py = ((e.clientY - r.top) / r.height) * ST.view.H;
     const hit = [...ST.P.overlays].reverse().find((o) => o._box && px >= o._box.x && px <= o._box.x + o._box.w && py >= o._box.y && py <= o._box.y + o._box.h && (o.kind !== 'image' || (ST.media.currentTime >= o.t0 && ST.media.currentTime <= o.t1)));
     try { c.setPointerCapture(e.pointerId); } catch {}
-    if (hit) { ST.sel = { id: hit.id }; d = { o: hit, x: e.clientX, y: e.clientY, pos: { ...hit.pos } }; renderSide(); frame(); return; }
+    if (hit) { ST.sel = { id: hit.id }; d = { o: hit, x: e.clientX, y: e.clientY, pos: { ...hit.pos } }; const want = hit.kind === 'image' ? 'image' : 'score'; if (!sheetMode() || ST.tab) { if (ST.tab !== want && !(want === 'score' && ST.tab === 'timing')) { openTab.keep = true; openTab(want); openTab.keep = false; } else renderSide(); } frame(); return; }
     // drag the video itself to choose the part on show (filled formats)
     d = { video: true, x: e.clientX, y: e.clientY, pan: { ...(ST.P.pan || { x: 0.5, y: 0.5 }) } };
   });
@@ -1902,86 +2172,194 @@ function slider(label, value, min, max, step, fmtv, on) {
   i.addEventListener('input', () => { v.textContent = fmtv(+i.value); on(+i.value); });
   row.append(i, v); return row;
 }
+const sec = (title) => { const s = el('section', 'st-sec'); if (title) s.append(el('div', 'ctl-head', title)); return s; };
+const check = (label, on, fn) => { const l = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!on; l.append(cb, document.createTextNode(' ' + label)); cb.addEventListener('change', () => fn(cb.checked)); return l; };
+// The iPhone held upright shows a tool's settings only when it is open (over the timeline's top);
+// elsewhere one tool is always open beside the picture.
+const sheetMode = () => { try { return matchMedia('(max-width: 600px) and (orientation: portrait)').matches; } catch { return false; } };
+function openTab(t) {
+  if (sheetMode() && ST.tab === t && !openTab.keep) ST.tab = null; else ST.tab = t;
+  renderSide();
+}
 function renderSide() {
-  // on a phone a swipe up or down scrolls the Studio, except over something chosen to move
-  try { $('#stCanvas').style.touchAction = matchMedia('(max-width: 600px), (max-height: 500px)').matches && !ST.sel ? 'pan-y' : 'none'; } catch {}
+  $('#stCanvas').style.touchAction = 'none';
+  if (!ST.tab && !sheetMode()) ST.tab = 'score';
+  const tab = ST.tab;
+  $('#studio').classList.toggle('sheet-open', !!tab);
+  for (const b of $('#stTabs').querySelectorAll('button')) { const on = b.dataset.tab === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); }
   const side = $('#stSide'); side.textContent = '';
-  const o = selected();
-  $('#stEmpty').hidden = !!ST.P.overlays.find((x) => x.kind === 'score');
-  const change = (fn, re = false) => { fn(); saveSoon(); frame(); if (re) renderSide(); };
-  if (o && o.kind === 'score') {
-    const ls = scoreLines(), two = ls.length > 1;
-    side.append(el('h3', '', two ? 'Score: two lines' : 'Score'));
-    // (two lines: which one these settings are for; the look is the same for both)
-    if (two) side.append(seg(ls.map((x, i) => [x.id, i === 0 ? 'Line 1 (top)' : 'Line 2 (under)']), o.id, (v) => { ST.sel = { id: v }; renderSide(); frame(); }));
-    side.append(el('p', 'hint', `${o.title} · ${o.layout.bars.length} bars`));
-    const looks = el('div', 'st-looks');
-    for (const [k, label] of [['paper', 'Paper'], ['warm', 'Warm'], ['lines', 'Just the lines']]) {
-      const b = el('button', o.look === k ? 'on' : ''); const sw = el('i', k); b.append(sw, document.createTextNode(label));
-      b.addEventListener('click', () => change(() => { sharedChange(o, (x) => { x.look = k; }); stackLines(); }, true)); looks.append(b);
-    }
-    side.append(looks);
-    if (o.look === 'lines') side.append(seg([['#ffffff', 'White ink'], ['#000000', 'Black ink']], o.ink, (v) => change(() => { sharedChange(o, (x) => { x.ink = v; }); }, true)));
-    if (o.look === 'lines') side.append(seg([['on', 'Soft shade behind'], ['off', 'No shade']], o.shade === false ? 'off' : 'on', (v) => change(() => { sharedChange(o, (x) => { x.shade = v === 'on'; }); }, true)));
-    side.append(el('div', 'ctl-head', 'On screen'));
-    side.append(seg([['scroll', 'Endless line'], ['lines', 'Line by line'], ['bars', 'Bars'], ['static', 'All']], o.mode, (v) => change(() => { sharedChange(o, (x) => { x.mode = v; }); stackLines(); }, true)));
-    if (o.mode === 'scroll') { const bl = el('label', 'check'); const bc = el('input'); bc.type = 'checkbox'; bc.checked = !!o.band; bl.append(bc, document.createTextNode(' Full width, sliding under a still line')); bc.addEventListener('change', () => change(() => { sharedChange(o, (x) => { x.band = bc.checked; }); stackLines(); }, true)); side.append(bl); }
-    if (o.mode !== 'static' && o.mode !== 'lines') side.append(slider('Bars', o.perView, 1, Math.min(8, o.layout.bars.length), 1, (x) => String(x), (v) => change(() => { sharedChange(o, (x) => { x.perView = v; }); stackLines(); })));
-    side.append(slider('Size', Math.round(o.size * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { sharedChange(o, (x) => { x.size = v / 100; }); stackLines(); })));
-    side.append(seg([['0.16', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String((two ? ls[0] : o).pos.y), (v) => change(() => { (two ? ls[0] : o).pos = { x: 0.5, y: +v }; stackLines(); }, true)));
-    side.append(slider('Opacity', Math.round((o.opacity ?? 1) * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { sharedChange(o, (x) => { x.opacity = v / 100; }); })));
-    const hl = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = o.highlight !== false; hl.append(cb, document.createTextNode(o.mode === 'scroll' ? ' Show where you are (a red line)' : ' Light up the bar being played'));
-    cb.addEventListener('change', () => change(() => { o.highlight = cb.checked; })); side.append(hl);
-    side.append(el('p', 'hint', 'Drag the score on the picture to move it.'));
-    const sync = el('section', 'sub-card');
-    const sh = el('div', 'sub-head'); sh.append(el('h3', '', 'Timing'));
-    sync.append(sh);
-    const state = el('p', 'st-sync-state ' + (o.synced === 'auto' && o.syncInfo && o.syncInfo.good > 0.55 ? 'good' : o.synced === 'even' ? 'warn' : ''),
-      o.synced === 'auto' ? `Follows your playing${o.syncInfo ? ` (${Math.round(o.syncInfo.good * 100)}% of notes matched)` : ''}.` : o.synced === 'tap' ? 'Set by your taps.' : o.synced === 'hand' ? 'Adjusted by hand on the timeline.' : 'Spread evenly. Line it up with your playing:');
-    sync.append(state);
-    const row = el('div', 'row-even');
-    const auto = el('button', 'btn small primary'); auto.append(el('span', '', 'Follow my playing')); auto.disabled = !ST.pcm;
-    auto.addEventListener('click', () => (scoreLines().length === 2 && scoreLines().includes(o) ? syncBoth() : autoSync(o)));
-    const tapB = el('button', 'btn small', 'Tap along'); tapB.addEventListener('click', () => startTap(o));
-    row.append(auto, tapB); sync.append(row);
-    // from the bar where the picture is now (put right by hand first, by dragging its start): the
-    // bars before it stay as they are
-    const here = o.times ? barAt(o, ST.media ? ST.media.currentTime + 0.02 : 0).b : -1;
-    if (here > 0 && here < o.layout.bars.length) {
-      const row2 = el('div', 'row-even');
-      const fromB = el('button', 'btn small'); fromB.append(el('span', '', `Follow from bar ${here + 1}`)); fromB.disabled = !ST.pcm;
-      fromB.addEventListener('click', () => autoSync(o, { from: here }));
-      const tapFrom = el('button', 'btn small', `Tap from bar ${here + 1}`); tapFrom.addEventListener('click', () => startTap(o, here));
-      row2.append(fromB, tapFrom); sync.append(row2);
-    }
-    sync.append(el('p', 'hint', 'Drag the start of a bar on the timeline to move it. Then “Follow from bar…” follows your playing again from there; the bars before stay as they are.'));
-    side.append(sync);
-    // another part, on a line of its own under this one
-    if (!two) {
-      const add2 = el('button', 'btn'); add2.append(el('span', '', 'Add a second line (another part)'));
-      add2.addEventListener('click', () => addScore({ second: true }));
-      side.append(add2);
-      side.append(el('p', 'hint', 'For a duet: the other player’s part under yours, each line following its own player.'));
-    }
-    const del = el('button', 'btn danger-text', two ? 'Remove this line' : 'Remove the score'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); const rest = scoreLines(); if (rest.length === 1) delete rest[0].line; ST.sel = rest[0] ? { id: rest[0].id } : null; saveSoon(); renderSide(); renderTimeline(); frame(); });
-    side.append(del);
+  $('#stEmpty').hidden = !!scoreOv();
+  if (!tab) return;
+  ({ score: renderScoreTab, timing: renderTimingTab, image: renderImageTab, frame: renderFormat, look: renderLookTab })[tab](side);
+}
+const change = (fn, re = false) => { fn(); saveSoon(); frame(); if (re) renderSide(); };
+function noScoreYet(side, what) {
+  side.append(el('h3', '', 'No score yet'));
+  side.append(el('p', 'hint', what));
+  const b = el('button', 'btn primary'); b.append(el('span', '', 'Add the score')); b.addEventListener('click', () => addScore()); side.append(b);
+}
+function renderScoreTab(side) {
+  const ls = scoreLines(), two = ls.length > 1;
+  let o = selected(); if (!o || o.kind !== 'score') o = ls[0];
+  if (!o) { noScoreYet(side, 'Choose the score from your library, a photo or a PDF, and tap the lines you play. They appear over the video and move along with your playing.'); return; }
+  if (!ST.sel || ST.sel.id !== o.id) ST.sel = { id: o.id };
+  side.append(el('h3', '', two ? 'Score: two lines' : 'Score'));
+  // (two lines: which one these settings are for; the look is the same for both)
+  if (two) side.append(seg(ls.map((x, i) => [x.id, i === 0 ? 'Line 1 (top)' : 'Line 2 (under)']), o.id, (v) => { ST.sel = { id: v }; renderSide(); frame(); }));
+  side.append(el('p', 'hint', `${o.title} · ${o.layout.bars.length} bars`));
+  const look = sec('Look');
+  const looks = el('div', 'st-looks');
+  for (const [k, label] of [['paper', 'Paper'], ['warm', 'Warm'], ['lines', 'Just the lines']]) {
+    const b = el('button', o.look === k ? 'on' : ''); const sw = el('i', k); b.append(sw, document.createTextNode(label));
+    b.addEventListener('click', () => change(() => { sharedChange(o, (x) => { x.look = k; }); stackLines(); }, true)); looks.append(b);
+  }
+  look.append(looks);
+  if (o.look === 'lines') look.append(seg([['#ffffff', 'White ink'], ['#000000', 'Black ink']], o.ink, (v) => change(() => { sharedChange(o, (x) => { x.ink = v; }); }, true)));
+  if (o.look === 'lines') look.append(seg([['on', 'Soft shade behind'], ['off', 'No shade']], o.shade === false ? 'off' : 'on', (v) => change(() => { sharedChange(o, (x) => { x.shade = v === 'on'; }); }, true)));
+  look.append(slider('Opacity', Math.round((o.opacity ?? 1) * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { sharedChange(o, (x) => { x.opacity = v / 100; }); })));
+  side.append(look);
+  const scr = sec('On screen');
+  scr.append(seg([['scroll', 'Endless line'], ['lines', 'Line by line'], ['bars', 'Bars'], ['static', 'All']], o.mode, (v) => change(() => { sharedChange(o, (x) => { x.mode = v; }); stackLines(); }, true)));
+  if (o.mode === 'scroll') scr.append(check('Full width, sliding under a still line', o.band, (v) => change(() => { sharedChange(o, (x) => { x.band = v; }); stackLines(); }, true)));
+  if (o.mode !== 'static' && o.mode !== 'lines') scr.append(slider('Bars', o.perView, 1, Math.min(8, o.layout.bars.length), 1, (x) => String(x), (v) => change(() => { sharedChange(o, (x) => { x.perView = v; }); stackLines(); })));
+  scr.append(check(o.mode === 'scroll' ? 'Show where you are (a red line)' : 'Light up the bar being played', o.highlight !== false, (v) => change(() => { o.highlight = v; })));
+  side.append(scr);
+  const place = sec('Place');
+  place.append(slider('Size', Math.round(o.size * 100), 30, 100, 1, (x) => x + '%', (v) => change(() => { sharedChange(o, (x) => { x.size = v / 100; }); stackLines(); })));
+  place.append(seg([['0.16', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String((two ? ls[0] : o).pos.y), (v) => change(() => { (two ? ls[0] : o).pos = { x: 0.5, y: +v }; stackLines(); }, true)));
+  place.append(el('p', 'hint', 'Or drag the score on the picture.'));
+  side.append(place);
+  const line = sec('The line of music');
+  const er = el('button', 'btn'); er.append(el('span', '', (o.erase && o.erase.length) ? 'Edit what is shown (changed)' : 'Edit what is shown'));
+  er.addEventListener('click', () => openEraser(o));
+  line.append(er);
+  line.append(el('p', 'hint', 'See the whole line as it goes into the video, and wipe away anything that should not be there.'));
+  // another part, on a line of its own under this one
+  if (!two) {
+    const add2 = el('button', 'btn'); add2.append(el('span', '', 'Add a second line (another part)'));
+    add2.addEventListener('click', () => addScore({ second: true }));
+    line.append(add2);
+  }
+  const del = el('button', 'btn danger-text', two ? 'Remove this line' : 'Remove the score'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); const rest = scoreLines(); if (rest.length === 1) delete rest[0].line; ST.sel = rest[0] ? { id: rest[0].id } : null; ST.selBar = null; saveSoon(); renderSide(); renderTimeline(); frame(); });
+  line.append(del);
+  side.append(line);
+}
+// the first bar played: after the bars at the start that hold only rests
+function firstPlayed(o) {
+  const L = o.layout; if (!L || !L.bars) return 0;
+  const withNotes = new Set((L.notes || []).map((n) => n.bar));
+  let k = 0; while (k < L.bars.length - 1 && !withNotes.has(k) && L.bars[k].rests > 0) k++;
+  return k;
+}
+function renderTimingTab(side) {
+  const ls = scoreLines();
+  let o = selected(); if (!o || o.kind !== 'score') o = ls[0];
+  if (!o) { noScoreYet(side, 'Add the score first: then Stand follows your playing, or you tap along, and every bar can be set to the hundredth.'); return; }
+  const n = o.layout.bars.length;
+  side.append(el('h3', '', 'Timing'));
+  side.append(el('p', 'st-sync-state ' + (o.synced === 'auto' && o.syncInfo && o.syncInfo.good > 0.55 ? 'good' : o.synced === 'even' ? 'warn' : ''),
+    o.synced === 'auto' ? `Follows your playing${o.syncInfo ? ` (${Math.round(o.syncInfo.good * 100)}% of notes matched)` : ''}.` : o.synced === 'tap' ? 'Set by your taps.' : o.synced === 'hand' ? 'Adjusted by hand.' : 'Spread evenly for now. Line it up with your playing:'));
+  // following the playing (from the start, or from the bar at the red line: the bars before stay)
+  const fol = sec('Follow my playing');
+  const here = o.times ? barAt(o, ST.media ? nowT() + 0.02 : 0).b : -1;
+  const row = el('div', 'st-pair');
+  const auto = el('button', 'btn small primary'); auto.append(el('span', '', 'From the start')); auto.disabled = !ST.pcm;
+  auto.addEventListener('click', () => (scoreLines().length === 2 && scoreLines().includes(o) ? syncBoth() : autoSync(o)));
+  row.append(auto);
+  if (here > 0 && here < n) { const fromB = el('button', 'btn small'); fromB.append(el('span', '', `From bar ${here + 1}`)); fromB.disabled = !ST.pcm; fromB.addEventListener('click', () => autoSync(o, { from: here })); row.append(fromB); }
+  fol.append(row);
+  if (!ST.pcm) fol.append(el('p', 'hint', 'This recording has no sound to listen to: tap along instead.'));
+  side.append(fol);
+  // tapping along, from the bar chosen (at first, the first bar with notes: the rests before are counted for you)
+  const tp = sec('Tap along');
+  const fp = firstPlayed(o);
+  if (ST.tapFrom == null || ST.tapFrom >= n || ST.tapFromFor !== o.id) { ST.tapFrom = fp; ST.tapFromFor = o.id; }
+  const fromRow = el('div', 'st-tapfrom'); fromRow.append(el('span', '', 'Start at bar'));
+  const step = el('div', 'st-step'); const minus = el('button', '', '−'), num = el('span', 'num', String(ST.tapFrom + 1)), plus = el('button', '', '+');
+  minus.setAttribute('aria-label', 'Earlier bar'); plus.setAttribute('aria-label', 'Later bar');
+  const setFrom = (k) => { ST.tapFrom = clamp(k, 0, n - 1); renderSide(); };
+  minus.addEventListener('click', () => setFrom(ST.tapFrom - 1)); plus.addEventListener('click', () => setFrom(ST.tapFrom + 1));
+  step.append(minus, num, plus); fromRow.append(step); tp.append(fromRow);
+  const tapB = el('button', 'btn small primary'); tapB.append(el('span', '', `Tap along from bar ${ST.tapFrom + 1}`));
+  tapB.addEventListener('click', () => startTap(o, ST.tapFrom));
+  tp.append(tapB);
+  tp.append(el('p', 'hint', fp > 0 && ST.tapFrom === fp ? `Bars 1–${fp} hold only rests, so the first tap is for bar ${fp + 1}. The video starts a little before it: tap on the first beat of each bar, the big button shows which.` : 'The video starts a little before that bar. Tap on the first beat of each bar, even when the bar begins with a rest: the big button shows which bar comes next.'));
+  side.append(tp);
+  // one bar, to the hundredth
+  const k = ST.selBar != null && ST.selBar < n ? ST.selBar : clamp(here, 0, n - 1);
+  const bs = sec('A bar’s start');
+  const card = el('div', 'st-barcard');
+  const nav = el('div', 'st-barnav');
+  const prev = el('button', 'icon-btn'); prev.innerHTML = '<svg><use href="#i-back"/></svg>'; prev.setAttribute('aria-label', 'The bar before');
+  const next = el('button', 'icon-btn'); next.innerHTML = '<svg style="transform:scaleX(-1)"><use href="#i-back"/></svg>'; next.setAttribute('aria-label', 'The next bar');
+  prev.disabled = k <= 0; next.disabled = k >= n - 1;
+  prev.addEventListener('click', () => selectBar(k - 1, { open: false })); next.addEventListener('click', () => selectBar(k + 1, { open: false }));
+  nav.append(prev, next);
+  const t = el('b', '', `Bar ${k + 1}`), tt = el('span', 'num'); tt.id = 'stBarTime'; tt.textContent = fmt2(o.times[k]);
+  card.append(t, tt, nav);
+  const nudge = el('div', 'st-nudge');
+  for (const [d, label] of [[-0.1, '−0.1'], [-0.01, '−0.01'], [0.01, '+0.01'], [0.1, '+0.1']]) {
+    const b = el('button', '', label); b.setAttribute('aria-label', `${d > 0 ? 'Later' : 'Earlier'} by ${Math.abs(d)} s`);
+    // (held: again and again, faster)
+    let rep = 0, wait = 0;
+    const go = () => nudgeBar(o, k, d);
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); go(); wait = setTimeout(function r() { go(); rep = setTimeout(r, 70); }, 420); });
+    const stop = () => { clearTimeout(wait); clearTimeout(rep); };
+    b.addEventListener('pointerup', stop); b.addEventListener('pointerleave', stop); b.addEventListener('pointercancel', stop);
+    b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    nudge.append(b);
+  }
+  card.append(nudge);
+  bs.append(card);
+  const atLine = el('button', 'btn small'); atLine.append(el('span', '', `Start bar ${k + 1} at the red line`));
+  atLine.addEventListener('click', () => { const T = o.times; const v = clamp(nowT(), k > 0 ? T[k - 1] + 0.08 : -1, k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur); nudgeBar(o, k, v - T[k], { stay: true }); });
+  bs.append(atLine);
+  bs.append(el('p', 'hint', 'Tap a bar on the timeline to choose it, or drag its start there. Hold still a moment on it to look closer.'));
+  side.append(bs);
+}
+const fmt2 = (s) => { const neg = s < 0; s = Math.abs(s); const m = Math.floor(s / 60), r = s - m * 60; return (neg ? '−' : '') + m + ':' + r.toFixed(2).padStart(5, '0'); };
+function barCardTime() { const e = $('#stBarTime'); const o = scoreOv(); if (e && o && o.times && ST.selBar != null) e.textContent = fmt2(o.times[ST.selBar]); }
+// a bar's start moved a little (the bars around it keep theirs; two parts move together)
+function nudgeBar(o, k, d, { stay = false } = {}) {
+  const T = o.times; if (!T) return;
+  T[k] = clamp(T[k] + d, k > 0 ? T[k - 1] + 0.08 : Math.min(-1, T[0]), k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur);
+  T[k] = Math.round(T[k] * 1000) / 1000;
+  o.synced = 'hand'; ST.selBar = k;
+  const two = scoreLines().find((x) => x !== o); if (two && two.times && two.times.length === T.length) { two.times[k] = T[k]; two.synced = 'hand'; }
+  saveSoon(); renderTimeline(); barCardTime();
+  if (!stay) seek(Math.max(0, T[k] + 0.005)); else frame();
+}
+function renderImageTab(side) {
+  const ims = ST.P.overlays.filter((x) => x.kind === 'image');
+  let o = selected(); if (o && o.kind !== 'image') o = null;
+  if (!o) {
+    side.append(el('h3', '', 'Images'));
+    side.append(el('p', 'hint', 'A photo or a title card that comes and goes over the video: added at the red line, for four seconds.'));
+    const add = el('button', 'btn primary'); add.append(el('span', '', 'Add an image')); add.addEventListener('click', () => $('#stImageInput').click()); side.append(add);
+    if (ims.length) { const list = sec('On the video'); ims.forEach((im, i) => { const b = el('button', 'btn small', `Image ${i + 1} · ${fmt(im.t0)}–${fmt(im.t1)}`); b.addEventListener('click', () => { ST.sel = { id: im.id }; glideTo(im.t0 + 0.05); renderSide(); renderTimeline(); frame(); }); list.append(b); }); side.append(list); }
     return;
   }
-  if (o && o.kind === 'image') {
-    side.append(el('h3', '', 'Image'));
-    side.append(slider('Size', Math.round(o.size * 100), 10, 100, 1, (x) => x + '%', (v) => change(() => { o.size = v / 100; })));
-    side.append(slider('Opacity', Math.round((o.opacity ?? 1) * 100), 10, 100, 1, (x) => x + '%', (v) => change(() => { o.opacity = v / 100; })));
-    side.append(seg([['0.16', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String(o.pos.y), (v) => change(() => { o.pos = { x: 0.5, y: +v }; }, true)));
-    for (const [k, label] of [['round', 'Rounded corners'], ['fade', 'Fade in and out']]) {
-      const l = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!o[k]; l.append(cb, document.createTextNode(' ' + label));
-      cb.addEventListener('change', () => change(() => { o[k] = cb.checked; })); side.append(l);
-    }
-    side.append(el('p', 'hint', 'On the timeline, drag the image to move it in time, or its ends to make it shorter or longer. Drag it on the picture to place it.'));
-    const del = el('button', 'btn danger-text', 'Remove the image'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); ST.sel = null; saveSoon(); renderSide(); renderTimeline(); frame(); });
-    side.append(del);
-    return;
-  }
-  renderFormat(side);
+  side.append(el('h3', '', 'Image'));
+  const pl = sec('');
+  pl.append(slider('Size', Math.round(o.size * 100), 10, 100, 1, (x) => x + '%', (v) => change(() => { o.size = v / 100; })));
+  pl.append(slider('Opacity', Math.round((o.opacity ?? 1) * 100), 10, 100, 1, (x) => x + '%', (v) => change(() => { o.opacity = v / 100; })));
+  pl.append(seg([['0.16', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String(o.pos.y), (v) => change(() => { o.pos = { x: 0.5, y: +v }; }, true)));
+  for (const [k, label] of [['round', 'Rounded corners'], ['fade', 'Fade in and out']]) pl.append(check(label, o[k], (v) => change(() => { o[k] = v; })));
+  side.append(pl);
+  side.append(el('p', 'hint', 'On the timeline, drag the image to move it in time, or its ends to make it shorter or longer. Drag it on the picture to place it.'));
+  const row = el('div', 'st-pair');
+  const done = el('button', 'btn small', 'Done'); done.addEventListener('click', () => { ST.sel = null; renderSide(); renderTimeline(); frame(); });
+  const del = el('button', 'btn small danger-text', 'Remove'); del.addEventListener('click', () => { ST.P.overlays = ST.P.overlays.filter((x) => x !== o); ST.sel = null; saveSoon(); renderSide(); renderTimeline(); frame(); });
+  row.append(done, del); side.append(row);
+}
+function renderLookTab(side) {
+  if (ST.take.kind === 'video') renderLook(side);
+  const sd = el('section', 'sub-card'); sd.append(el('h3', '', 'Sound'));
+  sd.append(seg([['dry', 'Dry'], ['studio', 'Studio'], ['hall', 'Hall'], ['church', 'Church']], ST.P.sound.room, (v) => { ST.P.sound.room = v; saveSoon(); lsApply(); renderSide(); }));
+  sd.append(slider('Room', Math.round((ST.P.sound.wet ?? 0.18) * 100), 0, 100, 1, (x) => x + '%', (v) => { ST.P.sound.wet = v / 100; saveSoon(); lsApply(); }));
+  sd.append(check('Bring the sound to a good level', ST.P.sound.level !== false, (v) => { ST.P.sound.level = v; saveSoon(); lsApply(); }));
+  sd.append(el('p', 'hint', 'You hear the room and the level as you watch; they go into the exported video.'));
+  side.append(sd);
 }
 // The look of the video: a few ready-made looks, and four simple controls on top
 function renderLook(side) {
@@ -2045,7 +2423,7 @@ async function grabFrames(n) {
   return out;
 }
 function renderFormat(side) {
-  side.append(el('h3', '', 'Picture'));
+  side.append(el('h3', '', 'Frame'));
   const f = el('div', 'st-formats');
   for (const [k, [w, h, label]] of Object.entries(FORMATS)) {
     const b = el('button', ST.P.format === k ? 'on' : ''); const i = el('i');
@@ -2062,16 +2440,128 @@ function renderFormat(side) {
     side.append(seg([['fill', 'Fill the frame'], ['fit', 'Show it all']], ST.P.fit || 'fill', (v) => { ST.P.fit = v; saveSoon(); frame(); renderSide(); }));
     if (ST.P.fit !== 'fit') side.append(el('p', 'hint', 'Drag the video to choose the part on show.'));
   }
-  if (ST.take.kind === 'video') renderLook(side);
-  side.append(el('div', 'ctl-head', 'Trim'));
-  side.append(el('p', 'hint', `From ${fmt(ST.P.trim.a)} to ${fmt(ST.P.trim.b)}. Drag the dark handles on the timeline.`));
-  const sd = el('section', 'sub-card'); sd.append(el('h3', '', 'Sound'));
-  sd.append(seg([['dry', 'Dry'], ['studio', 'Studio'], ['hall', 'Hall'], ['church', 'Church']], ST.P.sound.room, (v) => { ST.P.sound.room = v; saveSoon(); lsApply(); renderSide(); }));
-  sd.append(slider('Room', Math.round((ST.P.sound.wet ?? 0.18) * 100), 0, 100, 1, (x) => x + '%', (v) => { ST.P.sound.wet = v / 100; saveSoon(); lsApply(); }));
-  const l = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = ST.P.sound.level !== false; l.append(cb, document.createTextNode(' Bring the sound to a good level'));
-  cb.addEventListener('change', () => { ST.P.sound.level = cb.checked; saveSoon(); lsApply(); }); sd.append(l);
-  sd.append(el('p', 'hint', 'Room and level are added in the exported video.'));
-  side.append(sd);
+  const tr = sec('Trim');
+  tr.append(el('p', 'hint', `From ${fmt2(ST.P.trim.a)} to ${fmt2(ST.P.trim.b)} (${fmt(ST.P.trim.b - ST.P.trim.a)}). Drag the yellow ends on the timeline, or:`));
+  const row = el('div', 'st-pair');
+  const a = el('button', 'btn small', 'Start at the red line'), bb = el('button', 'btn small', 'End at the red line');
+  a.addEventListener('click', () => { ST.P.trim.a = clamp(nowT(), 0, ST.P.trim.b - 0.5); saveSoon(); renderTimeline(); renderSide(); });
+  bb.addEventListener('click', () => { ST.P.trim.b = clamp(nowT(), ST.P.trim.a + 0.5, ST.dur); saveSoon(); renderTimeline(); renderSide(); });
+  row.append(a, bb); tr.append(row);
+  if (ST.P.trim.a > 0.01 || ST.P.trim.b < ST.dur - 0.01) { const all = el('button', 'btn small ghost', 'Keep it all'); all.addEventListener('click', () => { ST.P.trim = { a: 0, b: ST.dur }; saveSoon(); renderTimeline(); renderSide(); }); tr.append(all); }
+  side.append(tr);
+}
+
+// =====================================================================
+// What the video shows: the whole long line, to wipe away by hand what should not be in it (a mark
+// of the line above, a page number, a smudge) and to bring back what was wiped. One finger paints;
+// two fingers move along and closer; the little line under it shows where you are.
+// =====================================================================
+async function openEraser(o) {
+  pause();
+  const box = $('#stEraser'); box.textContent = ''; box.hidden = false;
+  busy('Getting the line ready…', '', 0.4);
+  let orig;
+  try { orig = await buildStrip(o); } catch (e) { console.warn(e); busy(null); box.hidden = true; D.toast('The line could not be opened.'); return; }
+  busy(null);
+  const H = orig.canvas.height, W = orig.canvas.width;
+  const work = document.createElement('canvas'); work.width = W; work.height = H;
+  const strokes = (o.erase || []).map((k) => ({ m: k.m, r: k.r, p: k.p.slice() }));
+  const rebuild = () => { const g = work.getContext('2d'); g.globalCompositeOperation = 'copy'; g.drawImage(orig.canvas, 0, 0); g.globalCompositeOperation = 'source-over'; for (const k of strokes) paintStroke(work, k, orig.canvas); };
+  rebuild();
+  const E = { mode: 'e', size: 'm', s: 1, ox: 0 };
+  const R = { s: 0.022, m: 0.055, l: 0.11 };
+  // the bar
+  const top = el('div', 'st-er-top');
+  const cancel = el('button', 'btn small ghost', 'Cancel');
+  const title = el('b', '', 'What the video shows');
+  const undo = el('button', 'icon-btn'); undo.innerHTML = '<svg><use href="#i-undo"/></svg>'; undo.setAttribute('aria-label', 'Undo');
+  const done = el('button', 'btn small primary', 'Done');
+  top.append(cancel, title, undo, done);
+  const view = el('div', 'st-er-view'); const vc = el('canvas'); const ring = el('div', 'st-er-ring'); ring.hidden = true; view.append(vc, ring);
+  const map = el('div', 'st-er-map'); const mc = el('canvas'); const win = el('div', 'st-er-win'); map.append(mc, win);
+  const hint = el('p', 'st-er-hint', 'Paint with one finger over what should go. Two fingers move along the line and closer.');
+  const tools = el('div', 'st-er-tools');
+  const modeSeg = () => seg([['e', 'Wipe away'], ['r', 'Bring back']], E.mode, (v) => { E.mode = v; tools.replaceChild(modeSeg(), tools.firstChild); });
+  const sizeSeg = () => seg([['s', 'Fine'], ['m', 'Medium'], ['l', 'Broad']], E.size, (v) => { E.size = v; tools.replaceChild(sizeSeg(), tools.children[1]); });
+  const allBack = el('button', 'btn small ghost', 'Bring it all back');
+  tools.append(modeSeg(), sizeSeg(), allBack);
+  box.append(top, view, map, hint, tools);
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  let VW = 0, VH = 0;
+  const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; vc.width = Math.round(VW * dpr); vc.height = Math.round(VH * dpr); vc.style.width = VW + 'px'; vc.style.height = VH + 'px'; };
+  const sMin = () => Math.min(VH / H, VW / Math.min(W, H * 2.2)) * 0.98;
+  const clampView = () => { E.s = clamp(E.s, sMin(), sMin() * 8); const vis = VW / E.s; E.ox = W <= vis ? (W - vis) / 2 : clamp(E.ox, 0, W - vis); };
+  const oy = () => (VH - H * E.s) / 2;
+  const draw = () => {
+    const g = vc.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = getComputedStyle(view).backgroundColor || '#ddd'; g.fillRect(0, 0, vc.width, vc.height);
+    g.setTransform(E.s * dpr, 0, 0, E.s * dpr, -E.ox * E.s * dpr, oy() * dpr);
+    g.imageSmoothingQuality = 'high'; g.drawImage(work, 0, 0);
+    // (where the bars begin: the line is easier to find one's way along)
+    g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = 'rgba(0,0,0,0.45)'; g.font = `600 ${11 * dpr}px ${css('--font-num') || 'system-ui'}`;
+    o.layout.bars.forEach((b, k) => { const x = (b.x0 * (orig.k || 1) - E.ox) * E.s; if (x > -20 && x < VW) g.fillText(String(k + 1), (x + 3) * dpr, (oy() + 12) * dpr); });
+    const mr = map.getBoundingClientRect(); const vis = VW / E.s;
+    win.style.left = (Math.max(0, E.ox) / W * mr.width) + 'px'; win.style.width = Math.min(mr.width, vis / W * mr.width) + 'px';
+  };
+  const drawMap = () => { const r = map.getBoundingClientRect(); mc.width = Math.round(r.width * dpr); mc.height = Math.round(r.height * dpr); const g = mc.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, mc.width, mc.height); const k = Math.min(mc.width / W, mc.height / H); g.drawImage(work, 0, (mc.height - H * k) / 2 + 0, W * k, H * k); g.globalCompositeOperation = 'source-over'; if (k * W < mc.width) { /* fills from the left */ } };
+  fit(); E.s = sMin(); E.ox = 0; clampView(); draw(); drawMap();
+  // painting and moving
+  const P = new Map(); let g2 = null, cur = null;
+  const toStrip = (cx, cy) => { const r = view.getBoundingClientRect(); return [((cx - r.left) / E.s + E.ox) / H, ((cy - r.top - oy()) / E.s) / H]; };
+  const showRing = (cx, cy) => { const r = view.getBoundingClientRect(); const d = R[E.size] * H * E.s * 2; ring.hidden = false; ring.style.left = (cx - r.left) + 'px'; ring.style.top = (cy - r.top) + 'px'; ring.style.width = ring.style.height = d + 'px'; ring.style.borderColor = E.mode === 'e' ? 'var(--rec)' : 'var(--good)'; };
+  view.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); try { view.setPointerCapture(e.pointerId); } catch {}
+    P.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (P.size === 2) {
+      // (a stroke only just started becomes the start of a move)
+      if (cur && cur.p.length <= 8) { strokes.pop(); rebuild(); draw(); }
+      cur = null; ring.hidden = true;
+      const [a, b] = [...P.values()]; g2 = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx0: (a.x + b.x) / 2, s0: E.s, ox0: E.ox }; return;
+    }
+    if (P.size > 2) return;
+    const [x, y] = toStrip(e.clientX, e.clientY);
+    cur = { m: E.mode, r: R[E.size], p: [+x.toFixed(4), +y.toFixed(4)] }; strokes.push(cur);
+    paintStroke(work, cur, orig.canvas); draw(); showRing(e.clientX, e.clientY);
+  });
+  view.addEventListener('pointermove', (e) => {
+    const p = P.get(e.pointerId);
+    if (!p) { if (e.pointerType === 'mouse') showRing(e.clientX, e.clientY); return; }
+    p.x = e.clientX; p.y = e.clientY;
+    if (g2 && P.size >= 2) {
+      const [a, b] = [...P.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, cx = (a.x + b.x) / 2;
+      const r = view.getBoundingClientRect(); const fx = g2.cx0 - r.left;
+      const sx = g2.ox0 + fx / g2.s0;   // (the point under the fingers at the start stays under them)
+      E.s = g2.s0 * (d / g2.d0); clampView(); E.ox = sx - (cx - r.left) / E.s; clampView();
+      onceAFrame('er', draw); return;
+    }
+    if (!cur) return;
+    const [x, y] = toStrip(e.clientX, e.clientY);
+    const lx = cur.p[cur.p.length - 2], ly = cur.p[cur.p.length - 1];
+    if (Math.hypot(x - lx, y - ly) < cur.r * 0.15) return;
+    const seg2 = { m: cur.m, r: cur.r, p: [lx, ly, +x.toFixed(4), +y.toFixed(4)] };
+    cur.p.push(+x.toFixed(4), +y.toFixed(4));
+    paintStroke(work, seg2, orig.canvas); showRing(e.clientX, e.clientY); onceAFrame('er', draw);
+  });
+  const up = (e) => { P.delete(e.pointerId); if (P.size < 2) g2 = null; if (!P.size) { if (cur) drawMap(); cur = null; if (e.pointerType !== 'mouse') ring.hidden = true; } };
+  view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up);
+  view.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) { const r = view.getBoundingClientRect(); const sx = E.ox + (e.clientX - r.left) / E.s; E.s *= Math.exp(-e.deltaY * 0.01); clampView(); E.ox = sx - (e.clientX - r.left) / E.s; } else E.ox += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / E.s; clampView(); onceAFrame('er', draw); }, { passive: false });
+  // the little line: where you are along it; drag or tap to go there
+  const goMap = (cx) => { const r = map.getBoundingClientRect(); E.ox = ((cx - r.left) / r.width) * W - VW / E.s / 2; clampView(); onceAFrame('er', draw); };
+  let mapDown = false;
+  map.addEventListener('pointerdown', (e) => { mapDown = true; try { map.setPointerCapture(e.pointerId); } catch {} goMap(e.clientX); });
+  map.addEventListener('pointermove', (e) => { if (mapDown) goMap(e.clientX); });
+  map.addEventListener('pointerup', () => { mapDown = false; }); map.addEventListener('pointercancel', () => { mapDown = false; });
+  undo.addEventListener('click', () => { if (!strokes.length) return; strokes.pop(); rebuild(); draw(); drawMap(); });
+  allBack.addEventListener('click', () => { strokes.length = 0; rebuild(); draw(); drawMap(); });
+  const ro = new ResizeObserver(() => { fit(); clampView(); draw(); drawMap(); }); ro.observe(view);
+  const close2 = () => { ro.disconnect(); box.hidden = true; box.textContent = ''; orig.canvas.width = orig.canvas.height = 0; if (orig.mask) orig.mask.width = 0; };
+  cancel.addEventListener('click', () => { work.width = work.height = 0; close2(); });
+  done.addEventListener('click', () => {
+    o.erase = strokes.filter((k) => k.p.length >= 2);
+    const old = ST.strips.get(o.id); if (old) { old.canvas.width = 0; if (old.mask) old.mask.width = 0; }
+    ST.strips.set(o.id, { canvas: work, mask: inkMask(work), tinted: new Map(), k: orig.k });
+    close2(); saveSoon(); frame(); renderSide();
+    D.toast(o.erase.length ? 'The video shows the line as you left it.' : 'The line is shown as it was read.', 2200);
+  });
 }
 
 // =====================================================================
@@ -2079,7 +2569,7 @@ function renderFormat(side) {
 // =====================================================================
 async function addImage(file) {
   const o = { id: uid(), kind: 'image', img: file, size: 0.4, pos: { x: 0.5, y: 0.2 }, opacity: 1, round: true, fade: true, t0: ST.media.currentTime, t1: Math.min(ST.P.trim.b, ST.media.currentTime + 4) };
-  ST.P.overlays.push(o); await prepareOverlay(o); ST.sel = { id: o.id };
+  ST.P.overlays.push(o); await prepareOverlay(o); ST.sel = { id: o.id }; ST.tab = 'image';
   saveSoon(); renderSide(); renderTimeline(); frame();
 }
 
@@ -2514,22 +3004,21 @@ function wire() {
   if (!$('#studio')) return;
   $('#stBack').addEventListener('click', close);
   $('#stPlay').addEventListener('click', () => (ST.playing ? pause() : play()));
-  $('#stAddScore').addEventListener('click', addScore);
-  $('#stEmptyAdd').addEventListener('click', addScore);
-  $('#stAddImage').addEventListener('click', () => $('#stImageInput').click());
+  $('#stEmptyAdd').addEventListener('click', () => addScore());
+  for (const b of $('#stTabs').querySelectorAll('button')) b.addEventListener('click', () => { if (ST.tapping) return; if (b.dataset.tab !== 'image' && b.dataset.tab !== 'score') { const o = selected(); if (o && o.kind === 'image') ST.sel = null; } openTab(b.dataset.tab); frame(); });
+  $('#stTapStop').addEventListener('click', () => finishTap());
   $('#stImageInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) addImage(f); });
-  // (each line follows its own player: two lines, one after the other)
-  $('#stSyncBtn').addEventListener('click', async () => { const ls = scoreLines(); if (!ls.length) { addScore(); return; } ST.sel = { id: ls[0].id }; renderSide(); if (ls.length === 2) await syncBoth(); else for (const o of ls) await autoSync(o); });
-  $('#stFormatBtn').addEventListener('click', () => { ST.sel = null; renderSide(); frame(); });
   $('#stExport').addEventListener('click', exportVideo);
   $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); tap(e); });
   $('#stBusyCancel').addEventListener('click', () => { if (ST.busyCancel) ST.busyCancel(); busy(null); });
   wireTimeline(); wireStage();
-  window.addEventListener('resize', () => { if (!$('#studio').hidden) { sizeCanvas(); renderTimeline(); drawWave(); frame(); } });
+  window.addEventListener('resize', () => { if (!$('#studio').hidden && ST.media) { if (!sheetMode() && !ST.tab) ST.tab = 'score'; sizeCanvas(); renderSide(); renderTimeline(); frame(); } });
   document.addEventListener('keydown', (e) => {
     if ($('#studio').hidden || e.target.matches('input, select, textarea')) return;
     if (e.key === ' ') { e.preventDefault(); if (ST.tapping) tap(e); else ST.playing ? pause() : play(); }
     if (e.key === 'Escape' && ST.tapping) finishTap();
+    // (the arrows: a tenth of a second along, with shift a second)
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !ST.tapping && !e.target.closest('.st-panel')) { e.preventDefault(); if (ST.playing) pause(); seek(nowT() + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 0.1)); }
   });
 }
 export const _studio = ST;
@@ -2546,6 +3035,7 @@ export async function _addScoreFrom(canvas, opt = {}) {
   return o;
 }
 export const _frame = () => frame();
+export const _prepare = (o) => prepareOverlay(o);
 // (for the tests: following the playing, and one frame of the export drawn at a time)
 export const _autoSync = (o, opt) => autoSync(o, opt);
 export const _syncBoth = () => syncBoth();

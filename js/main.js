@@ -215,10 +215,10 @@ const SECTION_TOURS = {
   ],
   studio: [
     { title: 'Studio', text: 'Your video with the score on it, ready to share. Everything here is a copy: the recording itself never changes.', at: '#stStage' },
-    { title: 'Add the score', text: 'Choose the score (from your library, a photo or a PDF) and tap the lines you play. They appear over the video.', at: '#stAddScore' },
-    { title: 'Following you', text: 'Sync listens to the recording and moves the music along with your playing. You can also tap at the start of each bar.', at: '#stSyncBtn' },
-    { title: 'Picture', text: 'Format chooses the shape (9:16 for Reels and Stories, 16:9, square) and the look. Drag the video to choose the part on show.', at: '#stFormatBtn' },
-    { title: 'Timeline', text: 'Drag the ends of the sound to trim it, the bars of the score to move them, and add images that come and go.', at: '#stTimeline' },
+    { title: 'Add the score', text: 'Choose the score (from your library, a photo or a PDF) and tap the lines you play. They appear over the video.', at: '#stTabScore' },
+    { title: 'Following you', text: 'Timing listens to the recording and moves the music along with your playing. You can also tap along, bar by bar, or set any bar to the hundredth.', at: '#stSyncBtn' },
+    { title: 'Frame and look', text: 'Frame chooses the shape (9:16 for Reels and Stories, 16:9, square); Look sets the light and the sound. Drag the video to choose the part on show.', at: '#stFormatBtn' },
+    { title: 'Timeline', text: 'The red line stays in the middle: drag the timeline under it, and pinch or use the magnifier to see closer. Drag the yellow ends to trim, and the starts of the bars to move them.', at: '#stTimeline' },
     { title: 'Export', text: 'Makes the finished video and opens the share sheet: save it to Photos or send it.', at: '#stExport' },
   ],
   phonecam: [
@@ -1259,7 +1259,7 @@ window.standIncoming = async (msg) => {
   try {
     const paths = msg.paths || [msg.path];
     const blobs = [];
-    for (const p of paths) { const res = await fetch(p); if (!res.ok) throw new Error('missing file'); blobs.push(await res.blob()); }
+    for (const p of paths) { const res = await fetch(p); if (!res.ok) throw new Error('missing file'); const bl = await res.blob(); if (/-flat\.jpe?g$/i.test(p)) bl.__flat = true; blobs.push(bl); }
     // the files are in memory now, so the native copies can go
     if (NATIVE && NATIVE.standDone) for (const p of paths) NATIVE.standDone.postMessage({ path: p });
     // (the iPhone: scanned pages, a PDF or pictures become scores of its own, in My scores)
@@ -2096,14 +2096,24 @@ function scrollSync(now) {
       $('#pageLabel').textContent = `${V.page + 1} / ${V.doc.pages}`; $('#pageRange').value = V.page + 1;
       syncPaperPlus(); follow.pages();
     }
+    // (moving: the pages coming are made a little further ahead, in the way it moves, and one a
+    // screen picture at most, the ones on screen first, so the column never stops to make several)
+    const moving = !!SC.mom || SC.speed > 0.2 || !!(GS && GS.kind === 'nav' && GS.moved);
+    const ahead = moving ? 1.2 : 0.8, dn = (SC.dir || 1) > 0;
+    const want = [];
     for (const b of SC.boxes) {
       const t = scTop(b), h = scH(b);
-      const shown = t + h > top && t < bot, near = t + h > top - scr * 0.8 && t < bot + scr * 0.8;
+      const shown = t + h > top && t < bot;
+      const near = t + h > top - scr * (moving && !dn ? ahead : 0.8) && t < bot + scr * (moving && dn ? ahead : 0.8);
       const far = t + h < top - scr * 2.2 || t > bot + scr * 2.2;
       const e = V.pages.find((x) => x.index === b.i);
-      if (near && !e && !b.loading) scrollMake(b, shown ? 0 : 1);
+      if (near && !e && !b.loading) want.push([shown ? 0 : 1, Math.abs(t + h / 2 - (top + bot) / 2), b]);
       else if (far && e) scrollFree(e);
     }
+    want.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const nm = moving ? Math.min(want.length, 1) : want.length;
+    for (let k = 0; k < nm; k++) scrollMake(want[k][2], want[k][0]);
+    if (nm < want.length) scrollSync();
   };
   if (now) run(); else SC.raf = requestAnimationFrame(run);
 }
@@ -2166,7 +2176,7 @@ function scrollMomentum(v) {
   SC.speed = Math.abs(v);
   const step = () => {
     const now2 = performance.now(), dt = Math.min(40, now2 - last); last = now2;
-    const y0 = Z.y; Z.y += v * dt; applyZoom();
+    const y0 = Z.y; Z.y += v * dt; SC.dir = v < 0 ? 1 : -1; applyZoom();
     v *= Math.pow(0.998, dt);   // (slows as on the iPhone: about a seventh of its speed left after a second)
     SC.speed = Math.abs(v);
     if (Math.abs(v) < 0.015 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; SC.speed = 0; scrollSync(true); scrollSettle(); scheduleSharpen(); return; }
@@ -2230,6 +2240,7 @@ function syncFlowSeg() {
   for (const s2 of $$('.flow-seg')) s2.hidden = !nb;
   for (const b of $$('[data-flow]')) b.classList.toggle('on', (b.dataset.flow === 'scroll') === on);
 }
+window.__entries = () => V.pages;   // (tests)
 window.__scroll = { SC, where: scrollWhere, to: scrollToPage, set: (on) => { window.__scrollAny = true; setScrollPages(on); }, nat: () => spreadNatural(), yfor: (i) => scrollYFor(i, 0) };   // (tests)
 // ---------- the tempo printed in the score ----------
 // Where a page says how fast (♩ = 108, Allegretto…), a tap there starts the metronome at that
@@ -2241,6 +2252,16 @@ const OCRWAIT = new Map();
 const TEMPO_WORDS = ['Allegro', 'Allegretto', 'Andante', 'Andantino', 'Adagio', 'Moderato', 'Presto', 'Vivace', 'Vivo', 'Largo', 'Larghetto', 'Lento', 'Grave', 'Langsam', 'Lebhaft', 'Più mosso', 'Meno mosso', 'Tempo I', 'Tempo primo', 'a tempo', 'Animato', 'Doppio movimento', 'Sarabande', 'Allemande', 'Courante', 'Menuet', 'Gigue'];
 function pageWords(i) { return pageWordsOf(V.doc, i, TEMPO_WORDS); }
 // the words of a page of any score (and where they are, as parts of the page)
+function jpegB64(c, q) {
+  return new Promise((res) => {
+    try {
+      c.toBlob((b) => {
+        if (!b) { try { res(c.toDataURL('image/jpeg', q).split(',')[1]); } catch { res(null); } return; }
+        const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1] || null); fr.onerror = () => res(null); fr.readAsDataURL(b);
+      }, 'image/jpeg', q);
+    } catch { try { res(c.toDataURL('image/jpeg', q).split(',')[1]); } catch { res(null); } }
+  });
+}
 async function pageWordsOf(doc, i, words = [], { plain = false, width = 1500, canvas = null, out = null } = {}) {
   if (!doc) return [];
   // 1. the words in the PDF (exact, and at once)
@@ -2273,7 +2294,8 @@ async function pageWordsOf(doc, i, words = [], { plain = false, width = 1500, ca
     got = await new Promise((res) => {
       const timer = setTimeout(() => { OCRWAIT.delete(id); res([]); }, 12000);
       OCRWAIT.set(id, (lines) => { clearTimeout(timer); res(lines); });
-      rec.postMessage({ id, png: c.toDataURL('image/jpeg', 0.88).split(',')[1], words, lines: true, ...(plain ? { plain: true } : {}) });
+      // (the picture made into a JPEG without holding the page up: toBlob works aside, toDataURL does not)
+      jpegB64(c, 0.88).then((png) => { if (!png) { clearTimeout(timer); OCRWAIT.delete(id); res([]); return; } rec.postMessage({ id, png, words, lines: true, ...(plain ? { plain: true } : {}) }); });
     });
   }
   // (read off the picture: the picture is handed back when asked for, to look closer at a mark)
@@ -2291,6 +2313,14 @@ async function tempoKnown(i) {
   if (!kept) { kept = (await getSetting(fk, null)) || {}; TEMPO.mem.set(fk, kept); }
   return kept[key] || null;
 }
+// (waits until nothing has been turned or moved for a little while)
+async function tempoQuiet(ms = 2500) {
+  for (let k = 0; k < 400; k++) {
+    const busy = performance.now() - (TEMPO.navAt || 0) < ms || (GS && (GS.kind === 'nav' || GS.kind === 'pinch' || GS.kind === 'ink')) || !!SC.mom;
+    if (!busy) return;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
 async function tempoMarksOf(i) {
   const doc = V.doc, sc = V.score; if (!doc || !sc) return [];
   const box = doc.piece ? doc.piece(i) : null;
@@ -2301,6 +2331,9 @@ async function tempoMarksOf(i) {
   if (kept[key]) return kept[key];
   const rk = fk + '|' + key;
   if (!TEMPO.reading.has(rk)) TEMPO.reading.set(rk, (async () => {
+    // (a page read off its picture takes the iPad a moment: never while pages are being turned or
+    // moved — the first pages of a score opened for the first time turned slowly)
+    await tempoQuiet();
     const out = {};
     let marks = findMarks(await pageWordsOf(V.doc, i, TEMPO_WORDS, { width: 2000, out }));
     if (out.ocr && out.canvas) {
@@ -2444,6 +2477,7 @@ function goTo(page, fade = true) {
 }
 function turn(dir) {
   if (!V.doc) return;
+  TEMPO.navAt = performance.now();
   if (DUO.on) { duoTurn(dir); return; }   // (two parts on the screen: both move on)
   // text being typed is kept (and its box closed) before the page changes
   if (typeof tbEdit !== 'undefined' && tbEdit) finishTextBox();
@@ -2888,7 +2922,11 @@ function clampZoom() {
   if (scr) {
     // the column: across, as a page; down, from its top to its last page's foot (with room left
     // under it, to write at the bottom of the last page above the writing tools)
-    if (cw <= n.sw) Z.x = (n.sw - cw) / 2 - n.ox; else Z.x = clamp(Z.x, n.sw - cw - n.ox, -n.ox);
+    // (made bigger, a page's corner or edge can be brought in towards the middle, where the hand
+    // writes, as on a page turned like a book; at its own size the column stays in the middle)
+    const sx = Z.s > 1.02 ? n.sw * 0.3 * Math.min(1, (Z.s - 1.02) / 0.3) : 0;
+    const xc = (n.sw - cw) / 2 - n.ox;
+    if (cw <= n.sw && !sx) Z.x = xc; else Z.x = clamp(Z.x, Math.min(n.sw - cw - n.ox, xc) - sx, Math.max(-n.ox, xc) + sx);
     const hi = -n.oy + SC.pad - 10, lo = Math.min(hi, n.sh * 0.55 - ch - n.oy);
     SC.lo = lo; SC.hi = hi;
     // (pulled past the first page's top or the last page's foot: it gives a little, as on the iPhone,
@@ -6067,7 +6105,8 @@ function endInk(cancelled) {
   if (g.kind === 'erase') {
     if (g.eraseRaf) cancelAnimationFrame(g.eraseRaf);
     if (g.erasePts && g.erasePts.length && L.eraseMany(g.erasePts, eraserR(), INK.eraser.whole)) g.changed = true;
-    if (g.changed) pushUndo(L.key, g.before, L.items.slice()); return;
+    // (while rubbing, only the part rubbed was drawn again; let go, the whole page once, to be sure)
+    if (g.changed) { L.redraw(); pushUndo(L.key, g.before, L.items.slice()); } return;
   }
   if (g.kind === 'tape' && g.slur) { if (!g.item) return; L.commit(g.item); pushUndo(L.key, g.before, L.items.slice()); return; }
   if (g.kind === 'tape') { const it = g.item, PS = pageSize(g.rect); if (Math.hypot((it.x1 - it.x0) * PS[0], (it.y1 - it.y0) * PS[1]) < 12) return; L.commit(it); pushUndo(L.key, g.before, L.items.slice()); return; }
@@ -6263,6 +6302,7 @@ window.addEventListener('pointermove', (e) => {
       if (GS.sy0 == null) { const hh = Math.hypot(dx, dy) || 1; GS.sy0 = (dy * 8) / hh; GS.sx0 = (dx * 8) / hh; }
       GS.want = { dx: dx - GS.sx0, dy: dy - GS.sy0 };
       GS.vs.push([e.timeStamp || now(), e.clientY]); if (GS.vs.length > 12) GS.vs.shift();
+      if (GS.vs.length > 1) { const d = GS.vs[GS.vs.length - 1][1] - GS.vs[GS.vs.length - 2][1]; if (Math.abs(d) > 0.5) SC.dir = d < 0 ? 1 : -1; }
       if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); }); }
       return;
     }
@@ -6313,9 +6353,10 @@ function pointerEnd(e) {
       if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; if (g.want) { if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); } }
       // let go: it runs on as fast as it was moving (the finger's speed over its last tenth of a second,
       // fitted through all the moves in it), or, pulled past an end, springs back
-      const tEnd = e.timeStamp || now(), vs = g.vs.filter((q) => tEnd - q[0] < 100);
+      // (a finger lifted a moment after its last move still flicks: iOS waits as long)
+      const tEnd = e.timeStamp || now(), lastT = g.vs.length ? g.vs[g.vs.length - 1][0] : 0, vs = g.vs.filter((q) => lastT - q[0] < 100);
       let v = 0;
-      if (vs.length >= 2 && tEnd - vs[vs.length - 1][0] < 60) {
+      if (vs.length >= 2 && tEnd - lastT < 90) {
         const mt = vs.reduce((a, q) => a + q[0], 0) / vs.length, my = vs.reduce((a, q) => a + q[1], 0) / vs.length;
         let num = 0, den = 0; for (const q of vs) { num += (q[0] - mt) * (q[1] - my); den += (q[0] - mt) * (q[0] - mt); }
         v = den > 0 ? num / den : 0;

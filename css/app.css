@@ -60,6 +60,9 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; margin: 0; }
+/* (the page itself never scrolls or slides: everything that moves has its own place to move in) */
+html { overflow: hidden; overscroll-behavior: none; }
+html, body { overflow-x: hidden; max-width: 100%; }
 html { background: var(--bg); }
 /* (while Stand starts: the background only, the home screen once it is laid out) */
 html.booting body > * { visibility: hidden; }

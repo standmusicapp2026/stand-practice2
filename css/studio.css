@@ -1,28 +1,49 @@
-/* Studio: a full-screen editor. The picture sits in the middle on the stage colour, the
-   settings of what is selected on the right, and a three-lane timeline at the bottom. */
-.studio { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; }
+/* Studio: a full-screen editor that never scrolls as a page. The picture in the middle on the
+   stage colour; the tools (Score, Timing, Image, Frame, Look) as five tabs, each showing only its
+   own settings; under the picture the clock and Play; then the timeline, whose red line stays in
+   the middle while the recording is moved under it (as in iMovie), pinched or magnified to see
+   closer. On the iPhone the tabs sit at the foot and their settings open over the timeline's top. */
+.studio { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: none; }
 .studio[hidden] { display: none; }
-.studio .topbar { position: relative; }
-.st-export { color: var(--accent-text); }
-.st-main { flex: 1; min-height: 0; display: flex; gap: 0; }
-.st-stage { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center; background: var(--stage); padding: 18px; overflow: hidden; touch-action: none; }
+.studio .topbar { position: relative; flex: none; }
+.st-top .tb-title { min-width: 0; flex: 1; }
+.st-top .tb-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.st-export { flex: none; gap: 6px; border-radius: 999px; padding: 8px 16px; }
+.st-export svg { width: 17px; height: 17px; }
+.st-main { flex: 1; min-height: 0; display: flex; }
+.st-stage { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; background: var(--stage); padding: 16px; overflow: hidden; touch-action: none; }
 #stCanvas { max-width: 100%; max-height: 100%; border-radius: 10px; box-shadow: var(--shadow); background: #000; display: block; }
-.st-empty { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: auto; max-width: calc(100% - 32px); display: flex; flex-direction: row; align-items: center; gap: 10px; text-align: left; padding: 7px 7px 7px 14px; border-radius: 999px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line); }
+.st-empty { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); max-width: calc(100% - 32px); display: flex; align-items: center; gap: 10px; padding: 7px 7px 7px 14px; border-radius: 999px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line); }
 .st-empty svg { width: 20px; height: 20px; color: var(--accent-text); flex: none; }
 .st-empty b { font: 600 15px var(--font-serif); white-space: nowrap; }
 .st-empty > span { display: none; }
 .st-empty .btn { padding: 7px 14px; min-height: 0; border-radius: 999px; }
-.st-tap { position: absolute; right: 26px; bottom: 26px; width: 150px; height: 150px; border-radius: 75px; background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
-.st-tap b { font-size: 26px; }
-.st-tap span { font-size: 12px; opacity: .85; padding: 0 16px; }
-.st-tap:active { transform: scale(.96); }
+.st-empty .btn span { color: inherit; font-size: 14px; display: inline; }
+.st-empty .btn svg { width: 16px; height: 16px; color: inherit; }
 
-.st-side { width: 330px; flex: none; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 14px; border-left: 1px solid var(--line); background: var(--surface-solid); }
-.st-side h3 { margin: 0; font: 600 18px var(--font-serif); }
-.st-side .sub-card { background: var(--sunk); }
+/* tapping along: a big pad over the timeline (not needed then), with the bar it is waiting for; the
+   picture stays whole above it, to see where you are */
+.st-tappad { position: absolute; left: 0; right: 0; bottom: 0; z-index: 9; padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px); background: var(--surface-solid); border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: stretch; }
+.st-tappad[hidden] { display: none; }
+.st-tap { border-radius: 20px; background: var(--accent); color: var(--accent-ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; touch-action: none; -webkit-user-select: none; user-select: none; min-height: 96px; transition: transform .06s; }
+.st-tap b { font: 700 30px var(--font-num); }
+.st-tap span { font-size: 13px; opacity: .85; padding: 0 18px; line-height: 1.25; }
+.st-tap:active, .st-tap.hit { transform: scale(.97); filter: brightness(1.12); }
+.st-tapstop { align-self: center; }
+.studio.tapping .st-panel { display: none; }
+/* the tools */
+.st-side { width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface-solid); }
+.st-tabs { flex: none; display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.st-tabs button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px 6px; border-radius: 11px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.st-tabs button svg { width: 21px; height: 21px; }
+.st-tabs button.on { color: var(--accent-text); background: var(--accent-soft); }
+.st-panel { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 14px 16px 22px; display: flex; flex-direction: column; gap: 14px; }
+.st-panel h3 { margin: 0; font: 600 18px var(--font-serif); }
+.st-panel .sub-card { background: var(--sunk); }
+.st-panel > .hint, .st-panel .sub-card > .hint { margin: 0; }
 .st-row { display: flex; align-items: center; gap: 10px; }
 .st-row > span { font-size: 13px; font-weight: 600; color: var(--muted); min-width: 64px; }
-.st-row input[type=range] { flex: 1; }
+.st-row input[type=range] { flex: 1; min-width: 0; }
 .st-row .num { min-width: 40px; text-align: right; font-size: 13px; font-weight: 600; }
 .st-looks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .st-looks button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 6px; border-radius: 12px; background: var(--sunk); font-size: 12px; font-weight: 600; }
@@ -38,48 +59,82 @@
 .st-formats button { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 5px; height: 66px; padding: 6px 2px; border-radius: 12px; background: var(--sunk); font-size: 11px; font-weight: 600; }
 .st-formats button i { display: block; border: 2px solid currentColor; border-radius: 3px; opacity: .7; }
 .st-formats button.on { box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent-text); background: var(--accent-soft); }
-.st-sync-state { font-size: 13px; color: var(--muted); }
+.st-sync-state { font-size: 13px; color: var(--muted); margin: 0; }
 .st-sync-state.good { color: var(--good); }
 .st-sync-state.warn { color: var(--warn); }
+.st-sec { display: flex; flex-direction: column; gap: 10px; }
+.st-sec + .st-sec { padding-top: 14px; border-top: 1px solid var(--line); }
+.st-sec > .ctl-head { margin: 0; }
+.st-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.st-pair .btn { justify-content: center; }
+/* a bar's start, to the hundredth */
+.st-barcard { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 14px; background: var(--sunk); }
+.st-barcard b { font: 600 15px var(--font-serif); white-space: nowrap; }
+.st-barcard .num { font: 700 18px var(--font-num); text-align: center; }
+.st-nudge { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; grid-column: 1 / -1; }
+.st-nudge button { padding: 9px 0; border-radius: 10px; background: var(--surface-solid); font: 700 13px var(--font-num); touch-action: manipulation; }
+.st-nudge button:active { background: var(--accent-soft); }
+.st-barnav { display: flex; gap: 6px; }
+.st-barnav .icon-btn { width: 34px; height: 34px; }
+.st-step { display: inline-flex; align-items: center; gap: 4px; background: var(--sunk); border-radius: 999px; padding: 3px; }
+.st-step button { width: 32px; height: 32px; border-radius: 50%; background: var(--surface-solid); font: 700 17px var(--font-num); }
+.st-step .num { min-width: 44px; text-align: center; font: 700 15px var(--font-num); }
+.st-tapfrom { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.st-tapfrom > span { font-size: 14px; font-weight: 600; }
+
+/* the clock and Play, under the picture */
+.st-transport { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; height: 54px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--surface-solid); }
+.st-clock { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
+.st-clock b { font: 700 17px var(--font-num); }
+.st-clock span { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-playbtn { width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.st-playbtn svg { width: 22px; height: 22px; }
+.st-playbtn:active { transform: scale(.94); }
+.st-tzoom { justify-self: end; display: flex; gap: 4px; }
+.st-tzoom .icon-btn { width: 38px; height: 38px; }
+.st-tzoom .icon-btn.on { color: var(--accent-ink); background: var(--accent); }
 
 /* timeline */
-.st-timeline { flex: none; height: calc(176px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: var(--surface-solid); padding: 6px 12px calc(env(safe-area-inset-bottom, 0px) + 8px) 12px; display: flex; flex-direction: column; gap: 4px; user-select: none; -webkit-user-select: none; }
-.st-ruler { height: 18px; position: relative; margin-left: 40px; font: 600 10px var(--font-num); color: var(--muted); }
-.st-ruler span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
-.st-ruler span::after { content: ""; position: absolute; left: 50%; top: 13px; width: 1px; height: 4px; background: var(--line); }
-.st-tracks { position: relative; flex: 1; display: flex; flex-direction: column; gap: 6px; touch-action: none; }
-.st-track { position: relative; display: flex; align-items: stretch; gap: 8px; min-height: 0; overflow: visible; }
-.st-media { flex: 1.2 1 0; }
-.st-scoretrack, .st-imgtrack { flex: 1 1 0; }
+.st-timeline { flex: none; position: relative; border-top: 1px solid var(--line); background: var(--surface-solid); padding: 4px 12px calc(env(safe-area-inset-bottom, 0px) + 8px) 12px; display: flex; flex-direction: column; gap: 4px; user-select: none; -webkit-user-select: none; touch-action: none; overflow: hidden; }
+.st-ruler { height: 18px; position: relative; margin-left: 40px; overflow: hidden; font: 600 10px var(--font-num); color: var(--muted); }
+.st-roll { position: absolute; left: 0; top: 0; bottom: 0; will-change: transform; }
+#stRulerC { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.st-tracks { position: relative; display: flex; flex-direction: column; gap: 6px; touch-action: none; }
+.st-track { position: relative; display: flex; align-items: stretch; gap: 8px; }
+.st-media { height: 50px; }
+.st-scoretrack { height: 36px; }
+.st-imgtrack { height: 28px; }
 .st-tlabel { width: 32px; flex: none; display: grid; place-items: center; color: var(--muted); }
 .st-tlabel svg { width: 18px; height: 18px; }
-#stWave { position: absolute; left: 40px; right: 0; top: 0; bottom: 0; width: calc(100% - 40px); height: 100%; border-radius: 9px; background: var(--sunk); display: block; }
 .st-lane { position: relative; flex: 1; min-width: 0; border-radius: 9px; background: var(--sunk); overflow: hidden; }
+#stWave { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .st-bar { position: absolute; top: 3px; bottom: 3px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 22%, var(--surface-solid)); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); font: 600 10px var(--font-num); color: var(--accent-text); display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; }
 .st-bar.cur { background: var(--accent); color: var(--accent-ink); }
-.st-bar.sel { box-shadow: 0 0 0 2px var(--accent-text); }
-.st-bar .edge { position: absolute; left: -4px; top: 0; bottom: 0; width: 10px; cursor: ew-resize; }
-.st-img { position: absolute; top: 3px; bottom: 3px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 25%, var(--surface-solid)); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); font: 600 11px var(--font); color: var(--ink); display: flex; align-items: center; gap: 6px; padding: 0 6px; overflow: hidden; }
-.st-img img { height: 100%; border-radius: 4px; }
+.st-bar.sel { box-shadow: inset 0 0 0 2px var(--accent-text); }
+.st-bar.cur.sel { box-shadow: inset 0 0 0 2px var(--accent-ink); }
+.st-bar .edge { position: absolute; left: -6px; top: 0; bottom: 0; width: 14px; cursor: ew-resize; }
+.st-bar.end { border: 0; background: transparent; width: 0; overflow: visible; }
+.st-lanehint { position: absolute; left: 6px; right: 6px; top: 3px; bottom: 3px; border-radius: 6px; border: 1px dashed var(--line); color: var(--muted); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.st-img { position: absolute; top: 3px; bottom: 3px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 25%, var(--surface-solid)); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); font: 600 11px var(--font); color: var(--ink); display: flex; align-items: center; gap: 6px; padding: 0 8px; overflow: hidden; }
 .st-img.sel { box-shadow: 0 0 0 2px var(--warn); }
-.st-img .edge { position: absolute; top: 0; bottom: 0; width: 12px; cursor: ew-resize; }
+.st-img .edge { position: absolute; top: 0; bottom: 0; width: 14px; cursor: ew-resize; }
 .st-img .edge.l { left: 0; } .st-img .edge.r { right: 0; }
-.st-head { position: absolute; top: -22px; bottom: 0; width: 2px; margin-left: -1px; background: var(--rec); pointer-events: none; border-radius: 1px; }
+/* the red line: always in the middle */
+.st-head { position: absolute; top: -22px; bottom: 0; left: calc(40px + (100% - 40px) / 2); width: 2px; margin-left: -1px; background: var(--rec); pointer-events: none; border-radius: 1px; z-index: 5; }
 .st-head::before { content: ""; position: absolute; top: 0; left: -5px; width: 12px; height: 12px; border-radius: 6px; background: var(--rec); }
 /* the trimmer, as in Photos: a yellow frame with a handle at each end around the part kept; hold a
    handle and the strip opens out under it, for cutting to the moment */
-.st-trim { position: absolute; top: -2px; bottom: -2px; width: 16px; background: var(--accent); cursor: ew-resize; z-index: 3; display: flex; align-items: center; justify-content: center; touch-action: none; }
-.st-trim.l { border-radius: 8px 0 0 8px; margin-left: -8px; }
-.st-trim.r { border-radius: 0 8px 8px 0; margin-left: -8px; }
-.st-trim i { width: 7px; height: 7px; border: solid var(--accent-ink); border-width: 0 2.5px 2.5px 0; transform: rotate(135deg); margin-left: 3px; }
+.st-trim { position: absolute; top: 0; bottom: 0; width: 18px; background: var(--accent); cursor: ew-resize; z-index: 3; display: flex; align-items: center; justify-content: center; touch-action: none; }
+.st-trim.l { border-radius: 8px 0 0 8px; margin-left: -18px; }
+.st-trim.r { border-radius: 0 8px 8px 0; }
+.st-trim i { width: 7px; height: 7px; border: solid var(--accent-ink); border-width: 0 2.5px 2.5px 0; transform: rotate(135deg); margin-left: 3px; pointer-events: none; }
 .st-trim.r i { transform: rotate(-45deg); margin-left: -3px; }
-.st-trim::before { content: ""; position: absolute; left: -14px; right: -14px; top: -10px; bottom: -10px; }   /* (a bigger place to take it) */
-.st-trim.zoom { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.st-trimbox { position: absolute; top: -2px; bottom: -2px; border-top: 3px solid var(--accent); border-bottom: 3px solid var(--accent); pointer-events: none; z-index: 2; }
-.st-trimtip { position: absolute; top: -30px; transform: translateX(-50%); padding: 3px 8px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font: 700 12px var(--font-num); white-space: nowrap; pointer-events: none; z-index: 4; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.st-trim.zoom { box-shadow: 0 0 0 3px var(--accent-soft); }
+.st-trimbox { position: absolute; top: 0; bottom: 0; border-top: 3px solid var(--accent); border-bottom: 3px solid var(--accent); pointer-events: none; z-index: 2; }
+.st-trimtip { position: absolute; top: -30px; transform: translateX(-50%); padding: 3px 8px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font: 700 12px var(--font-num); white-space: nowrap; pointer-events: none; z-index: 6; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .st-trimtip small { font-weight: 600; opacity: .7; margin-left: 4px; }
-.st-media.zoomed #stWave { box-shadow: inset 0 0 0 2px var(--accent); }
-.st-busy { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(10, 14, 30, .35); }
+.st-media.zoomed .st-medialane, .st-timeline.loupe .st-lane { box-shadow: inset 0 0 0 2px var(--accent); }
+.st-busy { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; background: rgba(10, 14, 30, .35); }
 .st-busy-card { width: min(380px, calc(100% - 40px)); padding: 18px 20px; border-radius: 18px; background: var(--surface-solid); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
 .st-busy-card b { font: 600 17px var(--font-serif); }
 .st-open { flex-direction: column; gap: 2px; min-height: 58px; }
@@ -88,40 +143,62 @@
 .st-open svg { grid-row: 1 / 3; align-self: center; }
 .st-open small { font-size: 12px; font-weight: 500; opacity: .85; white-space: normal; }
 
-@media (max-width: 820px) {
-  .st-main { flex-direction: column; }
-  .st-side { width: auto; max-height: 38vh; border-left: 0; border-top: 1px solid var(--line); }
-}
-.st-empty .btn span { color: inherit; font-size: 14px; display: inline; }
-.st-empty .btn svg { width: 16px; height: 16px; color: inherit; }
 
-/* iPhone: the whole Studio scrolls up and down; the video gets a big part of the screen and
-   the timeline and the settings come under it */
+/* iPhone held upright: picture, then (when a tool is open) its settings, the clock and Play, the
+   timeline, and the five tools at the foot. Nothing scrolls but the settings themselves. */
 @media (max-width: 600px) and (orientation: portrait) {
-  .studio { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-  .studio .topbar { position: sticky; top: 0; z-index: 4; flex: none; background: var(--surface-solid); }
-  .st-main { display: contents; }
-  .st-stage { order: 1; flex: none; height: max(340px, 52vh); padding: 10px; touch-action: pan-y; }
-  .st-tracks, .st-timeline { touch-action: pan-y; }
-  .st-timeline { order: 2; height: auto; min-height: 150px; padding-bottom: 8px; }
-  .st-tracks { flex: none; height: 124px; }
-  .st-side { order: 3; flex: none; max-height: none; overflow: visible; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); }
+  .st-main, .st-side { display: contents; }
+  .st-stage { order: 1; flex: 1 1 0; padding: 10px; }
+  .st-panel { order: 2; flex: none; max-height: 38vh; max-height: 38dvh; border-top: 1px solid var(--line); background: var(--surface-solid); padding: 12px 16px 16px; }
+  .studio:not(.sheet-open) .st-panel { display: none; }
+  .st-transport { order: 3; }
+  .st-timeline { order: 4; padding-bottom: 6px; }
+  .st-tabs { order: 5; border-bottom: 0; border-top: 1px solid var(--line); background: var(--surface-solid); padding: 4px 6px calc(env(safe-area-inset-bottom, 0px) + 4px); }
+  .st-tabs button { padding: 6px 2px 5px; font-size: 11px; }
+  .studio.sheet-open .st-stage { flex-basis: 0; min-height: 150px; }
+  .st-tappad { grid-template-columns: 1fr; }
+  .st-tapstop { justify-self: center; }
+  .st-media { height: 46px; }
+  .st-scoretrack { height: 34px; }
+  .st-imgtrack { height: 24px; }
 }
+/* iPhone held sideways: picture and tools side by side, the timeline under them */
 @media (max-height: 500px) and (orientation: landscape) {
-  .studio { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-  .studio .topbar { position: sticky; top: 0; z-index: 4; flex: none; background: var(--surface-solid); }
-  .st-main { flex: none; flex-direction: row; height: calc(100vh - 62px); height: calc(100dvh - 62px); }
-  .st-side { width: 290px; max-height: none; border-top: 0; border-left: 1px solid var(--line); }
-  .st-stage { padding: 8px; touch-action: pan-y; }
-  .st-timeline { height: auto; }
-  .st-tracks, .st-timeline { touch-action: pan-y; }
-  .st-tracks { flex: none; height: 124px; }
+  .st-side { width: 300px; }
+  .st-stage { padding: 8px; }
+  .st-tabs { padding: 4px 6px; }
+  .st-tabs button { flex-direction: row; justify-content: center; gap: 4px; padding: 6px 2px; }
+  .st-tabs button span { display: none; }
+  .st-transport { height: 44px; }
+  .st-playbtn { width: 38px; height: 38px; }
+  .st-media { height: 36px; }
+  .st-scoretrack { height: 28px; }
+  .st-imgtrack { height: 20px; }
+  .st-ruler { height: 14px; }
+  .st-timeline { padding-top: 2px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px); }
+  .st-tap { min-height: 0; }
+  .st-tap b { font-size: 22px; }
 }
 @media (max-width: 600px), (max-height: 500px) {
   .st-empty { bottom: 10px; padding: 6px 6px 6px 12px; gap: 8px; }
   .st-empty > svg, .st-empty > span { display: none; }
   .st-empty b { font-size: 13px; }
 }
+
+/* editing the long line: wipe away what should not be in the video, bring back what was wiped */
+.st-eraser { position: absolute; inset: 0; z-index: 40; background: var(--bg); display: flex; flex-direction: column; }
+.st-eraser[hidden] { display: none; }
+.st-er-top { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; padding-top: calc(env(safe-area-inset-top, 0px) + 10px); border-bottom: 1px solid var(--line); background: var(--surface-solid); }
+.st-er-top b { flex: 1; font: 600 17px var(--font-serif); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-er-view { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--stage); touch-action: none; }
+.st-er-view canvas { position: absolute; left: 0; top: 0; }
+.st-er-ring { position: absolute; border: 2px solid var(--accent); border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1px rgba(255,255,255,.8); transform: translate(-50%, -50%); }
+.st-er-map { flex: none; height: 46px; margin: 8px 12px 0; position: relative; border-radius: 8px; overflow: hidden; background: #fff; box-shadow: inset 0 0 0 1px var(--line); touch-action: none; }
+.st-er-map canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.st-er-win { position: absolute; top: 0; bottom: 0; border: 2px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
+.st-er-tools { flex: none; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px); }
+.st-er-tools .seg { min-width: 200px; }
+.st-er-hint { flex: none; text-align: center; font-size: 12.5px; color: var(--muted); padding: 6px 16px 0; margin: 0; }
 
 /* sharing the finished video, straight to an app */
 .st-share .st-busy-card { width: min(460px, calc(100% - 32px)); }
