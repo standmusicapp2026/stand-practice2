@@ -78,6 +78,9 @@ async function bgRun() {
   await step('background: put away at least twice while playing', async () => seenAway >= 2 ? `${seenAway} of 3` : false);
   // (pause and play from the lock screen, as iOS does them: the sound system paused, later started, from outside)
   await step('lock screen pause: the metronome stops and stays stopped', async () => { const m = window.__standMetro, c = m._ctx; if (!window.__standOutside) return false;
+    // (as on a real lock screen: the pause comes while the sound plays steadily, not in the moment it
+    // is still coming back from the background — then iOS itself had not finished starting it)
+    let since = 0; await waitFor(() => { if (c.state !== 'running') { since = 0; return false; } if (!since) since = Date.now(); return Date.now() - since > 1200; }, 8000);
     const T0 = Date.now() - 4000, seen = [];
     const look = setInterval(() => { const k = c.state[0] + (m.running ? 'M' : '-'); if (seen[seen.length - 1] !== k) seen.push(k); }, 100);
     let pr = 'none'; try { await window.__standOutside.pause(c); pr = 'done ' + c.state; } catch (e) { pr = 'refused ' + e; }
