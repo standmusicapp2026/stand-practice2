@@ -64,7 +64,7 @@ const NOTE_CAP = 0.55;     // seconds a single note can count for
 const V3 = () => (globalThis.__kfV ?? 3) === 3;
 const V2 = () => (globalThis.__kfV ?? 3) >= 2;
 // (the settings found best on real music — Bach suites, scales — and confirmed on pieces not used to find them)
-const KF_DEFAULTS = {"__kfH": 8, "__kfOwn": 0.8, "__kfM": 0.8, "__kfHalf": 5, "__kfHalfW": 5, "__kfNear": 1.4, "__kfFit": 0.7, "__kfEps": 0.3, "__kfRestW": 0.8, "__kfChroma": 0, "__kfH3": 0.2, "__kfFreshH": 0.4, "__kfNew": 1.2, "__kfGone": 0.4, "__kfGoneN": 12, "__kfSettle": 2500, "__kfMinNotes": 3, "__kfStartW": 1.2, "__kfMix": 0.2, "__kfTriad": 1, "__kfQuiet": 0.3, "__kfLowRun": 6, "__kfGap": 800, "__kfD": 3, "__kfRiv": 3, "__kfFreshMs": 14000, "__kfLvQ": 0.35};
+const KF_DEFAULTS = {"__kfH": 8.816, "__kfOwn": 0.8, "__kfM": 0.8, "__kfHalf": 5, "__kfHalfW": 5, "__kfNear": 1.68, "__kfFit": 0.482, "__kfEps": 0.41, "__kfRestW": 0.8, "__kfChroma": 0, "__kfH3": 0.247, "__kfFreshH": 0.17, "__kfNew": 1.398, "__kfGone": 0.4, "__kfGoneN": 12, "__kfSettle": 1258, "__kfMinNotes": 5, "__kfStartW": 1.2, "__kfMix": 0.2, "__kfTriad": 1, "__kfQuiet": 0.3, "__kfLowRun": 6, "__kfGap": 800, "__kfD": 2.709, "__kfRiv": 1.513, "__kfFreshMs": 19000, "__kfLvQ": 0.35, "__kfCL": 2.571};
 const G = (k, d) => globalThis[k] ?? KF_DEFAULTS[k] ?? d;
 // A note heard is now and then the wrong note (an attack, an overtone: about one in ten, and more
 // in a room or a scratchy attack): each note
