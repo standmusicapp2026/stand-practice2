@@ -143,6 +143,8 @@ html:not([lang="en"]) .btn svg { flex: none; }
   font-size: 13px; font-weight: 600; color: var(--ink); text-align: center;
 }
 .tile svg { width: 26px; height: 26px; color: var(--accent-text); }
+.tile { min-width: 0; }
+.tile > span { max-width: 100%; overflow-wrap: anywhere; hyphens: auto; -webkit-hyphens: auto; }
 .tile.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .tile .rec-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--rec); margin: 2px; box-shadow: 0 0 0 2px var(--surface-solid), 0 0 0 3.5px var(--rec); }   /* (the ring, as on the score's Record) */
 .tile .rec-dot { flex: none; }
