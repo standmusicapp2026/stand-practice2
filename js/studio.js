@@ -33,9 +33,35 @@ export function initStudio(deps) {
 // =====================================================================
 // Opening and saving
 // =====================================================================
+// Studio is shown at once, with "Opening…" over it, and the recording's page is left only when it is
+// there: before, the page went first and Studio came seconds later (the scores are drawn afresh when
+// it opens), so the main screen showed in between — and if anything failed, it stayed there. Now a
+// score that cannot be drawn is tried again, and if Studio cannot open, you are back on the recording.
+// Returns true when Studio opened.
 export async function openStudio(takeId) {
+  if (ST.opening) return false;
+  const me = ST.opening = {};
+  $('#studio').hidden = false; document.body.classList.add('in-studio', 'st-opening');
+  busy('Opening Studio…', '', 0.05);
+  ST.busyCancel = () => { me.cancelled = true; if (ST.opening === me) ST.opening = null; };
+  await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  let ok = false;
+  try { ok = await openStudioNow(takeId, me); }
+  catch (e) { console.error('studio open', e); ok = false; }
+  if (ST.opening === me) ST.opening = null;
+  document.body.classList.remove('st-opening');
+  if (!ok) {
+    busy(null);
+    $('#studio').hidden = true; document.body.classList.remove('in-studio');
+    if (!me.cancelled) D.toast('Studio could not open this recording. Try again in a moment.', 4500);
+    return false;
+  }
+  busy(null);
+  return true;
+}
+async function openStudioNow(takeId, me) {
   const take = await db.get('takes', takeId);
-  if (!take) { D.toast('That recording could not be opened.'); return; }
+  if (!take) { D.toast('That recording could not be opened.'); return false; }
   ST.take = take;
   const saved = await db.get('files', 'studio:' + takeId);
   ST.P = saved ? saved.data : { takeId, format: take.kind === 'video' ? '9:16' : '1:1', fit: 'fill', pan: { x: 0.5, y: 0.5 }, bg: '#14171f', overlays: [], trim: null, sound: { room: D.room ? D.room() : 'studio', wet: D.wet ? D.wet() : 0.18, level: true } };
@@ -46,12 +72,12 @@ export async function openStudio(takeId) {
   ST.pcm = af ? af.data : null; ST.sr = take.sr || 48000;
   if (take.kind === 'video') {
     const vf = await db.get('files', 'video:' + takeId);
-    if (!vf) { D.toast('That video could not be opened.'); return; }
+    if (!vf) { D.toast('That video could not be opened.'); return false; }
     ST.url = URL.createObjectURL(vf.data);
     const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; v.src = ST.url; v.muted = false;
     ST.media = v;
   } else {
-    if (!ST.pcm) { D.toast('That recording could not be opened.'); return; }
+    if (!ST.pcm) { D.toast('That recording could not be opened.'); return false; }
     ST.url = URL.createObjectURL(encodeWav([ST.pcm], ST.sr));
     const a = document.createElement('audio'); a.preload = 'auto'; a.src = ST.url;
     ST.media = a;
@@ -60,7 +86,21 @@ export async function openStudio(takeId) {
   ST.dur = isFinite(ST.media.duration) && ST.media.duration > 0 ? ST.media.duration : (take.dur || 1);
   if (!ST.P.trim) ST.P.trim = { a: 0, b: ST.dur };
   ST.P.trim.b = Math.min(ST.P.trim.b, ST.dur);
-  for (const o of ST.P.overlays) await prepareOverlay(o);
+  // (each score drawn in turn, the screen let breathe between; one that fails is tried once more —
+  // a picture too big for the memory left at that moment is often fine a moment later)
+  const nO = ST.P.overlays.length;
+  for (let k = 0; k < nO; k++) {
+    const o = ST.P.overlays[k];
+    busy('Opening Studio…', o.kind === 'score' ? 'Laying out the bars.' : '', 0.15 + 0.8 * k / Math.max(1, nO));
+    await new Promise((r) => setTimeout(r, 0));
+    try { await prepareOverlay(o); }
+    catch (e) {
+      console.warn('overlay', e);
+      await new Promise((r) => setTimeout(r, 250));
+      try { await prepareOverlay(o); } catch (e2) { console.warn('overlay again', e2); }
+    }
+  }
+  if (ST.opening !== me) return false;
   $('#studio').hidden = false; document.body.classList.add('in-studio');
   $('#stTitle').textContent = take.name || 'Studio';
   ST.sel = ST.P.overlays.find((o) => o.kind === 'score') ? { id: ST.P.overlays.find((o) => o.kind === 'score').id } : null;
@@ -79,6 +119,7 @@ export async function openStudio(takeId) {
   ST.media.addEventListener('playing', () => lsStart());
   ST.media.addEventListener('pause', () => lsStop());
   ST.media.addEventListener('seeked', () => { if (!ST.media.paused) lsStart(); });
+  return true;
 }
 // ---------- the sound while you watch, with the Sound settings ----------
 // The recording's own sound is played by the sound system (with the room and the level chosen),
@@ -144,6 +185,7 @@ function close() {
   if (ST.url) URL.revokeObjectURL(ST.url); ST.url = null;
   for (const s of ST.strips.values()) { s.canvas.width = 0; if (s.mask) s.mask.width = 0; }
   ST.strips.clear();
+  window.dispatchEvent(new Event('studio-closed'));
 }
 
 // =====================================================================
@@ -1993,7 +2035,8 @@ function selectBar(k, { open = true } = {}) {
   const o = scoreOv(); if (!o || !o.times) return;
   ST.selBar = clamp(k, 0, o.layout.bars.length - 1); ST.sel = { id: o.id };
   glideTo(Math.max(0, o.times[ST.selBar] + 0.005));
-  if (open) openTab('timing'); else renderSide();
+  ST.sub = ST.sub || {}; ST.sub.timing = 'bar';
+  if (open) { openTab.keep = true; openTab('timing'); openTab.keep = false; } else renderSide();
   renderTimeline();
 }
 function wireTimeline() {
@@ -2129,7 +2172,7 @@ function wireTimeline() {
   $('#stZoomOut').addEventListener('click', () => { laneBox(); zoomGlide(zFit()); });
   // (the timeline and the picture take what room there is: drawn again when it changes)
   try {
-    const ro = new ResizeObserver(() => { if ($('#studio').hidden || !ST.media) return; onceAFrame('resize', () => { sizeCanvas(); renderTimeline(); frame(); }); });
+    const ro = new ResizeObserver(() => { if ($('#studio').hidden || !ST.media || ST.opening) return; onceAFrame('resize', () => { sizeCanvas(); renderTimeline(); frame(); }); });
     ro.observe($('#stStage')); ro.observe($('#stScoreLane'));
   } catch {}
 }
@@ -2181,15 +2224,35 @@ function openTab(t) {
   if (sheetMode() && ST.tab === t && !openTab.keep) ST.tab = null; else ST.tab = t;
   renderSide();
 }
+// (on the iPhone held upright, a tool opens as a sheet with its name and Done at the top. The looks
+// — the score's, the video's — take the place of the timeline, with the picture kept big; the tools
+// that work with the timeline keep it, and show one part at a time, chosen at the top)
+const TAB_NAMES = { score: 'Score', timing: 'Timing', image: 'Images', frame: 'Frame', look: 'Look and sound' };
+const TALL = new Set(['score', 'look']);
+function subPick(side, tab, items, def) {
+  ST.sub = ST.sub || {};
+  if (!sheetMode()) return null;
+  if (!items.some(([k]) => k === ST.sub[tab])) ST.sub[tab] = def;
+  const s = seg(items, ST.sub[tab], (v) => { ST.sub[tab] = v; renderSide(); });
+  s.classList.add('st-subpick'); side.append(s);
+  return ST.sub[tab];
+}
 function renderSide() {
   $('#stCanvas').style.touchAction = 'none';
   if (!ST.tab && !sheetMode()) ST.tab = 'score';
   const tab = ST.tab;
   $('#studio').classList.toggle('sheet-open', !!tab);
+  $('#studio').classList.toggle('sheet-tall', !!tab && sheetMode() && TALL.has(tab));
   for (const b of $('#stTabs').querySelectorAll('button')) { const on = b.dataset.tab === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); }
   const side = $('#stSide'); side.textContent = '';
   $('#stEmpty').hidden = !!scoreOv();
   if (!tab) return;
+  if (sheetMode()) {
+    const hd = el('div', 'st-sheethead'); hd.append(el('b', '', TAB_NAMES[tab] || ''));
+    const dn = el('button', 'btn small primary', 'Done'); dn.id = 'stSheetDone';
+    dn.addEventListener('click', () => { ST.tab = null; renderSide(); frame(); });
+    hd.append(dn); side.append(hd);
+  }
   ({ score: renderScoreTab, timing: renderTimingTab, image: renderImageTab, frame: renderFormat, look: renderLookTab })[tab](side);
 }
 const change = (fn, re = false) => { fn(); saveSoon(); frame(); if (re) renderSide(); };
@@ -2257,6 +2320,8 @@ function renderTimingTab(side) {
   if (!o) { noScoreYet(side, 'Add the score first: then Stand follows your playing, or you tap along, and every bar can be set to the hundredth.'); return; }
   const n = o.layout.bars.length;
   side.append(el('h3', '', 'Timing'));
+  const part = subPick(side, 'timing', [['follow', 'Follow'], ['tap', 'Tap along'], ['bar', 'Bar times']], o.synced === 'even' ? 'follow' : 'bar');
+  const show = (k) => !part || part === k;
   side.append(el('p', 'st-sync-state ' + (o.synced === 'auto' && o.syncInfo && o.syncInfo.good > 0.55 ? 'good' : o.synced === 'even' ? 'warn' : ''),
     o.synced === 'auto' ? `Follows your playing${o.syncInfo ? ` (${Math.round(o.syncInfo.good * 100)}% of notes matched)` : ''}.` : o.synced === 'tap' ? 'Set by your taps.' : o.synced === 'hand' ? 'Adjusted by hand.' : 'Spread evenly for now. Line it up with your playing:'));
   // following the playing (from the start, or from the bar at the red line: the bars before stay)
@@ -2269,7 +2334,8 @@ function renderTimingTab(side) {
   if (here > 0 && here < n) { const fromB = el('button', 'btn small'); fromB.append(el('span', '', `From bar ${here + 1}`)); fromB.disabled = !ST.pcm; fromB.addEventListener('click', () => autoSync(o, { from: here })); row.append(fromB); }
   fol.append(row);
   if (!ST.pcm) fol.append(el('p', 'hint', 'This recording has no sound to listen to: tap along instead.'));
-  side.append(fol);
+  else if (part) fol.append(el('p', 'hint', 'Stand listens to the recording and puts each bar where you play it. Move the red line to a bar first to follow from there.'));
+  if (show('follow')) side.append(fol);
   // tapping along, from the bar chosen (at first, the first bar with notes: the rests before are counted for you)
   const tp = sec('Tap along');
   const fp = firstPlayed(o);
@@ -2283,8 +2349,8 @@ function renderTimingTab(side) {
   const tapB = el('button', 'btn small primary'); tapB.append(el('span', '', `Tap along from bar ${ST.tapFrom + 1}`));
   tapB.addEventListener('click', () => startTap(o, ST.tapFrom));
   tp.append(tapB);
+  if (show('tap')) side.append(tp);
   tp.append(el('p', 'hint', fp > 0 && ST.tapFrom === fp ? `Bars 1–${fp} hold only rests, so the first tap is for bar ${fp + 1}. The video starts a little before it: tap on the first beat of each bar, the big button shows which.` : 'The video starts a little before that bar. Tap on the first beat of each bar, even when the bar begins with a rest: the big button shows which bar comes next.'));
-  side.append(tp);
   // one bar, to the hundredth
   const k = ST.selBar != null && ST.selBar < n ? ST.selBar : clamp(here, 0, n - 1);
   const bs = sec('A bar’s start');
@@ -2315,7 +2381,7 @@ function renderTimingTab(side) {
   atLine.addEventListener('click', () => { const T = o.times; const v = clamp(nowT(), k > 0 ? T[k - 1] + 0.08 : -1, k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur); nudgeBar(o, k, v - T[k], { stay: true }); });
   bs.append(atLine);
   bs.append(el('p', 'hint', 'Tap a bar on the timeline to choose it, or drag its start there. Hold still a moment on it to look closer.'));
-  side.append(bs);
+  if (show('bar')) side.append(bs);
 }
 const fmt2 = (s) => { const neg = s < 0; s = Math.abs(s); const m = Math.floor(s / 60), r = s - m * 60; return (neg ? '−' : '') + m + ':' + r.toFixed(2).padStart(5, '0'); };
 function barCardTime() { const e = $('#stBarTime'); const o = scoreOv(); if (e && o && o.times && ST.selBar != null) e.textContent = fmt2(o.times[ST.selBar]); }
@@ -2424,6 +2490,7 @@ async function grabFrames(n) {
 }
 function renderFormat(side) {
   side.append(el('h3', '', 'Frame'));
+  const part = subPick(side, 'frame', [['shape', 'Shape'], ['trim', 'Trim']], 'shape');
   const f = el('div', 'st-formats');
   for (const [k, [w, h, label]] of Object.entries(FORMATS)) {
     const b = el('button', ST.P.format === k ? 'on' : ''); const i = el('i');
@@ -2434,6 +2501,7 @@ function renderFormat(side) {
     b.addEventListener('click', () => { ST.P.format = k; saveSoon(); sizeCanvas(); renderSide(); frame(); });
     f.append(b);
   }
+  const shapeAt = side.childNodes.length;
   side.append(f);
   side.append(el('p', 'hint', ST.P.format === '9:16' ? 'Vertical, for Reels and Stories.' : ST.P.format === '4:5' ? 'For Instagram posts.' : ST.P.format === '1:1' ? 'Square.' : ST.P.format === '16:9' ? 'Wide, for YouTube.' : 'As it was filmed.'));
   if (ST.take.kind === 'video') {
@@ -2448,6 +2516,8 @@ function renderFormat(side) {
   bb.addEventListener('click', () => { ST.P.trim.b = clamp(nowT(), ST.P.trim.a + 0.5, ST.dur); saveSoon(); renderTimeline(); renderSide(); });
   row.append(a, bb); tr.append(row);
   if (ST.P.trim.a > 0.01 || ST.P.trim.b < ST.dur - 0.01) { const all = el('button', 'btn small ghost', 'Keep it all'); all.addEventListener('click', () => { ST.P.trim = { a: 0, b: ST.dur }; saveSoon(); renderTimeline(); renderSide(); }); tr.append(all); }
+  if (part === 'shape') return;
+  if (part === 'trim') { while (side.childNodes.length > shapeAt) side.lastChild.remove(); tr.querySelector('.ctl-head')?.remove(); }
   side.append(tr);
 }
 

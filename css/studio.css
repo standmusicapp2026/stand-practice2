@@ -134,6 +134,8 @@
 .st-trimtip { position: absolute; top: -30px; transform: translateX(-50%); padding: 3px 8px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font: 700 12px var(--font-num); white-space: nowrap; pointer-events: none; z-index: 6; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .st-trimtip small { font-weight: 600; opacity: .7; margin-left: 4px; }
 .st-media.zoomed .st-medialane, .st-timeline.loupe .st-lane { box-shadow: inset 0 0 0 2px var(--accent); }
+body.st-opening .studio > :not(.st-busy) { visibility: hidden; }
+body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
 .st-busy { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; background: rgba(10, 14, 30, .35); }
 .st-busy-card { width: min(380px, calc(100% - 40px)); padding: 18px 20px; border-radius: 18px; background: var(--surface-solid); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
 .st-busy-card b { font: 600 17px var(--font-serif); }
@@ -156,6 +158,19 @@
   .st-tabs { order: 5; border-bottom: 0; border-top: 1px solid var(--line); background: var(--surface-solid); padding: 4px 6px calc(env(safe-area-inset-bottom, 0px) + 4px); }
   .st-tabs button { padding: 6px 2px 5px; font-size: 11px; }
   .studio.sheet-open .st-stage { flex-basis: 0; min-height: 150px; }
+  /* a tool open: its name and Done at the top; the five tools come back with Done */
+  .studio.sheet-open .st-tabs { display: none; }
+  .studio.sheet-open .st-panel { padding-top: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); max-height: 42vh; max-height: 42dvh; }
+  .st-sheethead { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin: 0 -16px; padding: 10px 16px 8px; background: var(--surface-solid); border-bottom: 1px solid var(--line); }
+  .st-sheethead b { flex: 1; min-width: 0; font: 600 17px var(--font-serif); }
+  .st-sheethead .btn { min-width: 76px; }
+  .st-sheethead + h3 { display: none; }
+  .st-subpick { position: sticky; top: 49px; z-index: 1; box-shadow: 0 0 0 4px var(--surface-solid); }
+  /* the looks: the timeline goes for the time, the picture stays big */
+  .studio.sheet-tall .st-transport, .studio.sheet-tall .st-timeline, .studio.sheet-tall .st-head { display: none; }
+  .studio.sheet-tall .st-stage { flex: 0 0 auto; height: 40vh; height: 40dvh; min-height: 0; }
+  .studio.sheet-tall .st-panel { flex: 1 1 0; max-height: none; }
+  .st-panel .seg button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; padding-left: 4px; padding-right: 4px; }
   .st-tappad { grid-template-columns: 1fr; }
   .st-tapstop { justify-self: center; }
   .st-media { height: 46px; }

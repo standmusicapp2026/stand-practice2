@@ -134,7 +134,7 @@ function leaveScoreView() { if (S.defView) { Object.assign(S, S.defView); applyO
 // =====================================================================
 // Panels
 // =====================================================================
-let openPanel = null;
+let openPanel = null, studioOver = null;
 // A short tour the first time each tool opens. Kept on this iPad; Settings › Show the tour again resets nothing here.
 const SECTION_TOURS = {
   metronome: [
@@ -288,7 +288,8 @@ function hidePanel() {
 // closes with that screen when you go back home
 for (const id of ['#score', '#compose', '#studio']) {
   const scr = $(id); if (!scr) continue;
-  new MutationObserver(() => { if (scr.hidden && openPanel) hidePanel(); }).observe(scr, { attributes: true, attributeFilter: ['hidden'] });
+  // (Studio opened from Recordings: going back from it is going back to the recording, so that panel stays)
+  new MutationObserver(() => { if (scr.hidden && openPanel && !(id === '#studio' && openPanel === 'takes' && studioOver)) hidePanel(); studioOver = id === '#studio' && scr.hidden ? null : studioOver; }).observe(scr, { attributes: true, attributeFilter: ['hidden'] });
 }
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-panel]'); if (b) { showPanel(b.dataset.panel, b.dataset.tab); return; }
@@ -1992,13 +1993,20 @@ async function layout(fade) {
     });
     label = idx.length > 1 ? `${idx[0] + 1}–${idx[1] + 1}` : `${idx[0] + 1}`;
   }
+  const sl = V.slide && performance.now() - V.slide.t < 1500 && nbSlides(true) && fade !== false && !V.instant && !matchMedia('(prefers-reduced-motion: reduce)').matches ? V.slide : null;
+  V.slide = null;
+  nbSlideEnd();
+  const L = NBS.launch; NBS.launch = null;
+  const ghost = sl && L && L.el === Z.el ? nbGhost(L) : null;
+  if (L && !ghost) { try { L.anim.cancel(); } catch {} }
   freePages();
   for (const op of V.pages) if (op.tile && !entries.includes(op)) dropArtTile(op);
   V.pages = entries;
-  stage.textContent = '';
+  for (const c of [...stage.childNodes]) if (c !== ghost) c.remove();
   stage.append(spread);
   Z.el = spread; Z.s = 1; Z.x = 0; Z.y = 0; Z.sharp = 1; applyZoom();
-  if (fade && !V.instant && !matchMedia('(prefers-reduced-motion: reduce)').matches) { spread.classList.add('fade'); requestAnimationFrame(() => requestAnimationFrame(() => spread.classList.remove('fade'))); }
+  if (ghost) nbSlideIn(ghost, spread, L);
+  else if (fade && !V.instant && !matchMedia('(prefers-reduced-motion: reduce)').matches) { spread.classList.add('fade'); requestAnimationFrame(() => requestAnimationFrame(() => spread.classList.remove('fade'))); }
   $('#pageLabel').textContent = label + ' / ' + V.doc.pages;
   syncPaperPlus();
   $('#pageRange').value = V.page + 1;
@@ -2465,6 +2473,61 @@ async function warmAhead(token) {
     }
   }
 }
+// ---------- a notebook's pages slide, one after the other, like photos ----------
+// (only a notebook shown a page at a time, at its usual size, not turned sideways)
+function nbSlides(any) { return NBPAN() && !SCROLL() && V.spread <= 2 && !V.half && !DUO.on && (any || Math.abs(Z.s - 1) < 0.001); }
+const NBS = { ghost: null, anims: [], launch: null };
+const NB_EASE = 'cubic-bezier(.2, .8, .25, 1)';
+// let go (or a tap, a key, a pedal): the page leaves at once, on the screen's own animation, before the
+// next one is even drawn; the next one then comes in exactly beside it
+function nbLaunch(sl) {
+  const g = Z.el; if (!g || !g.isConnected || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (NBS.launch && NBS.launch.el === g) return;   // (already on its way: quick turns one after another)
+  const W = stage.clientWidth || 800, gap = 24, dx0 = Z.x + (sl.x || 0), y0 = Z.y, dist = W + gap + sl.dir * dx0;
+  const T = Math.round(clamp((300 * dist) / (W + gap) / Math.max(1, (sl.v || 0) * 1.4), 170, 300));
+  const anim = g.animate([{ transform: `translate(${dx0}px, ${y0}px)` }, { transform: `translate(${-sl.dir * (W + gap)}px, ${y0}px)` }], { duration: T, easing: NB_EASE, fill: 'forwards' });
+  NBS.launch = { el: g, anim, T, dx0, dir: sl.dir, W, gap };
+}
+// the page leaving, kept on the screen as it goes
+function nbGhost(L) {
+  const g = L.el; if (!g || !g.isConnected || g.parentNode !== stage) return null;
+  // (the page's markings stay with it as it goes: let go once it is off the screen)
+  for (const p of V.pages) p.ink = null;
+  for (const n of g.querySelectorAll('.snote, .sel-box, .tempo-mark')) n.remove();
+  const left = g.offsetLeft, top = g.offsetTop, w = g.offsetWidth;
+  g.style.position = 'absolute'; g.style.left = left + 'px'; g.style.top = top + 'px'; g.style.width = w + 'px'; g.style.margin = '0';
+  g.style.pointerEvents = 'none'; g.classList.add('nb-ghost');
+  NBS.ghost = g; return g;
+}
+function nbSlideIn(ghost, spread, L) {
+  const ct = +(L.anim.currentTime || 0);
+  let a2;
+  if (L.anim.playState !== 'finished' && ct < L.T * 0.85) {
+    a2 = spread.animate([{ transform: `translate(${L.dx0 + L.dir * (L.W + L.gap)}px, 0)` }, { transform: 'translate(0, 0)' }], { duration: L.T, easing: NB_EASE });
+    a2.currentTime = ct;
+  } else {
+    // (the next page took a while: it comes in from a little way off)
+    a2 = spread.animate([{ transform: `translate(${L.dir * L.W * 0.22}px, 0)`, opacity: 0.4 }, { transform: 'translate(0, 0)', opacity: 1 }], { duration: 170, easing: NB_EASE });
+  }
+  NBS.anims = [a2];
+  const done = () => { if (NBS.ghost === ghost) { NBS.ghost = null; ghost.remove(); for (const c of ghost.querySelectorAll('canvas.ink')) c.width = c.height = 0; } NBS.anims = NBS.anims.filter((q) => q !== a2); };
+  L.anim.finished.then(() => { if (a2.playState === 'finished') done(); }, () => {});
+  a2.finished.then(done, done);
+}
+function nbSlideEnd() {
+  for (const a of NBS.anims) { try { a.finish(); } catch {} }
+  NBS.anims = [];
+  if (NBS.ghost) { const g = NBS.ghost; NBS.ghost = null; g.remove(); for (const c of g.querySelectorAll('canvas.ink')) { c.width = c.height = 0; } }
+}
+// not far enough: the page goes back where it was
+function nbSlideBack(x) {
+  if (!Z.el) return;
+  const el2 = Z.el, base = `translate(${Z.x}px, ${Z.y}px)`;
+  if (Math.abs(x) < 0.5) { applyZoom(); return; }
+  const a = el2.animate([{ transform: `translate(${Z.x + x}px, ${Z.y}px)` }, { transform: base }], { duration: 220, easing: 'cubic-bezier(.2, .8, .25, 1)' });
+  NBS.anims.push(a); applyZoom();
+  a.onfinish = () => { NBS.anims = NBS.anims.filter((q) => q !== a); };
+}
 function goTo(page, fade = true) {
   if (!V.doc) return;
   // (the eyes' model, when it shares this thread, waits while the page is drawn)
@@ -2512,6 +2575,7 @@ function turn(dir) {
   }
   const next = clamp(V.page + dir * V.spread, rr ? rr[0] : 0, rr ? rr[1] : Math.max(0, V.doc.pages - 1));
   if (next === V.page) return;
+  if (nbSlides()) { if (!V.slide) V.slide = { dir, x: 0, v: 0, t: performance.now() }; nbLaunch(V.slide); }
   goTo(next);
 }
 window.standTurn = turn;
@@ -6165,6 +6229,7 @@ function hideEraserDot() { if (eraserDot) eraserDot.hidden = true; }
 
 function startNav(e) {
   if (SC.mom || SC.anim) scrollStop();
+  nbSlideEnd();
   GS = { kind: 'nav', id: e.pointerId, x: e.clientX, y: e.clientY, t0: now(), zx: Z.x, zy: Z.y, moved: false, vs: [] };
   // a finger held still on a page (notebooks and markings): copy, paste and the like
   if (e.pointerType === 'touch' && (V.inking || NBK()) && !V.perform && entryAt(e.clientX, e.clientY)) {
@@ -6307,6 +6372,15 @@ window.addEventListener('pointermove', (e) => {
       return;
     }
     if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
+    // (a notebook at its usual size: the page goes with the finger, sideways, and the next one
+    // comes in after it when you let go — at the first and last page it gives only a little)
+    else if (GS.moved && nbSlides() && (GS.slide || (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2))) {
+      const g = GS; g.slide = true;
+      const end = (dx > 0 && V.page <= 0) || (dx < 0 && V.page + V.spread > lastPg());
+      g.sx = end ? dx * 0.28 : dx;
+      g.vs.push([e.timeStamp || now(), e.clientX]); if (g.vs.length > 12) g.vs.shift();
+      if (!g.raf) g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !Z.el) return; Z.el.style.transform = `translate(${Z.x + g.sx}px, ${Z.y}px)`; });
+    }
   }
 });
 function pinchApply(g) {
@@ -6365,6 +6439,16 @@ function pointerEnd(e) {
       if (Z.y > SC.hi + 0.5 || Z.y < SC.lo - 0.5) { scrollSpringBack(); return; }
       scrollMomentum(clamp(v, -7, 7));
       return;
+    }
+    if (g.slide) {
+      if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; }
+      // let go: on to the next page when it was pulled far enough, or flicked; back otherwise
+      const W = stage.clientWidth || 800, tEnd = e.timeStamp || now(), vs = g.vs.concat([[tEnd, e.clientX]]).filter((q) => tEnd - q[0] < 120);
+      const v = vs.length >= 2 ? (vs[vs.length - 1][1] - vs[0][1]) / Math.max(8, vs[vs.length - 1][0] - vs[0][0]) : 0;
+      const dir = (dx < 0 ? 1 : -1), can = dir > 0 ? V.page + V.spread <= lastPg() : V.page > 0;
+      const go = can && (Math.abs(dx) > W * 0.28 || (Math.abs(dx) > 30 && Math.abs(v) > 0.25 && Math.sign(v) === Math.sign(dx)));
+      if (go) { const was = V.page; V.slide = { dir, x: g.sx || 0, v: Math.abs(v), t: performance.now() }; turn(dir); if (V.page === was) { const sl = V.slide; V.slide = null; nbSlideBack(sl ? sl.x : g.sx || 0); } return; }
+      nbSlideBack(g.sx || 0); return;
     }
     if (Z.s !== 1) {
       if (g.moved) { scheduleSharpen(); return; }
@@ -10356,11 +10440,23 @@ async function exportTake() {
   btn.disabled = false;
 }
 $('#exportBtn').addEventListener('click', exportTake);
-$('#studioBtn').addEventListener('click', () => {
+// (Studio covers the screen at once; the recording's page is left only once Studio is open, and
+// Back in Studio comes back to the same recording — never the main screen in between)
+let studioFrom = null;
+$('#studioBtn').addEventListener('click', async () => {
   if (!currentTake) return;
-  player.stop(); $('#takeVideo').pause(); hidePanel();
-  openStudio(currentTake.id);
+  const id = currentTake.id;
+  player.stop(); $('#takeVideo').pause();
+  studioOver = true;
+  const ok = await openStudio(id);
+  if (!ok) return;
+  studioFrom = id; hidePanel();
   setTimeout(() => { if (!$('#studio').hidden) sectionTour('studio', { force: true }); }, 900);
+});
+window.addEventListener('studio-closed', () => {
+  const id = studioFrom; studioFrom = null;
+  if (!id || openPanel) return;
+  showPanel('takes'); selectTake(id).catch(() => {});
 });
 $('#shareBtn').addEventListener('click', exportTake);
 
@@ -12547,3 +12643,11 @@ window.__standSound = () => ({ metro: metro.running, beats: metro._beatCount || 
 window.__standUp = true;
 // the simulator test build only: the app runs its own self-test (the file is not in the app sent out)
 if (window.standCaps && window.standCaps.selfTest) import('./selftest.js').catch((e) => nlog('selftest: ' + e.message));
+
+// (the home screen and the panels scroll only up and down: if anything ever moves one sideways —
+// a field brought into view, a wider picture for a moment — it goes straight back)
+document.addEventListener('scroll', (e) => {
+  const t = e.target;
+  if (!t || t === document || !t.matches || !t.matches('#library, .panel-body, .welcome, .phs, .lg-main')) return;
+  if (t.scrollLeft !== 0) t.scrollLeft = 0;
+}, { capture: true, passive: true });
