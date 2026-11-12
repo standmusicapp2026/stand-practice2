@@ -39,9 +39,16 @@ function fitLine(pts) {
   return null;
 }
 
+import { findPage, trueAspect } from './scan-find.js';
+export { findPage, trueAspect };
 // Find the four corners of the page in a photo, as fractions of the picture (TL, TR, BR, BL),
-// or null when the page already fills the picture or no clear page is seen.
+// or null when the page already fills the picture or no clear page is seen: as a document scanner
+// does (scan-find.js), and the older way, by the paper's brightness, when that finds nothing.
 export function detectPage(src) {
+  let q = null; try { q = findPage(src); } catch (e) { console.warn('findPage', e); }
+  return q || detectPageOld(src);
+}
+export function detectPageOld(src) {
   const c = small(src, 480), w = c.width, h = c.height;
   const d = c.getContext('2d').getImageData(0, 0, w, h).data;
   const L = new Float32Array(w * h), S = new Float32Array(w * h);
@@ -273,6 +280,65 @@ export function whitenPaper(c) {
   return c;
 }
 
+// A page made as clean as a good scanner makes it: the paper measured everywhere by taking the ink
+// away (dark marks narrower than a notehead vanish into the paper around them), the photo divided by
+// that paper — shadows, uneven light and the paper's tint go, the paper is white — and the ink then
+// made dark and crisp again without losing its fine lines. grey: black and white ink (no colour).
+import { paperOf, runMin, gaussOf } from './scan-find.js';
+export function cleanPage(c, { contrast = 55, grey = true, sharpen = 1.4, white = 0.86, black = 0.06, gk = 1.6 } = {}) {
+  if (globalThis.__cp) ({ sharpen = sharpen, white = white, black = black, gk = gk } = { sharpen, white, black, gk, ...globalThis.__cp });
+  const w = c.width, h = c.height, g = c.getContext('2d', { willReadFrequently: true });
+  const img = g.getImageData(0, 0, w, h), d = img.data, N = w * h;
+  const L = new Float32Array(N); for (let j = 0, i = 0; j < N; j++, i += 4) L[j] = lumOf(d, i);
+  // (the paper changes slowly: measured on a smaller copy, a few times quicker, then spread back out)
+  const f = Math.max(1, Math.round(Math.max(w, h) / 800)), sw = Math.ceil(w / f), sh = Math.ceil(h / f);
+  const Ls = new Float32Array(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let m = 0; for (let dy = 0; dy < f; dy++) { const yy = Math.min(h - 1, y * f + dy); for (let dx = 0; dx < f; dx++) { const v = L[yy * w + Math.min(w - 1, x * f + dx)]; if (v > m) m = v; } }
+    Ls[y * sw + x] = m;
+  }
+  const r = Math.max(3, Math.round(Math.max(sw, sh) / 150));
+  const Psm = paperOf(Ls, sw, sh, r);
+  const P = new Float32Array(N);
+  for (let y = 0; y < h; y++) {
+    const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / f - 0.5)), y0 = Math.floor(fy), y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.min(sw - 1, Math.max(0, (x + 0.5) / f - 0.5)), x0 = Math.floor(fx), x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
+      P[y * w + x] = (Psm[y0 * sw + x0] * (1 - tx) + Psm[y0 * sw + x1] * tx) * (1 - ty) + (Psm[y1 * sw + x0] * (1 - tx) + Psm[y1 * sw + x1] * tx) * ty;
+    }
+  }
+  // (a little sharper first, so a thin staff line stays a line)
+  const Bl = boxBlur(L, w, h, 1);
+  const gamma = gk + (contrast - 50) / 60;
+  const lut = new Uint8ClampedArray(1025);
+  for (let k = 0; k <= 1024; k++) {
+    // n: this pixel's share of the paper's light (1 paper, 0 black)
+    const n = k / 1024; let t = (n - black) / (white - black); t = t < 0 ? 0 : t > 1 ? 1 : t;
+    lut[k] = Math.round(255 * Math.pow(t, gamma));
+  }
+  // the ink's own darkness nearby: where light shone on the page (glare) or a soft shadow fell, the
+  // ink is lighter too, and is brought back to the same black as everywhere else (never on bare paper:
+  // there the paper's grain would be blown up)
+  const n0 = new Float32Array(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let m = 1; for (let dy = 0; dy < f; dy++) { const yy = Math.min(h - 1, y * f + dy); for (let dx = 0; dx < f; dx++) { const xx = Math.min(w - 1, x * f + dx), v = L[yy * w + xx] / Math.max(30, P[yy * w + xx]); if (v < m) m = v; } }
+    n0[y * sw + x] = m;
+  }
+  const Dk = gaussOf(runMin(n0, sw, sh, r * 3), sw, sh, r * 2);
+  const black0 = (j) => { const y = Math.floor(j / w), x = j - y * w; const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / f - 0.5)), fx = Math.min(sw - 1, Math.max(0, (x + 0.5) / f - 0.5)); const y0 = Math.floor(fy), x0 = Math.floor(fx), y1 = Math.min(sh - 1, y0 + 1), x1 = Math.min(sw - 1, x0 + 1), ty = fy - y0, tx = fx - x0; return (Dk[y0 * sw + x0] * (1 - tx) + Dk[y0 * sw + x1] * tx) * (1 - ty) + (Dk[y1 * sw + x0] * (1 - tx) + Dk[y1 * sw + x1] * tx) * ty; };
+  for (let j = 0, i = 0; j < N; j++, i += 4) {
+    const v = L[j] + sharpen * (L[j] - Bl[j]);
+    let n = v / Math.max(30, P[j]); n = n < 0 ? 0 : n > 1 ? 1 : n;
+    // (ink seen no darker than b here: b becomes black, the paper stays white)
+    const b = Math.min(0.42, black0(j));
+    if (b > black) { n = (n - b) / (1 - b) * (1 - black) + black; if (n < 0) n = 0; }
+    const y = lut[Math.round(n * 1024)];
+    if (grey) { d[i] = d[i + 1] = d[i + 2] = y; }
+    else { const k2 = y / Math.max(1, L[j]); d[i] = Math.min(255, d[i] * k2); d[i + 1] = Math.min(255, d[i + 1] * k2); d[i + 2] = Math.min(255, d[i + 2] * k2); }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
 // The darkest ink and the paper, from the histogram of a whitened page.
 export function inkLevels(c) {
   const w = c.width, h = c.height, d = c.getContext('2d').getImageData(0, 0, w, h).data;

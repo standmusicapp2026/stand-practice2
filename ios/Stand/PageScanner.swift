@@ -4,7 +4,7 @@ import Vision
 import CoreImage
 
 /// The page scanner. A live view with the page outlined. When the page has been held still for
-/// one second a ring fills and the page is captured by itself; the shutter button does it at once.
+/// seven tenths of a second a ring fills and the page is captured by itself; the shutter button does it at once.
 /// Each page is straightened (perspective) and saved as a JPEG; the web review then cleans it.
 final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutputSampleBufferDelegate {
     var onFinish: (([URL]) -> Void)?
@@ -45,6 +45,8 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
     private var pages: [URL] = []
 
     private static let ciContext = CIContext()
+    /// the pages taken, made ready one after another (their order kept)
+    private static let making = DispatchQueue(label: "stand.scan.making", qos: .userInitiated)
 
     // MARK: view
 
@@ -266,7 +268,7 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
             let grow = CABasicAnimation(keyPath: "strokeEnd")
             grow.fromValue = 0
             grow.toValue = 1
-            grow.duration = 1.0
+            grow.duration = 0.7
             grow.timingFunction = CAMediaTimingFunction(name: .linear)
             grow.fillMode = .forwards
             grow.isRemovedOnCompletion = false
@@ -275,9 +277,9 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
 
         let steady = now - (stableSince ?? now)
         let isNewPage = lastCaptured.map { distance($0, c) > 0.06 } ?? true
-        if steady >= 1.0, now > captureCooldown, isNewPage, !inFlight {
+        if steady >= 0.7, now > captureCooldown, isNewPage, !inFlight {
             lastCaptured = c
-            captureCooldown = now + 1.5
+            captureCooldown = now + 1.0
             shoot()
             return
         }
@@ -304,6 +306,7 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
         inFlight = true
         work.enter()
         shotFrom = outline.path?.boundingBox
+        shotQuad = quad
         flashNow()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
@@ -314,10 +317,13 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         let data = error == nil ? photo.fileDataRepresentation() : nil
-        DispatchQueue.global(qos: .userInitiated).async {
-            let url = data.flatMap { PageScanner.straighten($0) }
+        let hint = shotQuad
+        // (the next page can be taken at once: the one just taken is made ready meanwhile, the pages
+        // one after another in the order they were taken)
+        DispatchQueue.main.async { self.inFlight = false }
+        PageScanner.making.async {
+            let url = data.flatMap { PageScanner.straighten($0, hint: hint) }
             DispatchQueue.main.async {
-                self.inFlight = false
                 if let url {
                     self.pages.append(url)
                     self.showPage(url)
@@ -332,32 +338,45 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
     }
 
     /// Straightens the page (perspective), keeps it sharp and writes a JPEG into the incoming folder.
-    private static func straighten(_ data: Data) -> URL? {
+    private static func straighten(_ data: Data, hint: [CGPoint]? = nil) -> URL? {
         guard var image = CIImage(data: data, options: [.applyOrientationProperty: true]) else { return nil }
         let box = image.extent
         let request = VNDetectDocumentSegmentationRequest()
         let handler = VNImageRequestHandler(ciImage: image, options: [:])
         try? handler.perform([request])
         var found: VNRectangleObservation? = request.results?.first.flatMap { $0.confidence > 0.3 ? $0 : nil }
-        if found == nil {
+        // (the outline seen on the screen a moment before is the page too: when the photo's own finding
+        // is much smaller than it — a part of the page taken for all of it — the outline is kept)
+        var corners: [CGPoint]? = found.map { [$0.topLeft, $0.topRight, $0.bottomRight, $0.bottomLeft] }
+        if let h = hint, h.count == 4 {
+            func area(_ q: [CGPoint]) -> CGFloat {
+                var a: CGFloat = 0
+                for i in 0..<4 { let p = q[i], n = q[(i + 1) % 4]; a += p.x * n.y - n.x * p.y }
+                return abs(a) / 2
+            }
+            if let c = corners, area(c) >= area(h) * 0.8 { } else if area(h) > 0.12 { corners = h; found = nil }
+        }
+        if corners == nil {
             // (the page's edges as a rectangle, when the page itself was not made out)
             let rect = VNDetectRectanglesRequest()
             rect.minimumAspectRatio = 0.45; rect.maximumAspectRatio = 1; rect.minimumSize = 0.35
             rect.minimumConfidence = 0.6; rect.quadratureTolerance = 25; rect.maximumObservations = 1
             try? handler.perform([rect])
             found = rect.results?.first
+            corners = found.map { [$0.topLeft, $0.topRight, $0.bottomRight, $0.bottomLeft] }
         }
-        if let page = found,
+        var flat = false
+        if let page = corners, page.count == 4,
            let filter = CIFilter(name: "CIPerspectiveCorrection") {
             func at(_ p: CGPoint) -> CIVector {
                 CIVector(x: box.minX + p.x * box.width, y: box.minY + p.y * box.height)
             }
             filter.setValue(image, forKey: kCIInputImageKey)
-            filter.setValue(at(page.topLeft), forKey: "inputTopLeft")
-            filter.setValue(at(page.topRight), forKey: "inputTopRight")
-            filter.setValue(at(page.bottomLeft), forKey: "inputBottomLeft")
-            filter.setValue(at(page.bottomRight), forKey: "inputBottomRight")
-            if let out = filter.outputImage { image = out }
+            filter.setValue(at(page[0]), forKey: "inputTopLeft")
+            filter.setValue(at(page[1]), forKey: "inputTopRight")
+            filter.setValue(at(page[3]), forKey: "inputBottomLeft")
+            filter.setValue(at(page[2]), forKey: "inputBottomRight")
+            if let out = filter.outputImage { image = out; flat = true }
         }
         let longest = max(image.extent.width, image.extent.height)
         let k = min(1, 3200 / longest)
@@ -367,13 +386,17 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
             colorSpace: CGColorSpaceCreateDeviceRGB(),
             options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.92]
         ) else { return nil }
-        let url = incomingDir.appendingPathComponent(UUID().uuidString + "-scan.jpg")
+        // (a page already flattened says so in its name: it is not looked for again in the review)
+        let url = incomingDir.appendingPathComponent(UUID().uuidString + (flat ? "-flat.jpg" : "-scan.jpg"))
         do { try jpeg.write(to: url); return url } catch { return nil }
     }
 
     // The page just scanned, straightened, pops up small in the middle for a moment (to see that it
     // came out well), then flies down to the page count and is gone.
     private var shotFrom: CGRect?
+    /// the page's corners as outlined on the screen when the photo was taken (upright, normalized,
+    /// origin at the bottom left, TL TR BR BL): used when the photo itself does not show the page clearly
+    private var shotQuad: [CGPoint]?
     private func showPage(_ url: URL) {
         guard let img = UIImage(contentsOfFile: url.path), img.size.width > 0 else { return }
         let b = view.bounds

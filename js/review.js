@@ -3,7 +3,7 @@
 // shadows are taken out and the ink made black on white. Pages can be added, reordered, turned
 // and trimmed. Used for the page scanner, the camera, and photos or images from Files.
 import { ask } from './dialog.js';
-import { detectPage, warpPage, estimateSkew, rotateSmall, whitenPaper, crispInk, levels } from './scan.js';
+import { detectPage, warpPage, estimateSkew, rotateSmall, whitenPaper, crispInk, levels, trueAspect, cleanPage } from './scan.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -17,7 +17,8 @@ export function initReview(d) { deps = { ...deps, ...d }; wire(); }
 
 export function openReview(blobs, name, { paths = [], onDone = null } = {}) {
   if (!blobs.length) return;
-  R.pages = blobs.map((b) => ({ src: b, bmp: null, ...DEFAULTS() }));
+  // (a page the scanner has already flattened is not looked for again: it would be cut a second time)
+  R.pages = blobs.map((b) => ({ src: b, bmp: null, ...DEFAULTS(), ...(b && b.__flat ? { quad: null, flat: true } : {}) }));
   R.cur = 0; R.name = name; R.paths = paths; R.onDone = onDone; R.editing = false;
   $('#review').hidden = false;
   document.body.classList.add('reviewing');
@@ -51,12 +52,46 @@ async function ensureFound(p) {
   if (p.quad !== undefined) return;
   try { p.quad = detectPage(await turned(p, 900)); } catch { p.quad = null; }
 }
+// The shapes of printed music paper (height over width): A4 (and every A and B size), Letter, the
+// 9 × 12 inch concert size, Tabloid, Legal.
+const PAPERS = [1.4142, 1.2941, 1.3333, 1.5455, 1.6471];
+// one shape for all the pages of a scan: the pages of one score are all the same size, so the shape
+// they show most (snapped to a paper size when it is that close) is given to every one near it
+function batchShape() {
+  const a = R.pages.filter((q) => (q.quad || q.flat) && q.asp).map((q) => (q.asp >= 1 ? q.asp : 1 / q.asp)).sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = a[a.length >> 1];
+  const near = PAPERS.reduce((b, x) => (Math.abs(x / m - 1) < Math.abs(b / m - 1) ? x : b), PAPERS[0]);
+  return Math.abs(near / m - 1) < 0.03 ? near : m;
+}
+// the page given its true shape (and the same size as the others): the photo's slant leaves it a
+// little too short or too wide, never by more than a few hundredths
+function giveShape(c, p, maxSide) {
+  if (!(p.quad || p.flat) || !p.asp) return c;
+  const own = p.asp >= 1 ? p.asp : 1 / p.asp, land = c.width > c.height;
+  const all = R.pages.includes(p) ? batchShape() : null;
+  const want = all && Math.abs(own / all - 1) < 0.08 ? all : own;
+  const H = Math.round(land ? maxSide / want : maxSide), W = Math.round(land ? maxSide : maxSide / want);
+  if (Math.abs(W - c.width) <= 1 && Math.abs(H - c.height) <= 1) return c;
+  const o = document.createElement('canvas'); o.width = W; o.height = H;
+  const g = o.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, W, H);
+  return o;
+}
 async function renderPage(p, maxSide) {
   await ensureFound(p);
   let c;
-  if (p.quad) c = warpPage(await turned(p, Math.round(maxSide * 1.35)), p.quad, maxSide);
-  else c = await turned(p, maxSide);
+  if (p.quad) {
+    const src = await turned(p, Math.round(maxSide * 1.35));
+    // (the page's real shape, worked out from the slant of its corners)
+    try { p.asp = trueAspect(p.quad.map(([x, y]) => [x * src.width, y * src.height]), src.width, src.height); } catch { p.asp = null; }
+    c = warpPage(src, p.quad, maxSide);
+  } else {
+    c = await turned(p, maxSide);
+    if (p.flat) p.asp = c.height / c.width;
+  }
   const { t, b, l, r } = p.crop;
+  const cropped = !!(t || b || l || r);
+  if (!cropped) c = giveShape(c, p, maxSide);
   if (t || b || l || r) {
     const sx = Math.round(l * c.width), sy = Math.round(t * c.height), sw = Math.max(1, Math.round(c.width * (1 - l - r))), sh = Math.max(1, Math.round(c.height * (1 - t - b)));
     const c1 = document.createElement('canvas'); c1.width = sw; c1.height = sh; c1.getContext('2d').drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh); c = c1;
@@ -66,10 +101,10 @@ async function renderPage(p, maxSide) {
     if (p.skew) c = rotateSmall(c, p.skew);
   }
   if (p.look === 'none') return c;
-  if (p.clean || p.look === 'bw') whitenPaper(c);
+  // (cleaned as a good scanner does: shadows and the paper's tint gone, white paper, crisp dark ink)
+  if (p.clean || p.look === 'bw') cleanPage(c, { contrast: p.contrast, grey: p.look !== 'colour' });
   if (p.look === 'bw') crispInk(c, p.contrast);
-  else if (p.clean) levels(c, p.contrast, p.look === 'grey');
-  else tone(c, p);
+  else if (!p.clean) tone(c, p);
   return c;
 }
 // contrast (and grey) for the colour and grey looks
