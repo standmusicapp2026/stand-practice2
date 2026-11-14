@@ -4,6 +4,7 @@
 // clefs, keys and time signatures, instrument names, bar numbers and multi-bar rests (parts).
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
+import { chordShape } from './chordshapes.js';
 import { voiceView, hasVoice2, hasVoice, VOICES, voiceKey,
   WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf, instAt, figRows,
 } from './model.js';
@@ -354,7 +355,7 @@ function staffExtent(score, s, sy, concert) {
       if (ev.dyn || ev.hp || (ev.txt && ev.txtBelow)) { below = Math.max(below, 3.2); hasDyn = true; }
       if (ev.txt) above = Math.max(above, 2.8);
       if (ev.fing || ev.str) above = Math.max(above, 1.6 + (ev.fing ? 1.45 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0) + (ev.str ? 1.6 : 0));
-      if (ev.chord) above = Math.max(above, ev.txt ? 5.2 : 3.4);
+      if (ev.chord) above = Math.max(above, (ev.txt ? 5.2 : 3.4) + (score.layout && score.layout.chordDiagrams && chordShape(ev.chord) ? 5.0 : 0));
       if (ev.fig) figN = Math.max(figN, figRows(ev.fig).length);
       if (ev.lyric || ev.lyricV) { hasLyr = true; nVerse = Math.max(nVerse, versesOf(ev)); }
       if (!ev.notes) continue;
@@ -1200,6 +1201,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
       // a chord symbol above the staff
       const cy = s.y - Math.max(2.6, highestAbove(e, s.y) + (ev.txt ? 3.4 : 1.6));
       text(ctx, prettyChord(ev.chord), e.x, cy, 2.0, '"Helvetica Neue", Arial, sans-serif', '600');
+      if (lay.score.layout && lay.score.layout.chordDiagrams) { const sh = chordShape(ev.chord); if (sh) drawFretDiagram(ctx, sh, e.x - 0.1, cy - 2.3); }
       hitBox({ id: ev.id, kind: 'chord', name: ev.chord, m }, e.x - 0.3, e.x + textWidth(ctx, prettyChord(ev.chord), 2.0, '"Helvetica Neue", Arial, sans-serif', '600') + 0.3, cy - 2.0, cy + 0.5);
     }
     if (ev.lyric || ev.lyricV) {
@@ -1293,6 +1295,25 @@ export function beamPlan(bar, time) {
     });
   }
   return out;
+}
+// A guitar chord diagram: six strings, four frets, the nut (or the first fret's number), dots,
+// a barre, x over a string not played and o over an open one. (x, yBottom): its lower left corner.
+function drawFretDiagram(ctx, sh, x, yb) {
+  const gx = 0.72, gy = 0.85, nF = 4, top = yb - nF * gy;
+  ctx.save(); ctx.lineWidth = 0.08;
+  for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.moveTo(x + i * gx, top); ctx.lineTo(x + i * gx, yb); ctx.stroke(); }
+  for (let f = 0; f <= nF; f++) { ctx.beginPath(); ctx.moveTo(x, top + f * gy); ctx.lineTo(x + 5 * gx, top + f * gy); ctx.stroke(); }
+  if (sh.base === 1) ctx.fillRect(x - 0.04, top - 0.3, 5 * gx + 0.08, 0.3);
+  else text(ctx, sh.base + 'fr', x + 5 * gx + 0.35, top + gy * 0.8, 1.1);
+  const fy = (f) => top + (f - sh.base + 0.5) * gy;
+  if (sh.barre) { const y = fy(sh.barre.fret); ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x + sh.barre.from * gx - 0.25, y - 0.25, (sh.barre.to - sh.barre.from) * gx + 0.5, 0.5, 0.25) : ctx.rect(x + sh.barre.from * gx - 0.25, y - 0.25, (sh.barre.to - sh.barre.from) * gx + 0.5, 0.5); ctx.fill(); }
+  sh.frets.forEach((f, i) => {
+    const cx = x + i * gx;
+    if (f < 0) { const r = 0.2, y = top - 0.65; ctx.beginPath(); ctx.moveTo(cx - r, y - r); ctx.lineTo(cx + r, y + r); ctx.moveTo(cx + r, y - r); ctx.lineTo(cx - r, y + r); ctx.stroke(); }
+    else if (f === 0) { ctx.beginPath(); ctx.arc(cx, top - 0.65, 0.22, 0, Math.PI * 2); ctx.stroke(); }
+    else if (!(sh.barre && f === sh.barre.fret && i >= sh.barre.from && i <= sh.barre.to)) { ctx.beginPath(); ctx.arc(cx, fy(f), 0.27, 0, Math.PI * 2); ctx.fill(); }
+  });
+  ctx.restore();
 }
 function headGlyph(ev, unpitched, head) {
   const k = ev.t === 1 ? 0 : ev.t === 2 ? 1 : 2;

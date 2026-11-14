@@ -1871,6 +1871,14 @@ function renderTab() {
     entry('Lyrics', 'lyric', 'Syllable, then space or -');
     lab('Chord symbols');
     entry('Chord symbol', 'chord', 'C, Am7, F#m7b5, G/B…');
+    {
+      // guitar chord diagrams over the chord symbols (the whole score)
+      const on = !!C.score.layout.chordDiagrams;
+      const b = el('button', 'btn small cp-listen' + (on ? ' on' : ''), on ? 'Guitar chord diagrams: shown' : 'Show guitar chord diagrams');
+      b.setAttribute('aria-pressed', String(on)); b.setAttribute('aria-label', 'Guitar chord diagrams');
+      b.addEventListener('click', () => { edit(() => { if (on) delete C.score.layout.chordDiagrams; else C.score.layout.chordDiagrams = true; }, { keepSel: true }); hint(on ? 'No chord diagrams.' : 'A guitar chord diagram over each chord symbol: open chords where they exist, barre chords otherwise.', 3000); });
+      body.append(b);
+    }
     lab('Figured bass');
     entry('Figured bass', 'fig', '6, 6 4, 7 #, b5… (top figure first)');
     const m = targetBar() ?? 0;
