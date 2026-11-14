@@ -121,7 +121,7 @@ export function layoutScore(score, opts = {}) {
       for (const ev of bar) {
         const len = ticksOf(ev, time);
         const o = onsets.get(p) || { acc: 0, dots: 0, full: false, grace: 0 };
-        if (ev.grace && ev.notes) o.grace = 1;
+        if (ev.grace && ev.notes) o.grace = Math.max(o.grace, 1 + (ev.graceMore ? ev.graceMore.length : 0));
         if (ev.clef) o.clef = 1;
         if (ev.full) o.full = true;
         if (ev.dots) o.dots = Math.max(o.dots, ev.dots);
@@ -136,7 +136,7 @@ export function layoutScore(score, opts = {}) {
     const segs = times.map((t, i) => {
       const next = i + 1 < times.length ? times[i + 1] : total;
       const o = onsets.get(t);
-      return { t, w: space(next - t) + (o.dots ? 0.45 * o.dots : 0), pre: (o.acc ? 1.1 * o.acc : 0) + (o.grace ? 2.3 : 0) + (o.clef ? 2.8 : 0) };
+      return { t, w: space(next - t) + (o.dots ? 0.45 * o.dots : 0), pre: (o.acc ? 1.1 * o.acc : 0) + (o.grace ? 2.3 + 1.45 * (o.grace - 1) : 0) + (o.clef ? 2.8 : 0) };
     });
     const allFull = times.length === 1 && onsets.get(0).full;
     let ideal = 1.3 + segs.reduce((a, s) => a + s.w + s.pre, 0);
@@ -300,7 +300,7 @@ export function layoutScore(score, opts = {}) {
     const add = Math.min(free / (pg.systems.length - 1), sysGap);
     pg.systems.forEach((s, i) => { const d = add * i; s.top += d; s.staves.forEach((st) => { st.y += d; }); });
   }
-  return { pages, W, H, spMm, margin, score, opts: L, concert, partIndex: opts.partIndex };
+  return { pages, W, H, spMm, margin, score, opts: L, concert, partIndex: opts.partIndex, colsByM: cols };
 }
 
 function titleHeight(score, spMm, opts) {
@@ -881,6 +881,8 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
   }
 }
 function layColumns(lay, m) {
+  // (the columns the layout measured, with the room it gave grace notes, accidentals and clefs)
+  if (lay.colsByM && lay.colsByM[m] && lay.colsByM[m].m === m) return lay.colsByM[m];
   if (!lay._cols) lay._cols = new Map();
   if (!lay._cols.has(m)) {
     // recompute like the layout did
@@ -936,6 +938,7 @@ function drawTempo(ctx, tempo, x, y) {
 // One bar of one staff
 // ---------------------------------------------------------------------
 function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
+  GRACE_K = Math.min(1, (mm && mm.k) || 1);
   const score = lay.score;
   const bar = s.st.bars[m] || [];
   const clef = clefAt(s.st, m);
@@ -1501,6 +1504,7 @@ export function xAtTime(meas, t) {
 export { yOf, HEAD_W, DYN_LETTERS, drawBarline, drawRepeatStart, line as drawLine };
 // a grace note: a small eighth note before the main note, slashed for an acciaccatura, slurred to it
 function drawGrace(ctx, e, sy, accW) {
+  if (e.ev.graceMore && e.ev.graceMore.length) { drawGraceGroup(ctx, e, sy, accW); return; }
   const gr = e.ev.grace, k = 0.64, sz = 4 * k, hw = HEAD_W * k;
   const n = e.notes[0], p = n.p + (gr.s - n.src.s);
   const x = e.x - accW - 0.75 - hw - 0.9, y = yOf(sy, p);
@@ -1516,6 +1520,31 @@ function drawGrace(ctx, e, sy, accW) {
   const ty = Math.max(y, yOf(sy, n.p)) + 0.75, x0 = x + hw * 0.5, x1 = e.x + HEAD_W * 0.3;
   ctx.beginPath(); ctx.moveTo(x0, ty); ctx.bezierCurveTo(x0 + 0.3, ty + 0.75, x1 - 0.3, ty + 0.75, x1, ty);
   ctx.bezierCurveTo(x1 - 0.3, ty + 0.55, x0 + 0.3, ty + 0.55, x0, ty); ctx.fill();
+}
+// several grace notes before a note: small sixteenths beamed together (one slash through the
+// first stem for a quick group), slurred to the main note
+let GRACE_K = 1;   // (how much the bar being drawn is squeezed: a group of grace notes closes up with it)
+function drawGraceGroup(ctx, e, sy, accW) {
+  const gs = [e.ev.grace, ...e.ev.graceMore], k = 0.64, sz = 4 * k, hw = HEAD_W * k, gap = 1.45 * Math.max(0.6, GRACE_K);
+  const n = e.notes[0];
+  const ps = gs.map((g) => n.p + (g.s - n.src.s));
+  const xEnd = e.x - accW - 0.75 - hw - 0.9;
+  const xs = gs.map((_, i) => xEnd - (gs.length - 1 - i) * gap);
+  const top = Math.min(...ps.map((p) => yOf(sy, p))) - STEM_LEN * 0.78;
+  gs.forEach((g, i) => {
+    const x = xs[i], p = ps[i], y = yOf(sy, p);
+    for (let q = -2; q >= p; q -= 2) line(ctx, x - 0.3, yOf(sy, q), x + hw + 0.3, yOf(sy, q), 0.13);
+    for (let q = 10; q <= p; q += 2) line(ctx, x - 0.3, yOf(sy, q), x + hw + 0.3, yOf(sy, q), 0.13);
+    if (g.acc !== undefined && g.acc !== null) glyph(ctx, GL.acc[g.acc], x - 0.2 - gm(GL.acc[g.acc]).w * k, y, sz);
+    glyph(ctx, GL.noteBlack, x, y, sz);
+    line(ctx, x + hw - 0.05, y - 0.1, x + hw - 0.05, top, 0.1);
+  });
+  const bx0 = xs[0] + hw - 0.1, bx1 = xs[xs.length - 1] + hw;
+  for (let b = 0; b < 2; b++) { ctx.fillRect(bx0, top + b * 0.55, bx1 - bx0, 0.3); }
+  if (e.ev.grace.slash !== false) line(ctx, bx0 - 0.6, top + 1.5, bx0 + 0.9, top + 0.2, 0.11);
+  const ty = Math.max(...ps.map((p) => yOf(sy, p)), yOf(sy, n.p)) + 0.75, x0 = xs[0] + hw * 0.5, x1 = e.x + HEAD_W * 0.3;
+  ctx.beginPath(); ctx.moveTo(x0, ty); ctx.bezierCurveTo(x0 + 0.5, ty + 0.9, x1 - 0.5, ty + 0.9, x1, ty);
+  ctx.bezierCurveTo(x1 - 0.5, ty + 0.68, x0 + 0.5, ty + 0.68, x0, ty); ctx.fill();
 }
 // Draw a single note head (ghost note while writing) with ledger lines and accidental.
 export function drawGhost(ctx, x, sy, p, t, acc, color) {

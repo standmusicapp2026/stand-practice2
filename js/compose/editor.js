@@ -914,6 +914,7 @@ function transpose(steps, semis, keyTo = null) {
       if (instOf(st).unpitched || ev.rest) return;
       if (ev.notes) ev.notes = ev.notes.map((n) => tp(n, m)).sort((x, y) => x.s - y.s);
       if (ev.grace) ev.grace = { ...ev.grace, ...tp({ s: ev.grace.s, a: ev.grace.a || 0 }, m) };
+      if (ev.graceMore) ev.graceMore = ev.graceMore.map((g) => ({ ...g, ...tp({ s: g.s, a: g.a || 0 }, m) }));
     };
     if (evs.length) { for (const x of evs) doEv(x.ev, x.m, x.st); return; }
     const sts = whole ? allSt : bars.sts;
@@ -1549,11 +1550,11 @@ function setGrace(dir, slash) {
   if (!evs.length) { hint('Select a note, then add a grace note.'); return; }
   edit(() => {
     for (const f of evs) {
-      if (!dir) { delete f.ev.grace; continue; }
+      if (!dir) { delete f.ev.grace; delete f.ev.graceMore; continue; }
       const ns = f.ev.notes.map((n) => n.s);
       const sStep = dir > 0 ? Math.max(...ns) + 1 : Math.min(...ns) - 1;
       const same = f.ev.grace && f.ev.grace.dir === dir && (f.ev.grace.slash !== false) === slash;
-      if (same) delete f.ev.grace;
+      if (same) { delete f.ev.grace; delete f.ev.graceMore; }
       else f.ev.grace = { s: sStep, a: M.keyAlter(M.keyAt(C.score, f.m), sStep), dir, ...(slash ? {} : { slash: false }) };
     }
   }, { keepSel: true });

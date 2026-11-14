@@ -373,10 +373,12 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       let gOff = 0;
       if (ev.grace && !inst.unpitched && ev.notes.length) {
         // a grace note just before the beat (an appoggiatura takes a little of the beat instead)
-        const gq = Math.min(0.08, dur / 3), gm2 = midiOf(ev.grace.s, ev.grace.a || 0);
-        const lead = ev.grace.slash === false ? 0 : gq;
-        add({ part: part.id, sid: sidF, midi: gm2, t: Math.max(0, f.t - lead), dur: gq * 1.05, vel: f.vel * 0.85, art: null, env: null, ids, m: f.m, pos: f.pos, connect: false });
-        if (!lead) { gOff = gq; dur -= gq; }
+        const gs = [ev.grace, ...(ev.graceMore || [])];
+        // (a group of grace notes goes quicker, each one a little shorter)
+        const gq = Math.min(gs.length > 1 ? 0.06 : 0.08, dur / (gs.length + 2));
+        const lead = ev.grace.slash === false ? 0 : gq * gs.length;
+        gs.forEach((g, i) => add({ part: part.id, sid: sidF, midi: midiOf(g.s, g.a || 0), t: Math.max(0, f.t - lead + i * gq), dur: gq * 1.05, vel: f.vel * 0.85, art: null, env: null, ids, m: f.m, pos: f.pos, connect: false }));
+        if (!lead) { gOff = gq * gs.length; dur -= gq * gs.length; }
       }
       const sorted = ev.notes.slice().sort((x, y) => midiOf(x.s, x.a) - midiOf(y.s, y.a));
       sorted.forEach((n, ni) => {

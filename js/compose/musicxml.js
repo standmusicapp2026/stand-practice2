@@ -121,9 +121,13 @@ export function toMusicXML(score0) {
           // a clef change in the middle of the bar, before this note
           if (ev.clef && voice % 4 === 1) { const [sign, line, oct] = CLEF_XML[ev.clef] || CLEF_XML.treble; w(`<attributes><clef${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><sign>${sign}</sign>${line ? `<line>${line}</line>` : ''}${oct ? `<clef-octave-change>${oct}</clef-octave-change>` : ''}</clef></attributes>`); }
           if (ev.grace && !inst.unpitched) {
-            const gn = toWritten({ s: ev.grace.s, a: ev.grace.a || 0 }, inst);
-            const sc = ((gn.s % 7) + 7) % 7, oct = Math.floor(gn.s / 7);
-            w(`<note><grace${ev.grace.slash === false ? '' : ' slash="yes"'}/><pitch><step>${STEP_NAMES[sc]}</step>${gn.a ? `<alter>${gn.a}</alter>` : ''}<octave>${oct}</octave></pitch><voice>${voice}</voice><type>eighth</type><stem>up</stem>${staffTag}</note>`);
+            const gs = [ev.grace, ...(ev.graceMore || [])];
+            gs.forEach((g, gi) => {
+              const gn = toWritten({ s: g.s, a: g.a || 0 }, inst);
+              const sc = ((gn.s % 7) + 7) % 7, oct = Math.floor(gn.s / 7);
+              const beam = gs.length > 1 ? `<beam number="1">${gi === 0 ? 'begin' : gi === gs.length - 1 ? 'end' : 'continue'}</beam><beam number="2">${gi === 0 ? 'begin' : gi === gs.length - 1 ? 'end' : 'continue'}</beam>` : '';
+              w(`<note><grace${ev.grace.slash === false || (gs.length > 1 && gi > 0) ? '' : ' slash="yes"'}/><pitch><step>${STEP_NAMES[sc]}</step>${gn.a ? `<alter>${gn.a}</alter>` : ''}<octave>${oct}</octave></pitch><voice>${voice}</voice><type>${gs.length > 1 ? '16th' : 'eighth'}</type>${g.acc !== undefined && g.acc !== null ? `<accidental>${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[gn.a || 0]}</accidental>` : ''}<stem>up</stem>${staffTag}${beam}</note>`);
+            });
           }
           ev.notes.forEach((n0, k) => {
             const n = inst.unpitched ? n0 : toWritten(n0, inst);
@@ -673,11 +677,13 @@ export function fromMusicXML(xmlText) {
           if (q(el, 'grace')) {
             // keep the first grace note before a note; it is drawn small and played just before the beat
             const kg = Math.max(0, (+txt(el, 'staff') || 1) - 1);
-            if (!q(el, 'chord') && !q(el, 'rest') && pend[kg] && !pend[kg].grace) {
+            if (!q(el, 'chord') && !q(el, 'rest') && pend[kg]) {
               const step = STEP_NAMES.indexOf(txt(el, 'pitch step') || 'C'), oct = +(txt(el, 'pitch octave') || 4), alter = Math.round(+txt(el, 'pitch alter') || 0);
               let gn = { s: oct * 7 + Math.max(0, step), a: alter };
               if (tr.steps || tr.semis) { const s2 = gn.s + tr.steps; const mid = midiOf(gn.s, gn.a) + tr.semis; gn = { s: s2, a: mid - midiOf(s2, 0) }; }
-              pend[kg].grace = { ...gn, ...(q(el, 'grace').getAttribute('slash') === 'yes' ? {} : { slash: false }), ...(q(el, 'accidental') ? { acc: alter } : {}) };
+              const g = { ...gn, ...(q(el, 'grace').getAttribute('slash') === 'yes' ? {} : { slash: false }), ...(q(el, 'accidental') ? { acc: alter } : {}) };
+              // (a group of grace notes: the first, then the others in turn, up to eight)
+              if (!pend[kg].grace) pend[kg].grace = g; else { pend[kg].graceMore = pend[kg].graceMore || []; if (pend[kg].graceMore.length < 7) pend[kg].graceMore.push({ s: g.s, a: g.a, ...(g.acc !== undefined ? { acc: g.acc } : {}) }); }
             }
             continue;
           }
@@ -754,7 +760,7 @@ export function fromMusicXML(xmlText) {
           const P = pend[k];
           if (!isChord && !inV2) {
             for (const key of ['dyn', 'hp', 'txt', 'txtStyle', 'chord', 'clef']) if (P[key]) { ev[key] = P[key]; delete P[key]; }
-            if (P.grace) { if (!ev.rest && ev.notes) ev.grace = { ...P.grace, dir: P.grace.s > ev.notes[0].s ? 1 : -1 }; delete P.grace; }
+            if (P.grace) { if (!ev.rest && ev.notes) { ev.grace = { ...P.grace, dir: P.grace.s > ev.notes[0].s ? 1 : -1 }; if (P.graceMore) ev.graceMore = P.graceMore; } delete P.grace; delete P.graceMore; }
             const ly = q(el, 'lyric'); if (ly && !ev.rest) { const sy = txt(ly, 'syllabic'); ev.lyric = txt(ly, 'text') + (sy === 'begin' || sy === 'middle' ? '-' : ''); }
             for (const sp of openSpans) if (sp.k === k && !sp.a) sp.a = { m, pos: start };
             lastAt[k] = { m, pos: start };
