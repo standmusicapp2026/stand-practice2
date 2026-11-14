@@ -395,6 +395,9 @@ async function mediaRun(pre) {
     await shot(pre ? 'p-media' : '10d-media');
     if (!got) return 'no answer from YouTube in 30 s (no internet on the test machine?)';
     if (got.op === 'error' && got.code === 153) return false;
+    // (the player is on the screen, at least as big as YouTube asks: 200 points of picture)
+    const fr = ev.find((m) => m.op === 'frame');
+    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 70 < 199) return false; }
     return got.op === 'ready' ? 'ready' : 'error ' + got.code;
   }, 45000);
   await step(pre + 'floating player closes', async () => { window.webkit.messageHandlers.standMedia && window.webkit.messageHandlers.standMedia.postMessage({ op: 'close' }); await sleep(800); return true; });

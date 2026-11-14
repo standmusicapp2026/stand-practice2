@@ -115,7 +115,8 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         // (a video needs room for its picture; an audio player less)
         frame = fitted(frame, in: host)
         if loaded { run(o) } else { pending = o }
-        accessibilityViewIsModal = false
+        // (where it is, for the self-test: on the screen, and as big as it must be)
+        event?(["op": "frame", "x": frame.minX, "y": frame.minY, "w": frame.width, "h": frame.height, "hw": host.bounds.width, "hh": host.bounds.height])
     }
     func command(_ c: [String: Any]) { js("window.mediaCmd && window.mediaCmd(\(json(c)))") }
     func close() {
