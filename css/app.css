@@ -2222,3 +2222,7 @@ body.ruler-away .ruler, body.ruler-away .ruler-kinds { display: none; }
 .media-float.tucked .mf-tab { display: flex; flex: 1; align-items: center; justify-content: center; border: 0; background: transparent; color: #fff; }
 .media-float.tucked .mf-tab svg { width: 20px; height: 20px; }
 #lsSaved a.plays::before { content: '▶︎ '; color: var(--accent, #1f3a8a); }
+
+/* the privacy policy and terms, at the foot of Settings */
+.legal-links a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.legal-links a:active { opacity: .6; }
