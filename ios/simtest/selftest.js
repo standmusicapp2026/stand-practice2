@@ -250,6 +250,7 @@ async function run() {
   });
   await shot('10b-jupiter');
   await step('back home 4', async () => { await home(); return !$('#library').hidden; });
+  await musicXmlRun('');
   await step('settings', async () => { $('[data-panel=app]').click(); await sleep(800); return !$('#panel-app').hidden; });
   await shot('11-settings');
   // linking a device: the card in Settings, and the linking screen (looking; nothing nearby here)
@@ -366,6 +367,21 @@ async function videoRun() {
   await shot('v2-exported');
   await closePanels();
 }
+// MusicXML opened in Stand from Files (as the native side hands a file over): into Compose, with its
+// pickup bar; a file saved in UTF-16 too
+async function musicXmlRun(pre) {
+  for (const [f, parts] of [['chloe.mxl', 2], ['utf16.mxl', 1]]) {
+    await step(pre + 'MusicXML from Files: ' + f, async () => {
+      await window.standIncoming({ path: '/_selftest/' + f, name: f });
+      const ok = await waitFor(() => !$('#compose').hidden && $$('#compose canvas').length > 0, 15000);
+      $('.tour-skip') && $('.tour-skip').click();
+      const E = await import('./compose/editor.js'), M = await import('./compose/model.js'); const sc = E.composeState.score;
+      return ok && sc && sc.parts.length === parts ? `${sc.parts.length} parts, ${sc.measures.length} bars, pickup ${M.pickupOf(sc)}` : false;
+    });
+    if (f === 'chloe.mxl') await shot(pre ? 'p-mxl' : '10c-mxl');
+    await step(pre + 'back home from MusicXML', async () => { $('#cpBack') && $('#cpBack').click(); await sleep(1200); if (pre) await closePanels(); else await home(); return $('#compose').hidden; });
+  }
+}
 // the iPhone: its own home, the tools in the pocket, the linking screen, sideways and back
 async function phoneRun() {
   // (a new iPhone first asks about linking an iPad: answered "Not now", as most would at first)
@@ -379,6 +395,7 @@ async function phoneRun() {
   await step('iPhone: metronome plays', async () => { await open('metronome'); $('#metroToggle').click(); await sleep(2500); $('#metroToggle').click(); await sleep(300); await closePanels(); return true; });
   await step('iPhone: linking screen', async () => { await open('app'); const c = $('#pairCard'); c && c.scrollIntoView(); await sleep(400); const n = $('#pairNew'); if (!n) return 'no button'; n.click(); await sleep(1500); const ok = !!$('.pair'); const x = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); x && x.click(); await sleep(400); await closePanels(); return ok; });
   await shot('p-end');
+  await musicXmlRun('iPhone: ');
   await videoRun();
   await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);

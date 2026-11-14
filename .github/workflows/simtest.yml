@@ -26,7 +26,7 @@ jobs:
           if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
           if [ -d examples ]; then cp -R examples ios/Stand/www/; fi
           cp ios/simtest/selftest.js ios/Stand/www/js/selftest.js
-          mkdir -p ios/Stand/www/_selftest && cp ios/simtest/vector8.pdf ios/simtest/piano.pdf ios/Stand/www/_selftest/
+          mkdir -p ios/Stand/www/_selftest && cp ios/simtest/vector8.pdf ios/simtest/piano.pdf ios/simtest/chloe.mxl ios/simtest/utf16.mxl ios/Stand/www/_selftest/
 
       - name: Generate Xcode project
         run: |
@@ -42,6 +42,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" ONLY_ACTIVE_ARCH=NO \
             build | tail -n 30
           ls build/Debug-iphonesimulator/
+          # (Stand is offered for MusicXML files in Files: the types are in the app)
+          plutil -p build/Debug-iphonesimulator/Stand.app/Info.plist | grep -q 'org.w3c.music-notation.musicxml' || { echo "MusicXML document types missing from Info.plist"; exit 1; }
 
       - name: Run on the simulators
         run: |

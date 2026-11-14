@@ -69,6 +69,19 @@ async function show() {
   keepPaletteInView();
   hint(window.matchMedia('(hover: hover)').matches ? 'Choose a note value, then write with the Pencil or click on the staff.' : 'Choose a note value, then write with the Apple Pencil. Your finger scrolls; turn on finger writing in the palette if you have no Pencil.', 5200);
 }
+// A MusicXML file (.musicxml, .mxl or .xml), chosen here or opened in Stand from Files, Mail or
+// another app: it becomes a score of its own in Compose and opens.
+export async function openMusicFile(f) {
+  try {
+    const score = await readMusicFile(f);
+    const fileId = uid(), id = uid();
+    await db.put('files', { id: fileId, kind: 'comp', data: score });
+    await db.put('scores', { id, fileId, kind: 'comp', title: score.title, composer: score.composer, pages: 1, added: Date.now(), opened: Date.now(), lastPage: 0, seconds: 0, thumb: null });
+    D.hidePanel(); await openComposition(id); saveSoon(true);
+    D.toast(`Opened ${score.parts.length} ${score.parts.length === 1 ? 'part' : 'parts'}, ${score.measures.length} ${score.measures.length === 1 ? 'bar' : 'bars'}.`);
+    return true;
+  } catch (err) { console.error(err); D.toast(err.message || 'That file could not be read.', 4000); return false; }
+}
 export async function createComposition(opts) {
   const score = M.newScore(opts);
   const fileId = uid(), id = uid();
@@ -1957,11 +1970,8 @@ function renderTab() {
     body.append(el('p', 'hint', 'Select the bar (or bars) of the ending, then choose it. A 1st ending gets its repeat barline by itself.'));
     lab('Pickup bar (the first bar, shorter)');
     {
-      const t0 = M.timeAt(C.score, 1 < C.score.measures.length ? 1 : 0).slice(0, 2), unit = M.WHOLE / t0[1], full = M.barTicks(t0);
-      const compound = t0[1] === 8 && t0[0] % 3 === 0 && t0[0] > 3;
-      const opts = [[0, 'None']];
-      if (t0[1] <= 4) opts.push([unit / 2, '½ beat']);
-      for (let k = 1; k * unit < full; k++) opts.push([k * unit, compound ? `${k} ${t0[1] === 8 ? 'quaver' : 'beat'}${k > 1 ? 's' : ''}` : `${k} beat${k > 1 ? 's' : ''}`]);
+      const t0 = M.timeAt(C.score, 1 < C.score.measures.length ? 1 : 0).slice(0, 2);
+      const opts = pickupChoices(t0);
       const sel = el('select', 'cp-select'); sel.setAttribute('aria-label', 'Pickup bar');
       const now = M.pickupOf(C.score);
       for (const [v, l] of opts) { const o = el('option', '', l); o.value = v; if (v === now) o.selected = true; sel.append(o); }
@@ -2211,6 +2221,7 @@ function wirePanels() {
   const capTo = $('#capTo'); KEY_NAMES.forEach((n, i) => { const o = el('option', '', keyLabel(i)); o.value = i - 7; capTo.append(o); }); capTo.value = '';
   syncCapTo();
   const timeSel = $('#cnTime'); TIMES.forEach(([n]) => { const o = el('option', '', n); o.value = n; timeSel.append(o); });
+  fillPickup(); timeSel.addEventListener('change', fillPickup);
   const staffSel = $('#cnStaff'); staffSel.append(Object.assign(el('option', '', 'Automatic'), { value: '' }));
   STAFF_SIZES.forEach((s) => { const o = el('option', '', `${s.mm} mm · ${s.use}`); o.value = s.mm; staffSel.append(o); });
   // categories on the left, pages of each ensemble in the middle, the chosen one large on the right
@@ -2225,31 +2236,24 @@ function wirePanels() {
   // closing the instrument list while choosing for a new score goes back to the new score
   $('#panel-cpinst [data-close]').addEventListener('click', () => { if (C.addFor === 'new') { $('#newScore').hidden = false; renderNew(); } });
   $('#nsCancel').addEventListener('click', () => { $('#newScore').hidden = true; });
-  for (const id of ['#cnKey', '#cnTime', '#cnTitle', '#cnComposer', '#cnBars', '#cnPage', '#cnStaff']) $(id).addEventListener(id === '#cnTitle' || id === '#cnComposer' || id === '#cnBars' ? 'input' : 'change', () => previewSoon());
+  for (const id of ['#cnKey', '#cnTime', '#cnPickup', '#cnTitle', '#cnComposer', '#cnBars', '#cnPage', '#cnStaff']) $(id).addEventListener(id === '#cnTitle' || id === '#cnComposer' || id === '#cnBars' ? 'input' : 'change', () => previewSoon());
   $('#cnAddInst').addEventListener('click', () => { $('#newScore').hidden = true; NEW.reopen = true; D.showPanel('cpinst'); C.addFor = 'new'; renderInstPanel(); });
   $('#cnCreate').addEventListener('click', async () => {
     if (!NEW.insts.length) { D.toast('Choose at least one instrument.'); return; }
     const t = TIMES.find(([n]) => n === $('#cnTime').value)[1];
     const nStaves = NEW.insts.reduce((a, i) => a + INST[i].clefs.length, 0);
     const opts = { title: $('#cnTitle').value.trim() || 'Untitled', composer: $('#cnComposer').value.trim(), insts: NEW.insts, time: t, key: +$('#cnKey').value,
-      bpm: clamp(+$('#cnTempo').value || 96, 20, 300), bars: clamp(+$('#cnBars').value || NEW.fill || 32, 1, 999), page: $('#cnPage').value };
+      bpm: clamp(+$('#cnTempo').value || 96, 20, 300), bars: clamp(+$('#cnBars').value || NEW.fill || 32, 1, 999), page: $('#cnPage').value, pickup: +$('#cnPickup').value || 0 };
     D.hidePanel(); $('#newScore').hidden = true;
     await createComposition(opts);
     if ($('#cnStaff').value) { C.score.layout.staffMm = +$('#cnStaff').value; relayout(); } else C.score.layout.staffMm = defaultStaffSize(nStaves);
     if (t[0] === 4 && t[1] === 4) C.score.measures[0].timeSym = undefined;
     relayout(); saveSoon(true);
-    $('#cnTitle').value = ''; $('#cnComposer').value = '';
+    $('#cnTitle').value = ''; $('#cnComposer').value = ''; $('#cnPickup').value = '0';
   });
   $('#cnImport').addEventListener('change', async (e) => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-    try {
-      const score = await readMusicFile(f);
-      const fileId = uid(), id = uid();
-      await db.put('files', { id: fileId, kind: 'comp', data: score });
-      await db.put('scores', { id, fileId, kind: 'comp', title: score.title, composer: score.composer, pages: 1, added: Date.now(), opened: Date.now(), lastPage: 0, seconds: 0, thumb: null });
-      D.hidePanel(); await openComposition(id); saveSoon(true);
-      D.toast(`Opened ${score.parts.length} ${score.parts.length === 1 ? 'part' : 'parts'}, ${score.measures.length} bars.`);
-    } catch (err) { console.error(err); D.toast(err.message || 'That file could not be read.', 4000); }
+    await openMusicFile(f);
   });
   // an example to start from: Holst's Jupiter tune for orchestra (a copy of its own each time, kept
   // with your scores like any other)
@@ -2373,11 +2377,26 @@ function openNewScore() {
   $('#newScore').hidden = false;
   renderGallery(); renderNew();
 }
+// The lengths a pickup bar can have in a time: none, half a beat, one beat, two…
+function pickupChoices(t0) {
+  const unit = M.WHOLE / t0[1], full = M.barTicks(t0.slice(0, 2));
+  const compound = t0[1] === 8 && t0[0] % 3 === 0 && t0[0] > 3;
+  const opts = [[0, 'None']];
+  if (t0[1] <= 4) opts.push([unit / 2, '½ beat']);
+  for (let k = 1; k * unit < full; k++) opts.push([k * unit, compound ? `${k} ${t0[1] === 8 ? 'quaver' : 'beat'}${k > 1 ? 's' : ''}` : `${k} beat${k > 1 ? 's' : ''}`]);
+  return opts;
+}
+function fillPickup() {
+  const sel = $('#cnPickup'); if (!sel) return;
+  const t = TIMES.find(([n]) => n === $('#cnTime').value), was = +sel.value || 0;
+  sel.textContent = '';
+  for (const [v, l] of pickupChoices(t ? t[1] : [4, 4])) { const o = el('option', '', l); o.value = v; if (v === was) o.selected = true; sel.append(o); }
+}
 // a score as it would be made now, with as many bars as fill the first page
-function sampleScore(insts, { key = 0, time = [4, 4], title = '', composer = '', page = 'A4', staffMm = 0, bars = 0 } = {}) {
+function sampleScore(insts, { key = 0, time = [4, 4], title = '', composer = '', page = 'A4', staffMm = 0, bars = 0, pickup = 0 } = {}) {
   const nStaves = insts.reduce((a, i) => a + INST[i].clefs.length, 0);
   const make = (n) => {
-    const sc = M.newScore({ title: title || 'Untitled', composer, insts, time, key, bars: n, page });
+    const sc = M.newScore({ title: title || 'Untitled', composer, insts, time, key, bars: n, page, pickup });
     sc.layout.staffMm = staffMm || defaultStaffSize(nStaves);
     if (time[0] === 4 && time[1] === 4) sc.measures[0].timeSym = undefined;
     return sc;
@@ -2440,7 +2459,7 @@ function previewNew() {
   if (!NEW.insts.length) { paintBlank(c); NEW.fill = 0; return; }
   const t = TIMES.find(([n]) => n === $('#cnTime').value);
   const s = sampleScore(NEW.insts, { key: +$('#cnKey').value, time: t ? t[1] : [4, 4], title: $('#cnTitle').value.trim(), composer: $('#cnComposer').value.trim(),
-    page: $('#cnPage').value, staffMm: +$('#cnStaff').value || 0, bars: clamp(+$('#cnBars').value || 0, 0, 999) });
+    page: $('#cnPage').value, staffMm: +$('#cnStaff').value || 0, bars: clamp(+$('#cnBars').value || 0, 0, 999), pickup: +$('#cnPickup').value || 0 });
   NEW.fill = s.bars;
   paintSheet(c, s.lay, 300);
   $('#cnBars').placeholder = `${s.bars} (fills the page)`;

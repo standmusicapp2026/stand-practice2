@@ -31,7 +31,7 @@ import { initReview, openReview } from './review.js';
 import * as P from './pomodoro.js';
 import { placeWords } from './textplace.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks } from './imslp.js';
-import { initCompose, openComposition } from './compose/editor.js';
+import { initCompose, openComposition, openMusicFile } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { findMarks, resolveMarks, metroFor, noteOfMark } from './tempo.js';
 import { recognise, recogniseBest } from './omr.js';
@@ -1263,6 +1263,18 @@ window.standIncoming = async (msg) => {
     for (const p of paths) { const res = await fetch(p); if (!res.ok) throw new Error('missing file'); const bl = await res.blob(); if (/-flat\.jpe?g$/i.test(p)) bl.__flat = true; blobs.push(bl); }
     // the files are in memory now, so the native copies can go
     if (NATIVE && NATIVE.standDone) for (const p of paths) NATIVE.standDone.postMessage({ path: p });
+    // a MusicXML score (.mxl, .musicxml, or an .xml that is one): it opens in Compose, on the iPad and the iPhone
+    { const nm0 = (k) => (msg.names && msg.names[k]) || (paths.length === 1 ? msg.name : '') || String(paths[k]).split('/').pop() || '';
+      const isMusic = async (k) => { const n = nm0(k); if (/\.(mxl|musicxml)$/i.test(n)) return true; if (!/\.xml$/i.test(n)) return false; try { const head = await blobs[k].slice(0, 4096).text(); return /<score-(partwise|timewise)\b/.test(head.replace(/\0/g, '')); } catch { return false; } };
+      const music = []; for (let k = 0; k < blobs.length; k++) if (await isMusic(k)) music.push(k);
+      if (music.length && music.length === blobs.length) {
+        if (!$('#score').hidden) await closeScore();
+        hidePanel();
+        for (const k of music) await openMusicFile(new File([blobs[k]], nm0(k).split('/').pop().replace(/^[0-9A-F-]{36}-/i, '')));
+        return;
+      }
+      // (a text file of another kind: said plainly, rather than read as a picture)
+      if (blobs.every((_, k) => /\.(xml|txt|json|html?|csv|md|rtf)$/i.test(nm0(k)))) { toast('Stand opens PDFs, pictures and MusicXML scores. This file is none of these.', 4000); return; } }
     // (the iPhone: scanned pages, a PDF or pictures become scores of its own, in My scores)
     if (PHONE && window.__phs && window.__phs.addOwn) { await phoneAdd(blobs, paths.map((p, i) => (msg.names && msg.names[i]) || (paths.length === 1 ? msg.name : '') || String(p).split('/').pop()), !!msg.paths); return; }
     if (!$('#score').hidden) await closeScore();

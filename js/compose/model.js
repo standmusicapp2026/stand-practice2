@@ -142,7 +142,7 @@ export function newPart(instId) {
   return { id: newId(), inst: inst.id, name: T(inst.name), abbr: T(inst.abbr), mix: null,
     staves: inst.clefs.map((clef) => ({ id: newId(), clef, bars: [] })) };
 }
-export function newScore({ title = 'Untitled', composer = '', insts = ['piano'], time = [4, 4], key = 0, bpm = 96, bars = 32, page = 'A4' } = {}) {
+export function newScore({ title = 'Untitled', composer = '', insts = ['piano'], time = [4, 4], key = 0, bpm = 96, bars = 32, page = 'A4', pickup = 0 } = {}) {
   const parts = insts.map(newPart);
   // number repeated instruments: Violin 1, Violin 2
   const count = {}; for (const p of parts) count[p.inst] = (count[p.inst] || 0) + 1;
@@ -157,6 +157,8 @@ export function newScore({ title = 'Untitled', composer = '', insts = ['piano'],
   };
   for (let m = 0; m < bars; m++) score.measures.push(m === 0 ? { time: time.slice(), key, tempo: { bpm, beat: 4, text: '' } } : {});
   for (const st of allStaves(score)) for (let m = 0; m < bars; m++) st.bars.push(restBar(time));
+  // (a pickup bar: the first bar holds only the upbeat)
+  if (pickup > 0 && pickup < barTicks(time)) { score.measures[0].pickup = pickup; for (const st of allStaves(score)) st.bars[0] = restBar(timeAt(score, 0)); }
   score.measures[bars - 1].bar = 'final';
   return score;
 }

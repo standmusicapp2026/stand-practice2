@@ -54,6 +54,23 @@ targets:
           - CFBundleTypeName: Stand backup
             LSHandlerRank: Owner
             LSItemContentTypes: [com.paulo.stand.backup]
+          # (MusicXML from Sibelius, Dorico, MuseScore, Finale: "Open in Stand" puts it in Compose)
+          - CFBundleTypeName: MusicXML score
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.w3c.music-notation.musicxml, org.w3c.music-notation.musicxml.uncompressed, org.musicxml.musicxml, org.musicxml.compressed, com.recordare.musicxml, com.recordare.musicxml.compressed, com.recordare.musicxml.uncompressed, com.makemusic.musicxml, public.xml]
+        UTImportedTypeDeclarations:
+          - UTTypeConformsTo: [public.data, public.content, public.zip-archive]
+            UTTypeDescription: MusicXML (compressed)
+            UTTypeIdentifier: org.w3c.music-notation.musicxml
+            UTTypeTagSpecification:
+              public.filename-extension: [mxl]
+              public.mime-type: [application/vnd.recordare.musicxml]
+          - UTTypeConformsTo: [public.xml, public.data, public.content]
+            UTTypeDescription: MusicXML
+            UTTypeIdentifier: org.w3c.music-notation.musicxml.uncompressed
+            UTTypeTagSpecification:
+              public.filename-extension: [musicxml]
+              public.mime-type: [application/vnd.recordare.musicxml+xml]
         UTExportedTypeDeclarations:
           - UTTypeConformsTo: [public.data]
             UTTypeDescription: Stand backup
