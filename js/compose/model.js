@@ -354,6 +354,17 @@ function pieceList(e, s, len, time) {
   return parts.map((pc, i) => { const ev = { ...clone(e), id: i ? newId() : e.id, t: pc.t, dots: pc.dots, tup: null, notes: e.notes.map((n) => ({ ...n, tie: i < parts.length - 1 ? true : false })) }; const o = { s: p, ev }; p += pc.ticks; return o; });
 }
 export const clone = (o) => JSON.parse(JSON.stringify(o));
+// Lyrics: verse 1 on ev.lyric, the verses under it on ev.lyricV (verse 2 first). A syllable ending in
+// "-" joins the next one with a hyphen.
+export const MAX_VERSES = 6;
+export function lyricOf(ev, v = 1) { return v <= 1 ? ev.lyric || '' : (ev.lyricV && ev.lyricV[v - 2]) || ''; }
+export function setLyric(ev, v, text) {
+  if (v <= 1) { if (text) ev.lyric = text; else delete ev.lyric; return; }
+  const a = ev.lyricV ? ev.lyricV.slice() : []; while (a.length < v - 1) a.push('');
+  a[v - 2] = text || ''; while (a.length && !a[a.length - 1]) a.pop();
+  if (a.length) ev.lyricV = a; else delete ev.lyricV;
+}
+export function versesOf(ev) { return ev.lyricV && ev.lyricV.length ? ev.lyricV.length + 1 : ev.lyric ? 1 : 0; }
 
 // Make an event at a position a rest (keeps the bar full).
 export function clearEvent(score, st, m, evId) {

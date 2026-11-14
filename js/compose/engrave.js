@@ -5,9 +5,18 @@
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
 import { voiceView, hasVoice2, hasVoice, VOICES, voiceKey,
-  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff,
+  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf,
 } from './model.js';
 
+const LYR_LINE = 2.6;   // from one verse to the next, in staff spaces
+// the width of a syllable (size 1.8) before anything is drawn
+let lyCtx = null;
+function lyricW(str) {
+  try {
+    if (!lyCtx) lyCtx = (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(8, 8) : document.createElement('canvas')).getContext('2d');
+    lyCtx.font = `100px ${TEXT_FONT}`; return lyCtx.measureText(str).width * 1.8 / 100;
+  } catch { return str.length * 0.9; }
+}
 // ---------- glyphs (SMuFL code points) ----------
 export const GL = {
   orn: { mord: '', prall: '', turn: '', turnInv: '', stopped: '', open: '', snapA: '', snapB: '', fermSA: '', fermSB: '', fermLA: '', fermLB: '', caes: '', trem2: '', trem3: '', arp: '', wiggle: '', tr: '' },
@@ -61,7 +70,12 @@ export const DYNAMICS = ['pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff',
 
 // ---------- spacing ----------
 const space = (ticks) => 1.3 + 1.65 * Math.log2(1 + (ticks / (WHOLE / 4)) * 2.2);
-const HEAD_W = 1.18, STEM_LEN = 3.5, STEM_T = 0.12;
+let HEAD_W = 1.18, STEM_LEN = 3.5, GSZ = 4, BEAM_K = 1; const STEM_T = 0.12;
+// cue notes and small notes: the same places, drawn smaller (a cue three quarters of the size, as printed parts have)
+const CUE_K = 0.72;
+// how many lines a staff has: one for a drum or a cymbal on its own (st.lines, chosen on the staff, wins)
+export function linesOf(s) { return (s.st && (s.st.base || s.st).lines) || (s.inst && s.inst.lines) || 5; }
+function sized(ev) { const k = ev && (ev.cue || ev.small) ? CUE_K : 1; HEAD_W = 1.18 * k; STEM_LEN = 3.5 * k; GSZ = 4 * k; BEAM_K = k; }
 
 function keyPositions(fifths, clef) {
   if (!fifths || clef === 'perc') return [];
@@ -123,6 +137,7 @@ export function layoutScore(score, opts = {}) {
         const o = onsets.get(p) || { acc: 0, dots: 0, full: false, grace: 0 };
         if (ev.grace && ev.notes) o.grace = Math.max(o.grace, 1 + (ev.graceMore ? ev.graceMore.length : 0));
         if (ev.clef) o.clef = 1;
+        if ((ev.lyric || ev.lyricV) && !ev.grace) for (let v = 1, nv = versesOf(ev); v <= nv; v++) { const sy = lyricOf(ev, v); if (!sy) continue; o.ly = Math.max(o.ly || 0, lyricW(sy.replace(/-$/, ''))); if (/-$/.test(sy)) o.lyH = 1; }
         if (ev.full) o.full = true;
         if (ev.dots) o.dots = Math.max(o.dots, ev.dots);
         if (ev.notes && ev.notes.some((n) => n.a || n.cau)) { o.acc = Math.max(o.acc, n0acc(ev)); hasAcc = true; }
@@ -138,6 +153,16 @@ export function layoutScore(score, opts = {}) {
       const o = onsets.get(t);
       return { t, w: space(next - t) + (o.dots ? 0.45 * o.dots : 0), pre: (o.acc ? 1.1 * o.acc : 0) + (o.grace ? 2.3 + 1.45 * (o.grace - 1) : 0) + (o.clef ? 2.8 : 0) };
     });
+    // words under the notes need their room: a syllable never runs into the next one
+    for (let i = 0; i < segs.length; i++) {
+      const o = onsets.get(times[i]); if (!o.ly) continue;
+      let j = i + 1; while (j < times.length && !onsets.get(times[j]).ly) j++;
+      const nx = j < times.length ? onsets.get(times[j]) : null;
+      const need = nx ? o.ly / 2 + nx.ly / 2 + (o.lyH ? 1.6 : 0.8) : o.ly / 2 + 0.8;
+      let have = 0; for (let q = i; q < j && q < segs.length; q++) have += segs[q].w + (q > i ? segs[q].pre : 0);
+      if (nx) have += segs[j].pre;
+      if (have < need) segs[j - 1 < segs.length ? j - 1 : segs.length - 1].w += need - have;
+    }
     const allFull = times.length === 1 && onsets.get(0).full;
     let ideal = 1.3 + segs.reduce((a, s) => a + s.w + s.pre, 0);
     if (allFull) ideal = Math.max(ideal, 20);          // empty bars as wide as a written bar of quavers (about four to a line, as Sibelius)
@@ -252,7 +277,8 @@ export function layoutScore(score, opts = {}) {
     if (!i) return;
     const base = shown[i - 1].pi === s.pi ? staffGapSame : staffGapOther;
     const need = ext[i - 1].below + ext[i].above + 0.6;
-    const g = Math.max(base, Math.min(need, base + GROW));
+    // (lyrics always get their room, every verse: words must never run into the next staff)
+    const g = Math.max(base, Math.min(need, base + GROW), ext[i - 1].lyrB ? ext[i - 1].lyrB + 1.4 + Math.min(ext[i].above, 2.5) : 0);
     gapAbove.set(s.k, Math.max(gapAbove.get(s.k) || 0, g));
   });
   // the distance from one system to the next: one for the whole score
@@ -261,7 +287,7 @@ export function layoutScore(score, opts = {}) {
   let sysGap = sysBase;
   for (let i = 1; i < plan.length; i++) {
     const a = plan[i - 1].ext, b = plan[i].ext;
-    sysGap = Math.max(sysGap, Math.min(a[a.length - 1].below + b[0].above + 1, sysBase + GROW));
+    sysGap = Math.max(sysGap, Math.min(a[a.length - 1].below + b[0].above + 1, sysBase + GROW), a[a.length - 1].lyrB ? a[a.length - 1].lyrB + 1.6 + Math.min(b[0].above, 2.5) : 0);
   }
   let pageNext = false;
   for (const [si, sy] of systems.entries()) {
@@ -314,7 +340,7 @@ function titleHeight(score, spMm, opts) {
 
 // How far notes reach above and below the staff in a system (sp beyond the staff).
 function staffExtent(score, s, sy, concert) {
-  let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false;
+  let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false; let nVerse = 0;
   for (const mm of sy.measures) for (let m = mm.m; m <= mm.end; m++) {
     const clef0 = clefAt(s.st, m);
     const time = timeAt(score, m), all = [];
@@ -325,7 +351,7 @@ function staffExtent(score, s, sy, concert) {
       if (ev.txt) above = Math.max(above, 2.8);
       if (ev.fing || ev.str) above = Math.max(above, 1.6 + (ev.fing ? 1.45 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0) + (ev.str ? 1.6 : 0));
       if (ev.chord) above = Math.max(above, ev.txt ? 5.2 : 3.4);
-      if (ev.lyric) hasLyr = true;
+      if (ev.lyric || ev.lyricV) { hasLyr = true; nVerse = Math.max(nVerse, versesOf(ev)); }
       if (!ev.notes) continue;
       for (const n0 of ev.notes) {
         const n = concert ? n0 : toWritten(n0, s.inst);
@@ -360,11 +386,11 @@ function staffExtent(score, s, sy, concert) {
   for (let m = mA; m <= mB; m++) { const ms = score.measures[m]; if (ms && (ms.mark || ms.jump)) above = Math.max(above, 3.2); }
   // lyrics run on one line for the whole system, under the lowest note (and the dynamics)
   let lyr = 0;
-  if (hasLyr) { lyr = Math.max(4.2, notesBelow + 2.6, hasDyn ? Math.max(3.0, notesBelow + 2.9) + 2.6 : 0); below = Math.max(below, lyr + 1.2); }
+  if (hasLyr) { lyr = Math.max(4.2, notesBelow + 2.6, hasDyn ? Math.max(3.0, notesBelow + 2.9) + 2.6 : 0); below = Math.max(below, lyr + 1.2 + (Math.max(1, nVerse) - 1) * LYR_LINE); }
   s.lyr = lyr;
   // dynamics and hairpins sit under the lowest note, so they need that room as well
   if (hasDyn) below = Math.max(below, Math.max(3.0, notesBelow + 2.9) + 0.9);
-  return { above: above + 0.8, below: below + 0.8, lyr };
+  return { above: above + 0.8, below: below + 0.8, lyr, lyrB: hasLyr ? lyr + (Math.max(1, nVerse) - 1) * LYR_LINE + 0.6 : 0 };
 }
 
 // =====================================================================
@@ -407,7 +433,7 @@ function drawTitle(ctx, lay) {
 let CUR_MARK = null;
 // a box that can be tapped to choose what is drawn there (a clef, a time signature, a tempo...)
 const hitBox = (o, x0, x1, y0, y1) => { if (CUR_HIT && CUR_HIT.marks) CUR_HIT.marks.push({ ...o, x0, x1, y0, y1 }); };
-export const glyph = (ctx, g, x, y, size = 4) => { if (CUR_MARK && CUR_HIT && CUR_HIT.marks) { const m = gm(g), k = size / 4; CUR_HIT.marks.push({ ...CUR_MARK, x0: x + m.l * k, x1: x + m.r * k, y0: y - m.a * k, y1: y + m.d * k }); } ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100); ctx.font = `100px ${MUSIC_FONT}`; ctx.textAlign = 'left'; ctx.fillText(g, 0, 0); ctx.restore(); };
+export const glyph = (ctx, g, x, y, size = GSZ) => { if (CUR_MARK && CUR_HIT && CUR_HIT.marks) { const m = gm(g), k = size / 4; CUR_HIT.marks.push({ ...CUR_MARK, x0: x + m.l * k, x1: x + m.r * k, y0: y - m.a * k, y1: y + m.d * k }); } ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100); ctx.font = `100px ${MUSIC_FONT}`; ctx.textAlign = 'left'; ctx.fillText(g, 0, 0); ctx.restore(); };
 // Text in sp units: font is a CSS font without size, e.g. 'italic 600' + family
 export function text(ctx, str, x, y, size, font = TEXT_FONT, style = '', align = 'left') {
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100);
@@ -425,7 +451,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   const top = staves[0].y, bottom = staves[staves.length - 1].y + 4;
   ctx.lineCap = 'butt';
   // staff lines
-  for (const s of staves) for (let l = 0; l < 5; l++) line(ctx, x0, s.y + l, x1, s.y + l, 0.13);
+  for (const s of staves) for (let l = 0; l < 5; l++) if (linesOf(s) === 5 || l === 2) line(ctx, x0, s.y + l, x1, s.y + l, 0.13);
   // system line, brackets and braces
   if (staves.length > 1) line(ctx, x0, top, x0, bottom, 0.16);
   drawBrackets(ctx, sys, staves);
@@ -908,7 +934,9 @@ function drawBarline(ctx, type, x, staves, lay) {
   let cur = null;
   for (const s of staves) {
     const join = cur && (cur.pi === s.pi || (cur.fam === s.inst.fam && !['keys', 'pluck', 'voice'].includes(s.inst.fam)));
-    if (join) { cur.b = s.y + 4; cur.pi = s.pi; } else { cur = { t: s.y, b: s.y + 4, pi: s.pi, fam: s.inst.fam }; groups.push(cur); }
+    // (a one-line staff: the barline a space above and below its line)
+    const one = linesOf(s) === 1;
+    if (join) { cur.b = s.y + (one ? 3 : 4); cur.pi = s.pi; } else { cur = { t: s.y + (one ? 1 : 0), b: s.y + (one ? 3 : 4), pi: s.pi, fam: s.inst.fam }; groups.push(cur); }
   }
   for (const g of groups) {
     if (type === 'final') { line(ctx, x - 1.15, g.t, x - 1.15, g.b, 0.16); ctx.fillRect(x - 0.5, g.t, 0.5, g.b - g.t); }
@@ -920,7 +948,7 @@ function drawBarline(ctx, type, x, staves, lay) {
   }
 }
 function drawRepeatStart(ctx, x, staves) {
-  const t = staves[0].y, b = staves[staves.length - 1].y + 4;
+  const t = staves[0].y + (linesOf(staves[0]) === 1 ? 1 : 0), b = staves[staves.length - 1].y + (linesOf(staves[staves.length - 1]) === 1 ? 3 : 4);
   ctx.fillRect(x, t, 0.5, b - t); line(ctx, x + 1.15, t, x + 1.15, b, 0.16);
   for (const s of staves) { glyph(ctx, GL.repeatDot, x + 1.7, s.y + 1.5); glyph(ctx, GL.repeatDot, x + 1.7, s.y + 2.5); }
 }
@@ -976,7 +1004,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     const len = ticksOf(ev, time);
     const ott = ottavaAt(score, s.st.id, m, p);
     const x = ev.full ? (hm.cx0 + mm.x1) / 2 - 0.9 : xs.get(p) ?? hm.cx0;
-    const e = { ev, pos: p, len, x, notes: [] };
+    const e = { ev, pos: p, len, x, notes: [], unpitched: !!(s.inst && s.inst.xhead) };
     if (ev.clef && ev.clef !== curClef && CLEFS[ev.clef]) {
       curClef = ev.clef; bottom = CLEFS[ev.clef].bottom;
       const accW = ev.notes && ev.notes.some((n) => n.a) ? 1.1 : 0;
@@ -1004,9 +1032,11 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   }
   // stems and beams
   const groups = beamGroups(evs, time);
+  // (drums and cymbals: stems up, as percussion is written)
+  const percUp = !!(s.inst && s.inst.unpitched);
   for (const e of evs) if (e.notes.length) {
     const avg = (e.notes[0].p + e.notes[e.notes.length - 1].p) / 2;
-    e.up = e.ev.stem ? e.ev.stem === 'up' : avg < 4;
+    e.up = e.ev.stem ? e.ev.stem === 'up' : percUp || avg < 4;
   }
   if (opts.voiceDir) for (const e of evs) { e.up = opts.voiceDir === 'up'; e.restDy = (opts.voiceDir === 'up' ? -2 : 2) * ((opts.voiceNo || 1) > 2 ? 2 : 1); }
   if (opts.voice2) {
@@ -1021,7 +1051,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     if (opts.voiceDir) { for (const e of g) { e.up = opts.voiceDir === 'up'; e.beamed = g; } continue; }
     const ps = g.flatMap((e) => e.notes.map((n) => n.p));
     const far = ps.reduce((a, q) => (Math.abs(q - 4) > Math.abs(a - 4) ? q : a), 4);
-    let up = far < 4 || (far === 4 && ps.reduce((a, q) => a + q, 0) / ps.length < 4);
+    let up = percUp || far < 4 || (far === 4 && ps.reduce((a, q) => a + q, 0) / ps.length < 4);
     // a stem turned by hand turns the whole beamed group
     const forced = g.find((e) => e.ev.stem);
     if (forced) up = forced.ev.stem === 'up';
@@ -1032,12 +1062,15 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   for (const e of evs) {
     const c = color(e);
     if (c) { ctx.save(); ctx.fillStyle = c; ctx.strokeStyle = c; }
-    if (e.ev.rest) drawRest(ctx, e, s.y + (e.restDy || 0) / 2, time);
+    sized(e.ev);
+    // (on a one-line staff a whole-bar rest hangs from its line)
+    if (e.ev.rest) drawRest(ctx, e, s.y + (e.restDy || 0) / 2 + (linesOf(s) === 1 && (e.ev.full || e.ev.t === 1) ? 1 : 0), time);
     else {
       // notes the instrument cannot play are shown in red while writing (never in print)
       if (opts.ranges && s.inst && s.inst.range && !s.inst.unpitched) { const [lo, hi] = s.inst.range; e.outOf = new Set(e.notes.filter((n) => { const md = midiOf(n.src.s, n.src.a); return md < lo || md > hi; }).map((n) => n)); }
       drawChord(ctx, e, s.y, accFor);
     }
+    sized(null);
     if (c) ctx.restore();
     const hx = e.ev.rest ? e.x : e.x;
     const ev = { id: e.ev.id, m, pos: e.pos, len: e.len, x: hx, staff: s.k, y: s.y + (e.ev.rest ? (e.restDy || 0) / 2 : 0), up: e.up, voice: opts.voice2 ? (opts.voiceNo || 2) : 1, notes: e.notes.map((n) => ({ p: n.p, y: yOf(s.y, n.p), s: n.src.s })), rest: !!e.ev.rest, tup: !!e.ev.tup };
@@ -1045,10 +1078,11 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     hm.events.push(ev); hit.events.push(ev);
   }
   // beams
-  for (const g of groups) drawBeam(ctx, g, s.y, sel, opts);
+  for (const g of groups) { sized(g.every((e) => e.ev.cue || e.ev.small) ? g[0].ev : null); drawBeam(ctx, g, s.y, sel, opts); }
   // flags and stems for unbeamed notes
-  for (const e of evs) if (e.notes.length && !e.beamed) drawStemFlag(ctx, e, s.y, color(e));
-  for (const e of evs) if (e.notes.length && e.ev.art) drawTrem(ctx, e, s.y);
+  for (const e of evs) if (e.notes.length && !e.beamed) { sized(e.ev); drawStemFlag(ctx, e, s.y, color(e)); }
+  for (const e of evs) if (e.notes.length && e.ev.art) { sized(e.ev); drawTrem(ctx, e, s.y); }
+  sized(null);
   // where each stem ends (slurs on the stem side attach there)
   for (const e of evs) if (e.hitRef && e.stemTip !== undefined) { e.hitRef.stemTip = e.stemTip; e.hitRef.stemX = e.stemX; }
   // tuplet brackets
@@ -1060,7 +1094,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
       if (!n.src.tie) continue;
       const nx = evs[i + 1];
       const below = e.up;
-      const x0 = e.x + HEAD_W + 0.15, y0 = yOf(s.y, n.p) + (below ? 0.45 : -0.45);
+      const x0 = e.x + HEAD_W * (e.ev.cue || e.ev.small ? CUE_K : 1) + 0.15, y0 = yOf(s.y, n.p) + (below ? 0.45 : -0.45);
       const x1 = nx ? nx.x - 0.15 : mm.x1 - 0.4;
       drawTie(ctx, x0, x1, y0, below);
       hitBox({ id: ev0Id(e), kind: 'tie', name: 'tie', m }, x0, x1, y0 + (below ? 0 : -1.0), y0 + (below ? 1.0 : 0));
@@ -1127,16 +1161,20 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
       text(ctx, prettyChord(ev.chord), e.x, cy, 2.0, '"Helvetica Neue", Arial, sans-serif', '600');
       hitBox({ id: ev.id, kind: 'chord', name: ev.chord, m }, e.x - 0.3, e.x + textWidth(ctx, prettyChord(ev.chord), 2.0, '"Helvetica Neue", Arial, sans-serif', '600') + 0.3, cy - 2.0, cy + 0.5);
     }
-    if (ev.lyric) {
-      // a syllable under the note, centred; a hyphen joins it to the next one
-      const ly = s.y + 4 + Math.max(s.lyr || 4.2, dynLine + (evs.some((q) => q.ev.dyn || q.ev.hp) ? 2.6 : 0));
-      const w = textWidth(ctx, ev.lyric.replace(/-$/, ''), 1.8);
-      text(ctx, ev.lyric.replace(/-$/, ''), e.x + HEAD_W / 2 - w / 2, ly, 1.8);
-      hitBox({ id: ev.id, kind: 'lyric', name: ev.lyric, m }, e.x + HEAD_W / 2 - w / 2 - 0.3, e.x + HEAD_W / 2 + w / 2 + 0.3, ly - 1.7, ly + 0.5);
-      if (/-$/.test(ev.lyric)) {
-        const nx = evs.slice(i + 1).find((q) => q.ev.lyric);
-        const x0 = e.x + HEAD_W / 2 + w / 2 + 0.3, x1 = nx ? nx.x + HEAD_W / 2 - textWidth(ctx, nx.ev.lyric.replace(/-$/, ''), 1.8) / 2 - 0.3 : mm.x1 - 0.4;
-        if (x1 - x0 > 0.6) { const mx = (x0 + x1) / 2; ctx.fillRect(mx - 0.4, ly - 0.55, 0.8, 0.13); }
+    if (ev.lyric || ev.lyricV) {
+      // a syllable under the note, centred; a hyphen joins it to the next one; each verse on its own line
+      const ly0 = s.y + 4 + Math.max(s.lyr || 4.2, dynLine + (evs.some((q) => q.ev.dyn || q.ev.hp) ? 2.6 : 0));
+      for (let v = 1, nv = versesOf(ev); v <= nv; v++) {
+        const sy = lyricOf(ev, v); if (!sy) continue;
+        const ly = ly0 + (v - 1) * LYR_LINE, word = sy.replace(/-$/, '');
+        const w = textWidth(ctx, word, 1.8);
+        text(ctx, word, e.x + HEAD_W / 2 - w / 2, ly, 1.8);
+        hitBox({ id: ev.id, kind: 'lyric', name: sy, verse: v, m }, e.x + HEAD_W / 2 - w / 2 - 0.3, e.x + HEAD_W / 2 + w / 2 + 0.3, ly - 1.7, ly + 0.5);
+        if (/-$/.test(sy)) {
+          const nx = evs.slice(i + 1).find((q) => lyricOf(q.ev, v));
+          const x0 = e.x + HEAD_W / 2 + w / 2 + 0.3, x1 = nx ? nx.x + HEAD_W / 2 - textWidth(ctx, lyricOf(nx.ev, v).replace(/-$/, ''), 1.8) / 2 - 0.3 : mm.x1 - 0.4;
+          if (x1 - x0 > 0.6) { const mx = (x0 + x1) / 2; ctx.fillRect(mx - 0.4, ly - 0.55, 0.8, 0.13); }
+        }
       }
     }
     if (ev.hp === '<' || ev.hp === '>') {
@@ -1316,7 +1354,7 @@ function drawBeam(ctx, g, sy, sel, opts) {
     if (!up && cur < need) y0 += need - cur;
   }
   const levels = (e) => Math.max(1, Math.log2(e.ev.t) - 2);
-  const thick = 0.5, gap = 0.75;
+  const thick = 0.5 * BEAM_K, gap = 0.75 * BEAM_K;
   // stems up to the beam
   for (const s of ends) {
     s.e.stemTip = at(s.x) + (up ? -0.25 : 0.25); s.e.stemX = s.x;

@@ -373,8 +373,10 @@ function drawHover() {
     const shown = concert ? n : M.toWritten(n, tg.staff.inst);
     const key = concert ? M.keyAt(C.score, tg.meas.m) : M.writtenKey(M.keyAt(C.score, tg.meas.m), tg.staff.inst);
     const acc = shown.a !== M.keyAlter(key, shown.s) || C.tool.acc !== null ? shown.a : null;
-    drawGhost(g, x, tg.staff.y, tg.p, C.tool.dur, acc, color);
-    if (C.placing) {
+    // (a drum or a cymbal: its note is always on the middle line, where it will be drawn)
+    const un = tg.staff.inst && tg.staff.inst.unpitched;
+    drawGhost(g, x, tg.staff.y, un ? 4 : tg.p, C.tool.dur, un ? null : acc, color);
+    if (C.placing && !un) {
       // the name of the note, so a slide up or down is easy to follow
       g.save(); g.fillStyle = color;
       text(g, M.noteName(n.s, n.a), x + HEAD_W + 1, tg.staff.y + 4 - tg.p / 2 - 1.4, 1.7, '-apple-system, sans-serif', '600'); g.restore();
@@ -700,7 +702,7 @@ function tapSelect(cx, cy, add) {
 }
 function clearSel() { C.extend = false; if (C.markSel) { C.markSel = null; syncSelBar(); drawHover(); } if (!C.sel.size && !C.selBars) return; C.sel.clear(); C.selBars = null; relayout(); syncSelBar(); renderTab(); }
 
-const KEEP_MARKS = ['art', 'dyn', 'txt', 'txtStyle', 'fing', 'lyric', 'chord', 'stem'];
+const KEEP_MARKS = ['art', 'dyn', 'txt', 'txtStyle', 'fing', 'lyric', 'lyricV', 'chord', 'stem', 'cue', 'small'];
 // Write the note (or rest) the pen just placed.
 function commitWrite(tg) {
   const st = M.voiceView(tg.staff.st, C.tool.voice || 1, C.score), m = tg.meas.m, pos = tg.t;
@@ -1426,7 +1428,7 @@ function deleteMark(mk) {
     else if (mk.kind === 'fing') delete f.ev.fing;
     else if (mk.kind === 'tie') for (const n of f.ev.notes || []) n.tie = false;
     else if (mk.kind === 'chord') delete f.ev.chord;
-    else if (mk.kind === 'lyric') delete f.ev.lyric;
+    else if (mk.kind === 'lyric') M.setLyric(f.ev, mk.verse || 1, '');
     else if (mk.kind === 'evclef') delete f.ev.clef;
   });
   C.markSel = null; relayout(); syncSelBar(); drawHover();
@@ -1585,6 +1587,14 @@ function graceAcc(a) {
   const f = evs[0]; unlock(); sampler.preview(soundOf(f.part), M.midiOf(f.ev.grace.s, f.ev.grace.a || 0), 0.55, 0.3, f.part.mix || undefined);
 }
 // Note heads: for the whole chord, or (harmonics) only its top note.
+// Cue notes (small, not played: another part's music to come in by) and small notes (played)
+function setSize(k) {
+  const evs = selEvents();
+  if (!evs.length) { hint('Select the notes first.'); return; }
+  const on = evs.every((f) => f.ev[k]);
+  edit(() => { for (const f of evs) { delete f.ev.cue; delete f.ev.small; if (!on) f.ev[k] = true; } }, { keepSel: true });
+  hint(on ? 'Normal size again.' : k === 'cue' ? 'Cue notes: small, and not played.' : 'Small notes: played, and drawn small.');
+}
 function setHead(head, topOnly) {
   const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest);
   if (!evs.length) {
@@ -1727,6 +1737,12 @@ function renderTab() {
     }
     const gh2 = grid('two');
     gh2.append(mbtn('Harmonic', 'Harmonic: diamond on the top note of the chord (artificial harmonic)', !!(evs[0] && evs[0].ev.notes && evs[0].ev.notes.length > 1 && evs[0].ev.notes[evs[0].ev.notes.length - 1].head === 'harm'), () => setHead('harm', true), { draw: (gg, W, H) => { glyph(gg, GL.noteBlack, W / 2 - 0.6, H / 2 + 1.1, 3.4); glyph(gg, GL.heads.harm[2], W / 2 - 0.6, H / 2 - 0.6, 3.4); }, small: 'top note ◇' }));
+    lab('Size');
+    const gz = grid('two');
+    const zOn = (k) => !!(evs.length && evs.every((f) => f.ev[k]));
+    const zIcon = (k) => (gg, W, H) => { glyph(gg, GL.noteBlack, W * 0.22, H * 0.66, 3.4); glyph(gg, GL.noteBlack, W * 0.6, H * 0.6, 3.4 * 0.72); if (k === 'cue') { gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.52, H * 0.28); gg.lineTo(W * 0.9, H * 0.28); gg.stroke(); } };
+    gz.append(mbtn('Cue notes', 'Cue notes: small, to show another part (not played)', zOn('cue'), () => setSize('cue'), { draw: zIcon('cue'), small: 'not played' }));
+    gz.append(mbtn('Small notes', 'Small notes: played, drawn small (an optional note, an ossia)', zOn('small'), () => setSize('small'), { draw: zIcon('small'), small: 'played' }));
   } else if (C.tab === 'art') {
     const g = grid();
     for (const [a, name] of [['stacc', 'Staccato'], ['stacciss', 'Staccatissimo'], ['ten', 'Tenuto'], ['acc', 'Accent'], ['marc', 'Marcato'], ['ferm', 'Fermata'],
@@ -1808,16 +1824,19 @@ function renderTab() {
     const entry = (label, key, ph) => {
       const row = el('div', 'cp-row');
       const inp = el('input'); inp.placeholder = ph; inp.setAttribute('aria-label', label); inp.autocapitalize = 'off'; inp.spellcheck = false;
-      if (evs[0] && evs[0].ev[key]) inp.value = evs[0].ev[key];
+      const ly = key === 'lyric';
+      const getK = (ev) => ly ? M.lyricOf(ev, C.verse || 1) : ev[key] || '';
+      const setK = (ev, v) => { if (ly) M.setLyric(ev, C.verse || 1, v); else if (v) ev[key] = v; else delete ev[key]; };
+      if (evs[0] && getK(evs[0].ev)) inp.value = getK(evs[0].ev);
       const go = el('button', 'btn small primary', 'Next ›');
       const put = () => {
         const cur = selEvents()[0]; if (!cur) { hint('Select the first note, then type.'); return; }
         const v = inp.value.trim();
-        edit(() => { if (v) cur.ev[key] = v; else delete cur.ev[key]; }, { keepSel: true });
+        edit(() => setK(cur.ev, v), { keepSel: true });
         let nx = M.nextEvent(C.score, cur.st, cur.m, cur.i);
         let guard = 0; while (nx && nx.ev.rest && guard++ < 64) nx = M.nextEvent(C.score, cur.st, nx.m, nx.i);
         if (nx) { C.sel.clear(); C.sel.add(nx.ev.id); relayout(); syncSelBar(); }
-        inp.value = nx && nx.ev[key] ? nx.ev[key] : '';
+        inp.value = nx ? getK(nx.ev) : '';
         inp.focus();
       };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' || (key === 'lyric' && e.key === ' ')) { e.preventDefault(); put(); } else if (key === 'lyric' && e.key === '-') { e.preventDefault(); inp.value = inp.value.replace(/-$/, '') + '-'; put(); } });
@@ -1825,6 +1844,17 @@ function renderTab() {
       row.append(inp, go); body.append(row);
     };
     lab('Lyrics');
+    {
+      // which verse the syllables go to (each verse is a line of its own under the staff)
+      const row = el('div', 'cp-row cp-verses'); row.setAttribute('role', 'group'); row.setAttribute('aria-label', 'Verse');
+      row.append(el('span', 'cp-verse-l', 'Verse'));
+      for (let v = 1; v <= M.MAX_VERSES; v++) {
+        const b = el('button', 'btn small' + ((C.verse || 1) === v ? ' on' : ''), String(v)); b.setAttribute('aria-pressed', String((C.verse || 1) === v)); b.setAttribute('aria-label', 'Verse ' + v);
+        b.addEventListener('click', () => { C.verse = v; renderTab(); const i2 = document.querySelector('.cp-row input[aria-label="Lyrics"]'); if (i2) i2.focus(); });
+        row.append(b);
+      }
+      body.append(row);
+    }
     entry('Lyrics', 'lyric', 'Syllable, then space or -');
     lab('Chord symbols');
     entry('Chord symbol', 'chord', 'C, Am7, F#m7b5, G/B…');

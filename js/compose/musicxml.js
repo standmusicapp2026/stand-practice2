@@ -2,7 +2,7 @@
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
 import { hasVoice2, hasVoice, voiceView,
-  WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
+  WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval, lyricOf, versesOf, setLyric, MAX_VERSES,
 } from './model.js';
 import * as M0 from './model.js';
 
@@ -61,6 +61,7 @@ export function toMusicXML(score0) {
           attrs.push(`<clef${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><sign>${sign}</sign>${line ? `<line>${line}</line>` : ''}${oct ? `<clef-octave-change>${oct}</clef-octave-change>` : ''}</clef>`);
         }
       });
+      if (m === 0) p.staves.forEach((st, si) => { const nl = st.lines || inst.lines || 5; if (nl !== 5) attrs.push(`<staff-details${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><staff-lines>${nl}</staff-lines></staff-details>`); });
       if (m === 0 && inst.tr && (inst.tr.semis || inst.tr.steps)) attrs.push(`<transpose><diatonic>${inst.tr.steps}</diatonic><chromatic>${inst.tr.semis}</chromatic></transpose>`);
       if (attrs.length) w(`<attributes>${attrs.join('')}</attributes>`);
       if (ms.tempo && pi === 0) {
@@ -114,7 +115,7 @@ export function toMusicXML(score0) {
             return s;
           };
           if (ev.rest || !ev.notes || !ev.notes.length) {
-            w(`<note><rest${ev.full ? ' measure="yes"' : ''}/>${common(true)}<voice>${voice}</voice>${ev.full ? '' : `<type>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}`}${tupXml(ev)}${headXml(ev.head)}${staffTag}${notations(ev, null, true)}</note>`);
+            w(`<note>${ev.cue ? '<cue/>' : ''}<rest${ev.full ? ' measure="yes"' : ''}/>${common(true)}<voice>${voice}</voice>${ev.full ? '' : `<type${ev.cue || ev.small ? ' size="cue"' : ''}>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}`}${tupXml(ev)}${headXml(ev.head)}${staffTag}${notations(ev, null, true)}</note>`);
             continue;
           }
           if (ev.chord) w(harmonyXml(ev.chord, staffTag));
@@ -134,8 +135,8 @@ export function toMusicXML(score0) {
             const sc = ((n.s % 7) + 7) % 7, oct = Math.floor(n.s / 7);
             const pitch = inst.unpitched ? `<unpitched><display-step>${STEP_NAMES[sc]}</display-step><display-octave>${oct}</display-octave></unpitched>` : `<pitch><step>${STEP_NAMES[sc]}</step>${n.a ? `<alter>${n.a}</alter>` : ''}<octave>${oct}</octave></pitch>`;
             const tieIn = isTiedFrom(voice % 4 !== 1 ? voiceView(st, ((voice - 1) % 4) + 1, score) : st, m, ev, n0);
-            const ties = (tieIn ? '<tie type="stop"/>' : '') + (n0.tie ? '<tie type="start"/>' : '');
-            w(`<note>${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${n0.cau ? `<accidental parentheses="yes" cautionary="yes">${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[n.a || 0]}</accidental>` : ''}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && ev.lyric ? lyricXml(ev.lyric, lyrState) : ''}</note>`);
+            const ties = ev.cue ? '' : (tieIn ? '<tie type="stop"/>' : '') + (n0.tie ? '<tie type="start"/>' : '');
+            w(`<note>${ev.cue ? '<cue/>' : ''}${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type${ev.cue || ev.small ? ' size="cue"' : ''}>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${n0.cau ? `<accidental parentheses="yes" cautionary="yes">${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[n.a || 0]}</accidental>` : ''}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && (ev.lyric || ev.lyricV) ? lyricsXml(ev, lyrState) : ''}</note>`);
           });
         }
         }
@@ -166,12 +167,15 @@ function isTiedFrom(st, m, ev, n) {
   const prev = i > 0 ? bar[i - 1] : m > 0 ? st.bars[m - 1][st.bars[m - 1].length - 1] : null;
   return !!(prev && prev.notes && prev.notes.some((q) => q.tie && q.s === n.s));
 }
-function lyricXml(l, st) {
+function lyricXml(l, st, v = 1) {
   const cont = /-$/.test(l), text = l.replace(/-$/, '');
-  const syl = st.hyph ? (cont ? 'middle' : 'end') : (cont ? 'begin' : 'single');
-  st.hyph = cont;
-  return `<lyric number="1"><syllabic>${syl}</syllabic><text>${esc(text)}</text></lyric>`;
+  const h = st.h || (st.h = {});
+  const syl = h[v] ? (cont ? 'middle' : 'end') : (cont ? 'begin' : 'single');
+  h[v] = cont;
+  return `<lyric number="${v}"><syllabic>${syl}</syllabic><text>${esc(text)}</text></lyric>`;
 }
+// every verse of the note's lyrics
+function lyricsXml(ev, st) { let x = ''; for (let v = 1, n = versesOf(ev); v <= n; v++) { const l = lyricOf(ev, v); if (l) x += lyricXml(l, st, v); } return x; }
 const KINDS = [['maj7', 'major-seventh'], ['m7b5', 'half-diminished'], ['m7', 'minor-seventh'], ['dim7', 'diminished-seventh'], ['dim', 'diminished'], ['°', 'diminished'], ['aug', 'augmented'], ['+', 'augmented'], ['sus4', 'suspended-fourth'], ['sus2', 'suspended-second'], ['m6', 'minor-sixth'], ['m', 'minor'], ['13', 'dominant-13th'], ['11', 'dominant-11th'], ['9', 'dominant-ninth'], ['7', 'dominant'], ['6', 'major-sixth'], ['', 'major']];
 function harmonyXml(c, staffTag) {
   const mm = /^([A-G])([#b]?)(.*?)(?:\/([A-G])([#b]?))?$/.exec(c.trim());
@@ -495,6 +499,7 @@ export function fromMusicXML(xmlText) {
   if (rootTag !== 'score-partwise' && rootTag !== 'score-timewise') throw new Error('This file is not MusicXML.');
   doc = partwise(doc);
   for (const k of Object.keys(TUPC)) delete TUPC[k];
+  const lyrNames = new Map();
   const q = (el, sel) => el.querySelector(sel);
   const txt = (el, sel) => { const e = sel ? q(el, sel) : el; return e ? e.textContent.trim() : ''; };
   const title = txt(doc, 'work > work-title') || txt(doc, 'movement-title') || txt(doc, 'credit-words') || 'Imported score';
@@ -565,6 +570,7 @@ export function fromMusicXML(xmlText) {
     if (last > 0 && score.measures[0].pickup && !score.measures[last].len && lens[last] > 0 && Math.abs(lens[last] + score.measures[0].pickup - fl) <= 2) score.measures[last].len = lens[last];
   }
   partEls.forEach((pel, pi) => {
+    lyrNames.clear();
     const sp = listEls[pel.getAttribute('id')];
     let pname = (sp ? txt(sp, 'part-name') : '').replace(/\s+/g, ' ').trim();
     const gname = groupOf[pel.getAttribute('id')] || '', iname = sp ? txt(sp, 'score-instrument instrument-name') : '';
@@ -627,6 +633,12 @@ export function fromMusicXML(xmlText) {
             // (in the middle of the bar: on the next note, and in force from the next bar on)
             if (pos > 0) { pend[k].clef = clef; part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m + 1] = clef; }
             else if (m === 0) part.staves[k].clef = clef; else { part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m] = clef; }
+          }
+          // (one line for a drum or a cymbal; five when the file has five for it)
+          if (m === 0) for (const sd of el.querySelectorAll('staff-details')) {
+            const k = (+sd.getAttribute('number') || 1) - 1, nl = +txt(sd, 'staff-lines'); if (!part.staves[k] || !nl) continue;
+            const it = M0.instOf(part);
+            if (nl === 1 && it.unpitched) part.staves[k].lines = 1; else if (nl === 5 && it.lines === 1) part.staves[k].lines = 5;
           }
           if (q(el, 'transpose')) { tr = trOf(q(el, 'transpose')); if (!trSeen) { trSeen = true; const it = inst.tr || { steps: 0, semis: 0 }; if ((it.steps || 0) !== tr.steps || (it.semis || 0) !== tr.semis) part.tr = { ...tr }; } }
         // (the place in the bar is kept exact, and rounded to ticks only where a note is put)
@@ -710,6 +722,9 @@ export function fromMusicXML(xmlText) {
           if (!type) { const v = valueOf(dur); if (v) { ev.t = v.t; ev.dots = v.dots; } }
           if (q(el, 'rest') && q(el, 'rest').getAttribute('measure') === 'yes') ev = { id: newId(), rest: true, full: true, t: 1, dots: 0 };
           if (tm) ev.tup = { n: +txt(tm, 'actual-notes') || 3, m: +txt(tm, 'normal-notes') || 2, base: ev.t };
+          // (a cue: another part's notes, small and not played; small notes, played)
+          if ([...el.children].some((c) => c.tagName === 'cue')) ev.cue = true;
+          else if (q(el, 'type') && q(el, 'type').getAttribute('size') === 'cue') ev.small = true;
           // the duration in the file decides when the note type does not match it (or there is none):
           // the value that has that length, a note of a tuplet, or, when nothing has it, tied notes
           let drop = false, split = false;
@@ -768,7 +783,21 @@ export function fromMusicXML(xmlText) {
           if (!isChord && !inV2) {
             for (const key of ['dyn', 'hp', 'txt', 'txtStyle', 'chord', 'clef']) if (P[key]) { ev[key] = P[key]; delete P[key]; }
             if (P.grace) { if (!ev.rest && ev.notes) { ev.grace = { ...P.grace, dir: P.grace.s > ev.notes[0].s ? 1 : -1 }; if (P.graceMore) ev.graceMore = P.graceMore; } delete P.grace; delete P.graceMore; }
-            const ly = q(el, 'lyric'); if (ly && !ev.rest) { const sy = txt(ly, 'syllabic'); ev.lyric = txt(ly, 'text') + (sy === 'begin' || sy === 'middle' ? '-' : ''); }
+            if (!ev.rest) {
+              // each verse (lyric number 1, 2…; a name instead of a number keeps the order of the file)
+              const lys = [...el.children].filter((c) => c.tagName === 'lyric');
+              lys.forEach((ly, j) => {
+                const nm = ly.getAttribute('number'); let v = parseInt(nm, 10);
+                if (!(v >= 1) && !nm) v = j + 1;
+                if (!(v >= 1)) { const key = nm; if (!lyrNames.has(key)) lyrNames.set(key, lyrNames.size + 1); v = lyrNames.get(key); }
+                if (v > MAX_VERSES) return;
+                const words = [...ly.children].filter((c) => c.tagName === 'text').map((c) => c.textContent.trim()).filter(Boolean);
+                if (!words.length) return;
+                const sy = [...ly.children].filter((c) => c.tagName === 'syllabic').pop();
+                const syl = sy ? sy.textContent.trim() : '';
+                setLyric(ev, v, words.join('‿') + (syl === 'begin' || syl === 'middle' ? '-' : ''));
+              });
+            }
             for (const sp of openSpans) if (sp.k === k && !sp.a) sp.a = { m, pos: start };
             lastAt[k] = { m, pos: start };
           }
@@ -874,5 +903,13 @@ export function fromMusicXML(xmlText) {
   }
   // slurs and hairpins were read as marks on notes: turn them into lines
   delete score._v2spans;
+  // verses numbered 2 and 3 in the file (or by names) are the first and second lines of that part
+  for (const p of score.parts) {
+    const evs = []; for (const st of p.staves) for (const bars of [st.bars, ...[2, 3, 4].map((v) => st['v' + v]).filter(Boolean)]) for (const bar of bars) for (const ev of bar || []) if (ev.lyric || ev.lyricV) evs.push(ev);
+    const used = new Set(); for (const ev of evs) for (let v = 1, n = versesOf(ev); v <= n; v++) if (lyricOf(ev, v)) used.add(v);
+    const order = [...used].sort((a, b) => a - b);
+    if (order.every((v, i) => v === i + 1)) continue;
+    for (const ev of evs) { const ls = order.map((v) => lyricOf(ev, v)); delete ev.lyric; delete ev.lyricV; ls.forEach((l, i) => { if (l) setLyric(ev, i + 1, l); }); }
+  }
   return migrateScore(score);
 }

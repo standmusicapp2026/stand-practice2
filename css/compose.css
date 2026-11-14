@@ -56,6 +56,10 @@
 .cp-row { display: flex; gap: 6px; align-items: center; }
 .cp-row input { flex: 1; min-width: 0; min-height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-solid); color: var(--ink); font: 15px var(--font); padding: 0 10px; }
 .cp-row input.num { width: 74px; flex: none; font-family: var(--font-num); }
+.cp-verses { gap: 4px; margin-bottom: 6px; }
+.cp-verses .cp-verse-l { font-size: 13px; color: var(--muted); margin-right: 4px; }
+.cp-verses .btn { min-width: 34px; padding: 0 6px; }
+.cp-verses .btn.on { background: var(--accent); color: var(--accent-ink); }
 .cp-pal-tabs { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; padding: 6px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--sunk) 55%, transparent); }
 .cp-tab { height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--muted); }
 .cp-tab .mus { font: 24px/1 Bravura, serif; }

@@ -353,7 +353,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     const add = (n) => notes.push(n);
     for (const f of flat) {
       const ev = f.ev;
-      if (!ev.notes || ev.rest) { open.clear(); continue; }
+      // (cue notes show another part's music: not played)
+      if (!ev.notes || ev.rest || ev.cue) { open.clear(); continue; }
       const ids = [ev.id];
       const arts = ev.art || [];
       // (the strings recorded for real keep their own instrument, plucked or bowed)
