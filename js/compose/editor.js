@@ -10,6 +10,7 @@ import { INST, INSTRUMENTS, FAMILIES, ENSEMBLES, STAFF_SIZES, defaultStaffSize }
 import { layoutScore, drawPage, hitTest, timeAtX, xAtTime, drawGhost, HEAD_W, DYNAMICS, GL, clearMetrics, glyph, text, textWidth, gm, drawClef, drawKey, drawTime, drawBarline, drawRepeatStart, drawLine, TEXT_FONT } from './engrave.js';
 import { ScorePlayer, applyScoreSound, renderAudio } from './playback.js';
 import { ListenWrite } from './listenwrite.js';
+import { tabTuning } from './tab.js';
 import { toMusicXML, toMXL, toPartsZip, readMusicFile } from './musicxml.js';
 import { sampler, SOUND_LABELS, ROOM_LABELS, DEFAULT_MIX } from '../sampler.js';
 import { db, uid, getSetting, setSetting } from '../db.js';
@@ -1900,10 +1901,13 @@ function renderTab() {
       const putF = () => { const sel = selEvents().filter((f) => !f.ev.rest); if (!sel.length) { hint('Select a note first.'); return; } const v = fin.value.trim().replace(/\s+/g, ' '); edit(() => { for (const f of sel) { if (v) f.ev.fing = v; else delete f.ev.fing; } }, { keepSel: true }); renderTab(); };
       fset.addEventListener('click', putF); fin.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); putF(); } });
       fr2.append(fin, fset); body.append(fr2);
-      lab('String (I to IV)');
+      // (a guitar, a bass, a ukulele: its strings ① to ⑥, as guitarists mark them; bowed strings: I to IV)
+      const fPart = evs[0] && (M.staffInfo(C.score).find((x) => x.st === (evs[0].st.base || evs[0].st)) || {}).part, fT = fPart && tabTuning(fPart);
+      lab(fT ? 'String' : 'String (I to IV)');
       const sr = el('div', 'cp-row cp-fing');
-      for (const w of ['I', 'II', 'III', 'IV']) {
-        const b = el('button', 'btn small' + (cur && cur.str === w ? ' on' : ''), w);
+      for (const [i, w] of ['I', 'II', 'III', 'IV', 'V', 'VI'].slice(0, fT ? Math.min(6, fT.length) : 4).entries()) {
+        const b = el('button', 'btn small' + (cur && cur.str === w ? ' on' : ''), fT ? '①②③④⑤⑥'[i] : w);
+        if (fT) b.setAttribute('aria-label', `String ${i + 1}`);
         b.addEventListener('click', () => { const sel = selEvents().filter((f) => !f.ev.rest); if (!sel.length) { hint('Select a note first, then its string.'); return; } edit(() => { for (const f of sel) { if (f.ev.str === w) delete f.ev.str; else f.ev.str = w; } }, { keepSel: true }); renderTab(); });
         sr.append(b);
       }
@@ -1974,6 +1978,17 @@ function renderTab() {
     for (const [c, name] of [['treble', 'Treble'], ['bass', 'Bass'], ['alto', 'Alto'], ['tenor', 'Tenor'], ['treble8', 'Treble 8vb'], ['bass8', 'Bass 8vb'], ['treble8va', 'Treble 8va'], ['bass8va', 'Bass 8va'], ['soprano', 'Soprano'], ['mezzo', 'Mezzo'], ['baritoneC', 'Baritone C'], ['baritoneF', 'Baritone F'], ['frenchviolin', 'French violin'], ['perc', 'Percussion']]) {
       if (!M.CLEFS[c]) continue;
       cg.append(card(name, M.clefAt(st, m) === c, () => applySig('clef', c, st, m, C.sigOnly && range ? range[1] : null), (gg, W, H) => { const y = H / 2 - 2; staff5(gg, 1, W - 1, y); drawClef(gg, c, W / 2 - 1.3, y); }, { k: 5.2 }));
+    }
+    {
+      // a guitar (bass, ukulele, mandolin…): its tablature under the staff, the same notes as strings and frets
+      const part = (M.staffInfo(C.score).find((x) => x.st === (st.base || st)) || {}).part;
+      if (part && tabTuning(part)) {
+        const on = !!part.tab;
+        const b = el('button', 'btn small cp-listen' + (on ? ' on' : ''), on ? 'Tablature: shown' : 'Show tablature');
+        b.setAttribute('aria-pressed', String(on)); b.setAttribute('aria-label', 'Tablature');
+        b.addEventListener('click', () => { edit(() => { if (on) delete part.tab; else part.tab = true; }, { keepSel: true }); hint(on ? 'No tablature.' : 'The tablature under the staff: each note on the string and fret that fall under the hand. Write the notes on the staff; a string chosen in Text is kept.', 3600); renderTab(); });
+        body.append(b);
+      }
     }
     lab('Key');
     const k = M.keyAt(C.score, m);

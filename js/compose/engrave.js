@@ -5,6 +5,7 @@
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
 import { chordShape } from './chordshapes.js';
+import { hasTab, tabTuning, tabPlan } from './tab.js';
 import { voiceView, hasVoice2, hasVoice, VOICES, voiceKey,
   WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf, instAt, figRows,
 } from './model.js';
@@ -77,7 +78,7 @@ const CUE_K = 0.72;
 // the instrument a staff is in a bar (a part may change instrument)
 function instOfS(s, m) { return s.part && s.part.instCh ? instAt(s.part, m) : s.inst; }
 // how many lines a staff has: one for a drum or a cymbal on its own (st.lines, chosen on the staff, wins)
-export function linesOf(s) { return (s.st && (s.st.base || s.st).lines) || (s.inst && s.inst.lines) || 5; }
+export function linesOf(s) { if (s.tab) return s.tab.length; return (s.st && (s.st.base || s.st).lines) || (s.inst && s.inst.lines) || 5; }
 function sized(ev) { const k = ev && (ev.cue || ev.small) ? CUE_K : 1; HEAD_W = 1.18 * k; STEM_LEN = 3.5 * k; GSZ = 4 * k; BEAM_K = k; }
 
 function keyPositions(fifths, clef) {
@@ -124,6 +125,8 @@ export function layoutScore(score, opts = {}) {
   // staves on show
   let info = staffInfo(score).map((x, k) => ({ ...x, k }));
   if (opts.partIndex !== undefined) info = info.filter((x) => x.pi === opts.partIndex);
+  // a guitar's tablature under its staff: the same notes, as the strings and frets to play them on
+  { const out = []; for (const x of info) { out.push(x); if (x.si === x.part.staves.length - 1 && hasTab(x.part)) { const tuning = tabTuning(x.part); out.push({ ...x, st: x.part.staves[0], si: x.part.staves.length, tab: tuning, frets: tabPlan(score, x.part.staves[0], tuning), k: 'tab' + x.pi }); } } info = out; }
   const nM = score.measures.length;
 
   // ---- per measure: columns of onsets across the staves on show
@@ -345,6 +348,7 @@ function titleHeight(score, spMm, opts) {
 
 // How far notes reach above and below the staff in a system (sp beyond the staff).
 function staffExtent(score, s, sy, concert) {
+  if (s.tab) { s.lyr = 0; return { above: 0.6, below: 0.6, lyr: 0, lyrB: 0 }; }
   let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false; let nVerse = 0, figN = 0;
   for (const mm of sy.measures) for (let m = mm.m; m <= mm.end; m++) {
     const clef0 = clefAt(s.st, m);
@@ -460,7 +464,10 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   const top = staves[0].y, bottom = staves[staves.length - 1].y + 4;
   ctx.lineCap = 'butt';
   // staff lines
-  for (const s of staves) for (let l = 0; l < 5; l++) if (linesOf(s) === 5 || l === 2) line(ctx, x0, s.y + l, x1, s.y + l, 0.13);
+  for (const s of staves) {
+    if (s.tab) { for (let l = 0; l < s.tab.length; l++) line(ctx, x0, tabY(s, l), x1, tabY(s, l), 0.12); continue; }
+    for (let l = 0; l < 5; l++) if (linesOf(s) === 5 || l === 2) line(ctx, x0, s.y + l, x1, s.y + l, 0.13);
+  }
   // system line, brackets and braces
   if (staves.length > 1) line(ctx, x0, top, x0, bottom, 0.16);
   drawBrackets(ctx, sys, staves);
@@ -485,8 +492,15 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   const key0 = keyAt(score, m0), time0 = timeAt(score, m0);
   // (a time signature kept out of sight: music written with none, or one the file hides)
   const showTime = (sys.first && !score.measures[0].timeHide) || (score.measures[m0].time && !score.measures[m0].timeHide);
-  const maxKW = Math.max(0, ...staves.map((q) => keyWidth(lay.concert ? key0 : writtenKey(key0, instOfS(q, m0)))));
+  const maxKW = Math.max(0, ...staves.filter((q) => !q.tab).map((q) => keyWidth(lay.concert ? key0 : writtenKey(key0, instOfS(q, m0)))));
   for (const s of staves) {
+    if (s.tab) {
+      // TAB, upright, in place of a clef; no key (the frets say it all); the time as on the staff above
+      const n = s.tab.length, sz = Math.min(1.7, (4 / (n - 1)) * 1.45 + 0.25);
+      ['T', 'A', 'B'].forEach((c, i) => text(ctx, c, x0 + 1.9, s.y + 2 + (i - 1) * sz * 0.82 + sz * 0.36, sz, TEXT_FONT, '700', 'center'));
+      if (showTime) drawTime(ctx, time0, x0 + 4.4 + maxKW + 0.2, s.y, score.measures[m0].timeSym);
+      continue;
+    }
     const clef = clefAt(s.st, m0);
     CUR_MARK = { id: s.st.id + '@' + m0, kind: 'clef', name: clef, m: m0, st: s.st.id };
     drawClef(ctx, clef, x0 + 1, s.y); if (clef === 'perc') hitBox(CUR_MARK, x0 + 0.6, x0 + 2.2, s.y + 0.6, s.y + 3.4);
@@ -497,7 +511,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
     if (showTime) drawTime(ctx, time0, x0 + 4.4 + maxKW + 0.2, s.y, score.measures[m0].timeSym);
     CUR_MARK = null;
   }
-  const hitStaves = staves.map((s) => ({ k: s.k, st: s.st, part: s.part, inst: s.inst, y: s.y, x0, x1, measures: [] }));
+  const hitStaves = staves.map((s) => ({ k: s.k, st: s.st, part: s.part, inst: s.inst, y: s.y, x0, x1, measures: [], ...(s.tab ? { tab: s.tab } : {}) }));
   hit.staves.push(...hitStaves);
   // measures
   for (const [mi, mm] of sys.measures.entries()) {
@@ -513,7 +527,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
     hs.dynLine = Math.max(3.0, low + 2.9 + (slurUnder ? 2.0 : 0));
     // the upper staff of a piano (or harp, organ…): dynamics go in the middle, between the two staves
     const next = hitStaves[i + 1];
-    if (next && next.part === hs.part) {
+    if (next && next.part === hs.part && !next.tab) {
       const gap = next.y - (hs.y + 4);
       hs.dynLine = Math.max(hs.dynLine, gap / 2 + 0.75);
       // …unless that would reach into the staff below; then they stay just under the notes
@@ -862,12 +876,13 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
   if (isFirst) cx = sys.x0 + sys.head - 0.4; else {
     // a change of clef: a smaller clef before the key and time
     let clefMoved = false;
-    for (const s of sys.staves) { const c2 = clefAt(s.st, m); if (m > 0 && c2 !== clefEnd(s.st, m - 1)) { CUR_MARK = { id: s.st.id + '@' + m, kind: 'clef', name: c2, m, st: s.st.id }; drawClef(ctx, c2, cx + 0.5, s.y, 3); CUR_MARK = null; clefMoved = true; } }
+    for (const s of sys.staves) { if (s.tab) continue; const c2 = clefAt(s.st, m); if (m > 0 && c2 !== clefEnd(s.st, m - 1)) { CUR_MARK = { id: s.st.id + '@' + m, kind: 'clef', name: c2, m, st: s.st.id }; drawClef(ctx, c2, cx + 0.5, s.y, 3); CUR_MARK = null; clefMoved = true; } }
     if (clefMoved) cx += 2.8;
     const key = keyAt(score, m), prevKey = keyAt(score, m - 1);
     if (ms.key !== undefined && ms.key !== null && key !== prevKey && m > 0) {
       CUR_MARK = { id: 'key' + m, kind: 'key', name: String(key), m };
       for (const s of sys.staves) {
+        if (s.tab) continue;
         const clef = clefAt(s.st, m);
         // cancel the old key with naturals when going to C
         if (key === 0) keyPositions(lay.concert ? prevKey : writtenKey(prevKey, instOfS(s, m - 1)), clef).forEach((kp, i) => glyph(ctx, GL.acc[0], cx + 0.6 + i * 1.0, yOf(s.y, kp.p)));
@@ -880,7 +895,7 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
       // a new instrument that transposes otherwise: its key, written, on its staff
       let w = 0;
       for (const s of sys.staves) {
-        if (!(s.part && s.part.instCh && s.part.instCh[m] !== undefined)) continue;
+        if (s.tab || !(s.part && s.part.instCh && s.part.instCh[m] !== undefined)) continue;
         const a0 = writtenKey(key, instOfS(s, m - 1)), b0 = writtenKey(key, instOfS(s, m)); if (a0 === b0) continue;
         const clef = clefAt(s.st, m);
         if (b0 === 0) keyPositions(a0, clef).forEach((kp, i) => glyph(ctx, GL.acc[0], cx + 0.6 + i * 1.0, yOf(s.y, kp.p)));
@@ -908,6 +923,7 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
   if (mm.multi) {
     for (const [k, s] of sys.staves.entries()) {
       const xa = contentX0 + 0.5, xb = mm.x1 - 1.8;
+      if (s.tab) { hitStaves[k].measures.push({ m, x0: mm.x0, x1: mm.x1, cx0: contentX0, onsets: [{ t: 0, x: contentX0 }], total: barTicks(time), end: mm.end }); continue; }
       ctx.fillRect(xa, s.y + 1.5, xb - xa, 1); line(ctx, xa, s.y + 1, xa, s.y + 3, 0.16); line(ctx, xb, s.y + 1, xb, s.y + 3, 0.16);
       const n = String(mm.multi).split('').map((d) => GL.ts(+d)).join('');
       glyph(ctx, n, (xa + xb) / 2 - String(mm.multi).length * 0.9, s.y - 1.4);
@@ -925,6 +941,7 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
     const hs = hitStaves[k];
     const hm = { m, x0: mm.x0, x1: mm.x1, cx0: contentX0, onsets, total: barTicks(time), events: [] };
     hs.measures.push(hm);
+    if (s.tab) { drawTabBar(ctx, lay, s, m, time, xs, mm, hm, hit, opts); continue; }
     // two voices: the first with stems up, the second with stems down
     // (more voices: 1 and 3 with stems up, 2 and 4 down; 3 and 4 a little further out than 1 and 2)
     if (hasVoice2(s.st, m)) {
@@ -956,10 +973,10 @@ function drawBarline(ctx, type, x, staves, lay) {
   const groups = [];
   let cur = null;
   for (const s of staves) {
-    const join = cur && (cur.pi === s.pi || (cur.fam === s.inst.fam && !['keys', 'pluck', 'voice'].includes(s.inst.fam)));
+    const join = cur && !s.tab && !cur.tab && (cur.pi === s.pi || (cur.fam === s.inst.fam && !['keys', 'pluck', 'voice'].includes(s.inst.fam)));
     // (a one-line staff: the barline a space above and below its line)
     const one = linesOf(s) === 1;
-    if (join) { cur.b = s.y + (one ? 3 : 4); cur.pi = s.pi; } else { cur = { t: s.y + (one ? 1 : 0), b: s.y + (one ? 3 : 4), pi: s.pi, fam: s.inst.fam }; groups.push(cur); }
+    if (join) { cur.b = s.y + (one ? 3 : 4); cur.pi = s.pi; } else { cur = { t: s.y + (one ? 1 : 0), b: s.y + (one ? 3 : 4), pi: s.pi, fam: s.inst.fam, tab: !!s.tab }; groups.push(cur); }
   }
   for (const g of groups) {
     if (type === 'final') { line(ctx, x - 1.15, g.t, x - 1.15, g.b, 0.16); ctx.fillRect(x - 0.5, g.t, 0.5, g.b - g.t); }
@@ -1187,8 +1204,16 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
       const topNote = (e.notes[e.notes.length - 1].p - 8) / 2;
       const nF = ev.fing ? String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0;
       const yS = s.y - Math.max(1.0, highestAbove(e, s.y) + 0.6, nearUp ? topNote + 2.6 : 0) - far * 2.9 - nF * 1.45 - (nF ? 0.25 : 0);
-      const word = String(ev.str), sw = textWidth(ctx, word, 1.5, TEXT_FONT, '600');
-      text(ctx, word, e.x + HEAD_W / 2 - sw / 2, yS, 1.5, TEXT_FONT, '600');
+      const gN = tabTuning(s.part) && { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6 }[ev.str];
+      if (gN) {
+        // a guitar's string: its number in a circle
+        const cx = e.x + HEAD_W / 2, cy = yS - 0.55;
+        ctx.save(); ctx.lineWidth = 0.13; ctx.beginPath(); ctx.arc(cx, cy, 0.78, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+        text(ctx, String(gN), cx, cy + 0.45, 1.25, TEXT_FONT, '600', 'center');
+      } else {
+        const word = String(ev.str), sw = textWidth(ctx, word, 1.5, TEXT_FONT, '600');
+        text(ctx, word, e.x + HEAD_W / 2 - sw / 2, yS, 1.5, TEXT_FONT, '600');
+      }
     }
     if (ev.txt && !ev.txtBelow) {
       const ty = s.y - Math.max(1.6, highestAbove(e, s.y) + 1.2) - (ev.fing ? 1.5 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0) - (ev.str ? 1.6 : 0);
@@ -1246,6 +1271,38 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
 export const prettyChord = (c) => c.replace(/([A-G])#/g, '$1♯').replace(/([A-G])b/g, '$1♭').replace(/maj/i, 'maj').replace(/\bo\b/, '°');
 const highestAbove = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, (n.p - 8) / 2 + (e.up ? STEM_LEN : 0.5)); if (e.up && e.stemTip !== undefined) h = Math.max(h, sy - e.stemTip + 0.2); return h; };
 const lowestBelow = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, -n.p / 2 + (!e.up ? STEM_LEN + (e.ev.tup ? 2.3 : 0) : 0.5)); const near = (e.ev.art || []).filter((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)).length; if (near && e.up) h += near * 1.0; return h; };
+// ---------- tablature ----------
+// the lines of a tablature in the height of a staff: l from the bottom line (the lowest string)
+function tabY(s, l) { return s.y + 4 - (l * 4) / (s.tab.length - 1); }
+function drawTabBar(ctx, lay, s, m, time, xs, mm, hm, hit, opts) {
+  const sel = opts.selection || new Set(), n = s.tab.length, gap = 4 / (n - 1);
+  const sz = Math.min(1.45, gap * 1.2 + 0.25);
+  const paper = opts.paper || '#ffffff';
+  const bars = [[s.st.bars[m] || [], 1], ...VOICES.filter((v) => hasVoice(s.st, v, m)).map((v) => [s.st[voiceKey(v)][m], v])];
+  for (const [bar, v] of bars) {
+    let p = 0;
+    for (const ev of bar) {
+      const len = ticksOf(ev, time), pos = p; p += len;
+      if (ev.rest || !ev.notes || !ev.notes.length || ev.cue) continue;
+      const x = (xs.get(pos) ?? hm.cx0) + HEAD_W / 2;
+      const c = sel.has(ev.id) ? (opts.selInk || '#2b6fd6') : (opts.playing && opts.playing.has(ev.id) ? (opts.playInk || '#1e8e55') : null);
+      const notes = [];
+      for (const nn of ev.notes) {
+        const a = s.frets && s.frets.get(nn); if (!a) continue;
+        const y = tabY(s, a.i), label = a.tied ? '(' + a.fret + ')' : String(a.fret);
+        const w = textWidth(ctx, label, sz, TEXT_FONT, '600');
+        ctx.save(); ctx.fillStyle = paper; ctx.fillRect(x - w / 2 - 0.18, y - gap * 0.45, w + 0.36, gap * 0.9); ctx.restore();
+        if (c) { ctx.save(); ctx.fillStyle = c; }
+        text(ctx, label, x, y + sz * 0.36, sz, TEXT_FONT, '600', 'center');
+        if (c) ctx.restore();
+        notes.push({ p: 0, y, s: nn.s, str: a.str, fret: a.fret });
+      }
+      if (!notes.length) continue;
+      const q = { id: ev.id, m, pos, len, x: x - HEAD_W / 2, staff: s.k, y: s.y, up: false, voice: v, notes, rest: false, tup: !!ev.tup, tab: true };
+      hm.events.push(q); hit.events.push(q);
+    }
+  }
+}
 function slurY(e, sy, above) {
   const ns = e.notes; if (!ns.length) return sy;
   if (above) { const top = ns[ns.length - 1]; return yOf(sy, top.p) - (e.up ? STEM_LEN + 0.6 : 1.0); }
@@ -1594,7 +1651,7 @@ export function hitTest(hitmap, x, y) {
     const d = Math.abs(y - mid);
     if (d < bd) { bd = d; best = s; }
   }
-  if (!best || bd > 12) return null;
+  if (!best || bd > 12 || best.tab) return null;
   const meas = best.measures.find((mm) => x >= mm.x0 && x < mm.x1) || (x < best.measures[0].x0 ? best.measures[0] : best.measures[best.measures.length - 1]);
   if (!meas) return null;
   const p = Math.round((best.y + 4 - y) * 2);
