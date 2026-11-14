@@ -124,8 +124,13 @@ async function run() {
   await step('sample score', async () => {
     const b = $('#sampleBtn'); if (!b || !b.offsetParent) return 'no empty library here';
     b.click();
-    return !!(await waitFor(() => !$('#score').hidden && $$('#stage canvas.art').length && $$('#stage canvas.art').every((c) => c.width > 10), 30000));
-  });
+    // (a new simulator's first saves can take tens of seconds: up to a minute, and what was seen if not)
+    const t0 = performance.now();
+    const ok = !!(await waitFor(() => !$('#score').hidden && $$('#stage canvas.art').length && $$('#stage canvas.art').every((c) => c.width > 10), 60000));
+    const s = Math.round((performance.now() - t0) / 1000);
+    if (!ok || s > 10) say(`SELFTEST detail sample score: ${ok ? 'open' : 'not open'} after ${s} s; score ${$('#score').hidden ? 'hidden' : 'shown'}, canvases ${$$('#stage canvas.art').map((c) => c.width).join(',') || 'none'}, toast "${$('#toast').hidden ? '' : $('#toast').textContent}"`);
+    return ok;
+  }, 70000);
   await shot('01b-sample');
   await home();
   await step('import a PDF', async () => {

@@ -87,7 +87,7 @@ export function tr(s) {
         if (got == null) { outs.length = 0; break; }
         outs.push(got); i = j;
       }
-      if (outs.length && i >= parts.length) v = outs.join(' ');
+      if (outs.length && i >= parts.length) v = outs.join(/^(ja|zh)/.test(LANG) ? '' : ' '); // (Japanese and Chinese put no space between sentences)
     }
   }
   if (v == null && !NONE.has(t)) {
@@ -98,6 +98,9 @@ export function tr(s) {
       const m = t.match(re);
       // (what fills the braces is a name, a number or a few words: never a sentence of its own)
       if (m && m.slice(1).some((x) => x && (x.length > 60 || /[.!?]\s+[\p{Lu}0-9]/u.test(x)))) continue;
+      // (nor the rest of an English sentence: "Page {0}" is not "Page 7 turned.", which would come
+      // out half translated, "Seite 7 turned.")
+      if (m && re.source.endsWith('(.+?)$') && /\p{Ll}{3,}\.$/u.test(m[m.length - 1] || '')) continue;
       if (m) {
         // (what stands in the braces is itself translated when it is a word Stand knows: "Violin")
         const vals = {}; order.forEach((n, i) => { const x = m[i + 1]; vals[n] = DICT.get(x) ?? (x && x.length > 3 && x.length < t.length && /\p{L}/u.test(x) ? tr(x) : x); });

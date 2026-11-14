@@ -908,14 +908,24 @@ async function addImages(blobs, name, opt = {}) {
 // A score to try Stand with at once: Bach's third cello suite (Mutopia Project, placed in the public
 // domain by its typesetter), added like any other score, and opened.
 $('#sampleBtn')?.addEventListener('click', async () => {
-  const b = $('#sampleBtn'); b.disabled = true;
+  const b = $('#sampleBtn'); if (b.disabled) return; b.disabled = true;
+  // (the first save on a new iPad can take a few seconds: said at once, so the tap is seen)
+  const wait = 'Opening the sample score…', t0 = performance.now(), T = [];
+  const mark = (w) => T.push(w + ' ' + Math.round(performance.now() - t0));
+  const busy = setTimeout(() => toast(wait, 60000), 800);
   try {
     const r = await fetch('examples/bach-cello-suite-3.pdf'); if (!r.ok) throw new Error('missing');
-    const sc = await addPdf(await r.arrayBuffer(), 'Bach - Cello Suite No. 3', { title: 'Cello Suite No. 3 in C major, BWV 1009', composer: 'Johann Sebastian Bach' });
-    sc.source = 'Mutopia Project (public domain)'; await db.put('scores', sc);
-    await refreshLibrary(); await openScore(sc.id);
+    const buf = await r.arrayBuffer(); mark('read');
+    const sc = await addPdf(buf, 'Bach - Cello Suite No. 3', { title: 'Cello Suite No. 3 in C major, BWV 1009', composer: 'Johann Sebastian Bach' }); mark('added');
+    sc.source = 'Mutopia Project (public domain)'; await db.put('scores', sc); mark('saved');
+    await refreshLibrary(); mark('library'); await openScore(sc.id); mark('open');
   } catch (e) { console.warn(e); toast('The sample score could not be opened just now.', 3500); }
-  finally { b.disabled = false; }
+  finally {
+    clearTimeout(busy); b.disabled = false;
+    { const t = $('#toast'); if (!t.hidden && t.textContent === tr(wait)) t.hidden = true; }
+    // (slow: where the time went, in the log the report carries)
+    if (performance.now() - t0 > 5000) try { nlog('sample score slow: ' + T.join(', ')); } catch {}
+  }
 });
 $('#scanBtn').addEventListener('click', () => {
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standScan && (window.standCaps || {}).scan) window.webkit.messageHandlers.standScan.postMessage({});
@@ -1164,7 +1174,7 @@ window.standFolder = async (msg) => {
   const files = msg.files || [];
   const enc = (rel) => rel.split('/').map(encodeURIComponent).join('/');
   const get = async (rel) => { const r = await fetch('/__picked/' + enc(rel)).catch(() => null); return r && r.ok ? r.blob() : null; };
-  if (msg.notHere) toast(`${msg.notHere} file${msg.notHere === 1 ? ' is' : 's are'} only in iCloud: they are downloading now; choose the folder again in a minute to bring ${msg.notHere === 1 ? 'it' : 'them'} too.`, 6000);
+  if (msg.notHere) toast(msg.notHere === 1 ? 'One file is only in iCloud: it is downloading now; choose the folder again in a minute to bring it too.' : `${msg.notHere} files are only in iCloud: they are downloading now; choose the folder again in a minute to bring them too.`, 6000);
   // Stand's own backups in it (its Stand folder, a backup unzipped, backup .zip files)
   const found = standBackupsIn(files.map((f) => f.rel));
   const zipSrcs = [], otherZips = [];
@@ -11647,6 +11657,14 @@ setInterval(async () => {
     await backupNow({ auto: true });
   } catch {}
 }, 60000);
+// What came back from a backup, in whole sentences (each one is translated as it is: "Restored 3
+// scores and 1 recording." "2 files were missing from the folder." "Starting again…")
+function restoredMsg(r) {
+  const sc = r.scores === 1 ? 'score' : 'scores', tk = r.takes === 1 ? 'recording' : 'recordings';
+  let m = r.takes ? `Restored ${r.scores} ${sc} and ${r.takes} ${tk}.` : `Restored ${r.scores} ${sc}.`;
+  if (r.lost) m += r.lost === 1 ? ' One file was missing from the folder.' : ` ${r.lost} files were missing from the folder.`;
+  return m + ' Starting again…';
+}
 $('#bkBannerGo').addEventListener('click', async () => { showPanel('backup'); renderBackup(); if ((await getSetting('backupAuto', 'week')) !== 'off') backupNow({ auto: true }); });
 $('#bkInput').addEventListener('change', async (e) => {
   const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
@@ -11657,7 +11675,7 @@ $('#bkInput').addEventListener('change', async (e) => {
     const miss = r.missing.filter((m) => m.lack.length);
     await setSetting('backupAt', Date.now());
     if (miss.length) toast(`Restored ${r.scores} scores. ${miss.map((m) => `File${m.lack.length > 1 ? 's' : ''} ${m.lack.join(', ')} of ${m.count}`).join('; ')} not chosen — restore again with all the files to get the rest.`, 9000);
-    else toast(`Restored ${r.scores} score${r.scores === 1 ? '' : 's'}${r.takes ? ` and ${r.takes} recording${r.takes === 1 ? '' : 's'}` : ''}. Starting again…`, 3000);
+    else toast(restoredMsg(r), 3000);
     // settings and the practice log come back too: start fresh with them
     setTimeout(() => location.reload(), miss.length ? 9000 : 2200);
   } catch (err) { window.__restoring = false; console.error(err); toast(err.message || 'That file could not be restored.', 5000); }
@@ -11670,7 +11688,7 @@ $('#bkFromFolder').addEventListener('click', async () => {
     const get = async (path) => { const r = await fetch('/__docs/' + path.split('/').map(encodeURIComponent).join('/')).catch(() => null); return r && r.ok ? r.blob() : null; };
     const r = await restoreMirror(get);
     await setSetting('backupAt', Date.now());
-    toast(`Restored ${r.scores} score${r.scores === 1 ? '' : 's'}${r.takes ? ` and ${r.takes} recording${r.takes === 1 ? '' : 's'}` : ''}${r.lost ? ` (${r.lost} file${r.lost === 1 ? '' : 's'} missing from the folder)` : ''}. Starting again…`, 3500);
+    toast(restoredMsg(r), 3500);
     setTimeout(() => location.reload(), 2600);
   } catch (err) { window.__restoring = false; console.error(err); toast(err.message || 'The backup could not be brought back.', 5000); }
 });
