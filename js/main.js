@@ -10685,6 +10685,8 @@ function renderListen() {
   const ul = $('#lsSaved'); ul.textContent = '';
   for (const [i, r] of ((V.score && V.score.listen) || []).entries()) {
     const li = el('li'); const a = el('a', 'go', r.name); a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
+    // (a video or a track: it plays here, in the little player over the score)
+    if (mediaOf(r.url)) { a.classList.add('plays'); a.addEventListener('click', (e) => { e.preventDefault(); openMedia(r.url, r.name); }); }
     const kind = /spotify/.test(r.url) ? 'Spotify' : /youtu/.test(r.url) ? 'YouTube' : /apple/.test(r.url) ? 'Apple Music' : 'Link';
     const del = el('button', 'icon-btn small'); del.append(icon('i-close')); del.setAttribute('aria-label', 'Remove');
     del.addEventListener('click', () => { V.score.listen.splice(i, 1); db.put('scores', V.score); renderListen(); });
@@ -10707,7 +10709,79 @@ $('#lsSave').addEventListener('click', () => {
   const name = $('#lsName').value.trim() || (/spotify/.test(url) ? 'Spotify recording' : /youtu/.test(url) ? 'YouTube video' : 'Recording');
   V.score.listen = [...(V.score.listen || []), { name, url }];
   db.put('scores', V.score); $('#lsUrl').value = ''; $('#lsUrl')._syncClear?.(); $('#lsName').value = ''; renderListen();
+  if (mediaOf(url)) openMedia(url, name);
 });
+
+// --- the little player over the score: YouTube (and YouTube Music), Spotify, Apple Music ---
+// A link read: which service, and what to play.
+function mediaOf(url) {
+  let u; try { u = new URL(String(url).trim()); } catch { return null; }
+  const h = u.hostname.replace(/^(www|m)\./, '');
+  if (h === 'youtu.be') { const id = u.pathname.slice(1).split('/')[0]; return /^[\w-]{11}$/.test(id) ? { kind: 'youtube', id, start: ytStart(u) } : null; }
+  if (h === 'youtube.com' || h === 'music.youtube.com' || h === 'youtube-nocookie.com') {
+    const id = u.searchParams.get('v') || (u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{11})/) || [])[1];
+    return id && /^[\w-]{11}$/.test(id) ? { kind: 'youtube', id, start: ytStart(u) } : null;
+  }
+  if (h === 'open.spotify.com') { const m = u.pathname.match(/^\/(?:intl-[a-z-]+\/)?(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]+)/); return m ? { kind: 'spotify', type: m[1], id: m[2] } : null; }
+  if (h === 'music.apple.com' || h === 'embed.music.apple.com') { const m = u.pathname.match(/^\/[a-z]{2}\/(album|song|playlist|music-video|station)\//); return m ? { kind: 'apple', path: u.pathname + u.search } : null; }
+  return null;
+}
+function ytStart(u) { const t = u.searchParams.get('t') || u.searchParams.get('start') || ''; const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(t); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; }
+const MEDIA = { box: null, kind: '' };
+function openMedia(url, name) {
+  const o = mediaOf(url); if (!o) { window.open(url, '_blank', 'noopener'); return; }
+  o.url = url; o.title = name || '';
+  unlock();
+  hidePanel();
+  // (in the iPad app: a player of its own, which YouTube accepts)
+  if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) { NATIVE.standMedia.postMessage({ op: 'open', ...o }); MEDIA.kind = o.kind; return; }
+  mediaFrame(o);
+}
+window.__mediaOf = mediaOf; window.__openMedia = openMedia;
+window.standMediaEvent = (m) => { if (m && m.op === 'closed') MEDIA.kind = ''; };
+// In a browser: the same player in a frame that floats over the page, moved by its top bar, sized by
+// its corner, put away at the side (a video pauses there).
+function mediaFrame(o) {
+  let box = MEDIA.box;
+  const W = innerWidth, H = innerHeight, yt = o.kind === 'youtube';
+  const minW = yt ? Math.min(356, W - 16) : 260, w = Math.max(minW, Math.min(W - 32, yt ? 480 : 380)), h = yt ? 26 + w * 9 / 16 + 44 : o.kind === 'spotify' ? 26 + 152 + 44 : 26 + 175 + 44;
+  if (!box) {
+    box = MEDIA.box = el('div', 'media-float'); box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Player');
+    const grab = el('div', 'mf-grab'); grab.setAttribute('aria-label', 'Move the player'); grab.append(el('span', 'mf-pill'));
+    const corner = el('button', 'mf-corner'); corner.setAttribute('aria-label', 'Resize the player'); corner.textContent = '⤡';
+    grab.append(corner);
+    const fr = document.createElement('iframe'); fr.className = 'mf-frame'; fr.allow = 'autoplay; encrypted-media; fullscreen'; fr.referrerPolicy = 'strict-origin-when-cross-origin';
+    const tab = el('button', 'mf-tab'); tab.setAttribute('aria-label', 'Bring the player back'); tab.hidden = true; tab.append(icon('i-play'));
+    box.append(grab, fr, tab); document.body.append(box);
+    const fit = () => { const r = box.getBoundingClientRect(); let x = Math.min(Math.max(r.left, 8), innerWidth - r.width - 8), y = Math.min(Math.max(r.top, 8), innerHeight - r.height - 8); box.style.left = x + 'px'; box.style.top = y + 'px'; };
+    let st = null;
+    grab.addEventListener('pointerdown', (e) => { if (e.target === corner || box.classList.contains('tucked')) return; const r = box.getBoundingClientRect(); st = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, kind: 'move' }; try { grab.setPointerCapture(e.pointerId); } catch {} e.preventDefault(); });
+    corner.addEventListener('pointerdown', (e) => { const r = box.getBoundingClientRect(); st = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, w: r.width, h: r.height, kind: 'size' }; try { corner.setPointerCapture(e.pointerId); } catch {} e.preventDefault(); e.stopPropagation(); });
+    const mv = (e) => {
+      if (!st) return; const dx = e.clientX - st.x, dy = e.clientY - st.y;
+      if (st.kind === 'move') { box.style.left = st.l + dx + 'px'; box.style.top = st.t + dy + 'px'; }
+      else { const mw = MEDIA.kind === 'youtube' ? Math.min(356, innerWidth - 16) : 260, mh = MEDIA.kind === 'youtube' ? 270 : 150; const nw = Math.max(mw, Math.min(innerWidth - 16, st.w + dx)), nh = Math.max(mh, Math.min(innerHeight - 16, st.h - dy)); box.style.width = nw + 'px'; box.style.height = nh + 'px'; box.style.top = st.t + st.h - nh + 'px'; }
+    };
+    const up = () => { if (!st || box.classList.contains('tucked')) { st = null; return; } const r = box.getBoundingClientRect(); const k = st.kind; st = null; if (k === 'move' && (r.left + r.width / 2 < 10 || r.left + r.width / 2 > innerWidth - 10)) tuck(r.left + r.width / 2 < 10 ? -1 : 1); else fit(); };
+    grab.addEventListener('pointermove', mv); corner.addEventListener('pointermove', mv);
+    grab.addEventListener('pointerup', up); corner.addEventListener('pointerup', up); grab.addEventListener('pointercancel', up); corner.addEventListener('pointercancel', up);
+    const tuck = (side) => {
+      if (box.classList.contains('tucked')) return;
+      const r = box.getBoundingClientRect(); MEDIA.shown = { l: Math.min(Math.max(r.left, 8), innerWidth - r.width - 8), t: r.top, w: r.width, h: r.height };
+      try { fr.contentWindow.mediaCmd && fr.contentWindow.mediaCmd({ cmd: 'pause' }); } catch {}
+      try { fr.contentWindow.postMessage({ standMediaCmd: { cmd: 'pause' } }, '*'); } catch {}
+      if (MEDIA.kind !== 'youtube') { MEDIA.src = fr.src; fr.src = 'about:blank'; }
+      box.classList.add('tucked'); tab.hidden = false; box.style.left = side < 0 ? '0px' : innerWidth - 34 + 'px'; box.style.top = Math.min(Math.max(r.top + r.height / 2 - 45, 8), innerHeight - 98) + 'px'; box.style.width = '34px'; box.style.height = '90px';
+    };
+    tab.addEventListener('click', () => { const s0 = MEDIA.shown; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) Object.assign(box.style, { left: s0.l + 'px', top: s0.t + 'px', width: s0.w + 'px', height: s0.h + 'px' }); });
+    MEDIA.tuck = tuck;
+    window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || e.source !== fr.contentWindow) return; if (m.op === 'close') { box.remove(); MEDIA.box = null; MEDIA.kind = ''; } else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
+  }
+  MEDIA.kind = o.kind;
+  box.classList.remove('tucked'); box.querySelector('.mf-tab').hidden = true;
+  Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: H - h - 16 + 'px' });
+  box.querySelector('.mf-frame').src = 'media.html#' + encodeURIComponent(JSON.stringify(o));
+}
 document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="listen"]')) openListen(); });
 
 // --- play-along recording attached to a score ---

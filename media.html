@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Stand player</title>
+<!-- The little player that floats over the score: a YouTube or YouTube Music video, a Spotify or an
+     Apple Music player, with Stand's own buttons under it (never over it). In the iPad app it is
+     its own small web view, loaded with an https address so YouTube knows where it is shown; in a
+     browser it sits in a frame of the page. -->
+<style>
+  :root { --bg: #11151d; --fg: #f3f4f7; --mut: #9aa3b5; --acc: #7fa6ff; --btn: #232a38; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px -apple-system, system-ui, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
+  body { display: flex; flex-direction: column; }
+  #stage { flex: 1; min-height: 0; position: relative; background: #000; }
+  #stage iframe, #stage > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #bar { flex: none; height: 44px; display: flex; align-items: center; gap: 4px; padding: 0 6px; background: var(--bg); }
+  #bar button { flex: none; height: 34px; min-width: 34px; padding: 0 8px; border: 0; border-radius: 9px; background: var(--btn); color: var(--fg); font: 600 13px -apple-system, system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; }
+  #bar button.on { background: var(--acc); color: #0b1020; }
+  #bar button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #bar .t { flex: 1; min-width: 0; color: var(--mut); font-variant-numeric: tabular-nums; font-size: 12px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bar .x { background: transparent; }
+  #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--mut); font-size: 13px; line-height: 1.4; }
+  #msg a { color: var(--acc); }
+  body.audio #stage { background: var(--bg); }
+  body.nobar #bar .yt { display: none; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="msg">Loading…</div></div>
+<div id="bar">
+  <button id="bPlay" class="yt" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg></button>
+  <button id="bBack" class="yt" aria-label="Back 5 seconds">−5</button>
+  <button id="bFwd" class="yt" aria-label="On 5 seconds">+5</button>
+  <button id="bSpeed" class="yt" aria-label="Speed">100%</button>
+  <button id="bA" class="yt" aria-label="Loop from here">A</button>
+  <button id="bB" class="yt" aria-label="Loop to here">B</button>
+  <span class="t" id="time"></span>
+  <button id="bOpen" class="x" aria-label="Open in its app"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+  <button id="bClose" class="x" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const host = (op, extra) => {
+  const m = { op, ...(extra || {}) };
+  try { if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standMediaUI) { window.webkit.messageHandlers.standMediaUI.postMessage(m); return; } } catch {}
+  try { parent.postMessage({ standMedia: m }, '*'); } catch {}
+};
+const SPEEDS = [0.5, 0.6, 0.75, 0.85, 1, 1.1, 1.25];
+const P = { kind: null, yt: null, sp: null, a: null, b: null, speed: 1, url: '', tick: 0, playing: false };
+const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function say(t, html) { const m = $('#msg') || Object.assign(document.createElement('div'), { id: 'msg' }); if (!m.parentNode) $('#stage').append(m); if (html) m.innerHTML = t; else m.textContent = t; m.hidden = false; }
+function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = null; P.sp = null; P.a = P.b = null; P.playing = false; syncBar(); }
+function syncBar() {
+  $('#bPlay').innerHTML = P.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>';
+  $('#bPlay').setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
+  $('#bSpeed').textContent = Math.round(P.speed * 100) + '%';
+  $('#bA').classList.toggle('on', P.a !== null); $('#bB').classList.toggle('on', P.b !== null);
+  document.body.classList.toggle('nobar', P.kind !== 'youtube');
+  document.body.classList.toggle('audio', P.kind === 'spotify' || P.kind === 'apple');
+}
+// ---- YouTube (and YouTube Music: the same videos) ----
+function loadYouTubeApi() {
+  return new Promise((res, rej) => {
+    if (window.YT && window.YT.Player) return res(window.YT);
+    window.onYouTubeIframeAPIReady = () => res(window.YT);
+    const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; s.onerror = () => rej(new Error('net'));
+    document.head.append(s);
+    setTimeout(() => rej(new Error('timeout')), 15000);
+  });
+}
+async function openYouTube(id, start) {
+  const div = document.createElement('div'); div.id = 'yt'; $('#stage').append(div);
+  say('Loading the video…');
+  let YT; try { YT = await loadYouTubeApi(); } catch { say('YouTube could not be reached. Check the internet connection, then try again.'); host('error', { code: 'net' }); return; }
+  P.yt = new YT.Player('yt', {
+    videoId: id, width: '100%', height: '100%',
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(start || 0), origin: location.origin, enablejsapi: 1 },
+    events: {
+      onReady: () => { const m = $('#msg'); if (m) m.hidden = true; try { P.yt.setPlaybackRate(P.speed); } catch {} host('ready'); },
+      onStateChange: (e) => { P.playing = e.data === 1; syncBar(); host('state', { playing: P.playing }); },
+      onError: (e) => { const why = { 2: 'This link is not a video YouTube knows.', 5: 'This video cannot play here.', 100: 'This video is no longer on YouTube, or it is private.', 101: 'Whoever put this video on YouTube does not let it play outside YouTube.', 150: 'Whoever put this video on YouTube does not let it play outside YouTube.', 153: 'YouTube did not accept where this player is shown.' }[e.data] || 'This video cannot play here.';
+        say(why + ' <a href="#" id="goOut">Open it in YouTube</a>', true); const g = $('#goOut'); if (g) g.onclick = (ev) => { ev.preventDefault(); host('openOut', { url: P.url }); }; host('error', { code: e.data }); },
+    },
+  });
+  P.tick = setInterval(() => {
+    if (!P.yt || !P.yt.getCurrentTime) return;
+    const t = P.yt.getCurrentTime(), d = P.yt.getDuration ? P.yt.getDuration() : 0;
+    if (P.a !== null && P.b !== null && t >= P.b) P.yt.seekTo(P.a, true);
+    $('#time').textContent = fmt(t) + (d ? ' / ' + fmt(d) : '') + (P.a !== null && P.b !== null ? '  ↻' : '');
+  }, 250);
+}
+// ---- Spotify: its own player (a part of a track without a Spotify login in this player) ----
+function openSpotify(type, id) {
+  const f = document.createElement('iframe');
+  f.src = `https://open.spotify.com/embed/${type}/${id}?utm_source=generator&theme=0`;
+  f.allow = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+  f.setAttribute('loading', 'eager');
+  $('#stage').append(f);
+}
+// ---- Apple Music: its own player ----
+function openApple(path) {
+  const f = document.createElement('iframe');
+  f.src = 'https://embed.music.apple.com' + path;
+  f.allow = 'autoplay *; encrypted-media *; fullscreen *; clipboard-write';
+  f.setAttribute('sandbox', 'allow-forms allow-popups allow-same-origin allow-scripts allow-storage-access-by-user-activation allow-top-navigation-by-user-activation');
+  $('#stage').append(f);
+}
+window.mediaOpen = (o) => {
+  clear(); P.kind = o.kind; P.url = o.url || ''; P.speed = 1; syncBar();
+  if (o.kind === 'youtube') openYouTube(o.id, o.start);
+  else if (o.kind === 'spotify') openSpotify(o.type, o.id);
+  else if (o.kind === 'apple') openApple(o.path);
+  else say('This link cannot play here.');
+};
+// Stand asks: pause (when the player is put away at the side), play, the speed
+window.mediaCmd = (c) => {
+  if (P.kind !== 'youtube' || !P.yt || !P.yt.pauseVideo) return;
+  if (c.cmd === 'pause') P.yt.pauseVideo(); else if (c.cmd === 'play') P.yt.playVideo();
+  else if (c.cmd === 'speed') { P.speed = c.value; P.yt.setPlaybackRate(c.value); syncBar(); }
+};
+$('#bPlay').onclick = () => { if (!P.yt || !P.yt.getPlayerState) return; if (P.yt.getPlayerState() === 1) P.yt.pauseVideo(); else P.yt.playVideo(); };
+$('#bBack').onclick = () => { if (P.yt && P.yt.seekTo) P.yt.seekTo(Math.max(0, P.yt.getCurrentTime() - 5), true); };
+$('#bFwd').onclick = () => { if (P.yt && P.yt.seekTo) P.yt.seekTo(P.yt.getCurrentTime() + 5, true); };
+$('#bSpeed').onclick = () => { const i = SPEEDS.indexOf(P.speed); P.speed = SPEEDS[(i + 1) % SPEEDS.length]; try { P.yt.setPlaybackRate(P.speed); } catch {} syncBar(); };
+$('#bA').onclick = () => { if (!P.yt || !P.yt.getCurrentTime) return; if (P.a !== null && P.b !== null) { P.a = P.b = null; } else P.a = P.yt.getCurrentTime(); syncBar(); };
+$('#bB').onclick = () => { if (!P.yt || P.a === null) return; const t = P.yt.getCurrentTime(); if (t > P.a + 0.3) { P.b = t; P.yt.seekTo(P.a, true); } syncBar(); };
+$('#bClose').onclick = () => { clear(); host('close'); };
+$('#bOpen').onclick = () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVideo) P.yt.pauseVideo(); host('openOut', { url: P.url }); };
+// (in a browser: what to play comes in the address)
+try { const h = decodeURIComponent(location.hash.slice(1)); if (h) window.mediaOpen(JSON.parse(h)); } catch {}
+host('loaded');
+</script>
+</body>
+</html>

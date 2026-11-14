@@ -251,6 +251,7 @@ async function run() {
   await shot('10b-jupiter');
   await step('back home 4', async () => { await home(); return !$('#library').hidden; });
   await musicXmlRun('');
+  await mediaRun('');
   await step('settings', async () => { $('[data-panel=app]').click(); await sleep(800); return !$('#panel-app').hidden; });
   await shot('11-settings');
   // linking a device: the card in Settings, and the linking screen (looking; nothing nearby here)
@@ -382,6 +383,23 @@ async function musicXmlRun(pre) {
     await step(pre + 'back home from MusicXML', async () => { $('#cpBack') && $('#cpBack').click(); await sleep(1200); if (pre) await closePanels(); else await home(); return $('#compose').hidden; });
   }
 }
+// The little player over the score (its own web view, with an https address YouTube accepts):
+// a YouTube video gets ready (YouTube's error 153 would mean it was turned away), then it closes.
+async function mediaRun(pre) {
+  const ev = []; const was = window.standMediaEvent;
+  window.standMediaEvent = (m) => { ev.push(m); try { was && was(m); } catch {} };
+  await step(pre + 'floating player: a YouTube video gets ready', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia)) return 'no native player';
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'open', kind: 'youtube', id: 'M7lc1UVf-VE', start: 0, url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' });
+    const got = await waitFor(() => ev.find((m) => m.op === 'ready' || m.op === 'error'), 30000);
+    await shot(pre ? 'p-media' : '10d-media');
+    if (!got) return 'no answer from YouTube in 30 s (no internet on the test machine?)';
+    if (got.op === 'error' && got.code === 153) return false;
+    return got.op === 'ready' ? 'ready' : 'error ' + got.code;
+  }, 45000);
+  await step(pre + 'floating player closes', async () => { window.webkit.messageHandlers.standMedia && window.webkit.messageHandlers.standMedia.postMessage({ op: 'close' }); await sleep(800); return true; });
+  window.standMediaEvent = was;
+}
 // the iPhone: its own home, the tools in the pocket, the linking screen, sideways and back
 async function phoneRun() {
   // (a new iPhone first asks about linking an iPad: answered "Not now", as most would at first)
@@ -396,6 +414,7 @@ async function phoneRun() {
   await step('iPhone: linking screen', async () => { await open('app'); const c = $('#pairCard'); c && c.scrollIntoView(); await sleep(400); const n = $('#pairNew'); if (!n) return 'no button'; n.click(); await sleep(1500); const ok = !!$('.pair'); const x = [...$$('.pair .btn')].find((b) => /Cancel/.test(b.textContent)); x && x.click(); await sleep(400); await closePanels(); return ok; });
   await shot('p-end');
   await musicXmlRun('iPhone: ');
+  await mediaRun('iPhone: ');
   await videoRun();
   await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);

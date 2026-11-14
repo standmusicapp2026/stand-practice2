@@ -141,6 +141,7 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
 
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, UIPencilInteractionDelegate {
     private var webView: WKWebView!
+    private var media: StandMediaFloat?
     /// keeps the page from sliding sideways (see below)
     private var sideLock: NSKeyValueObservation?
     private var pageReady = false
@@ -157,10 +158,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut", "standMedia"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -238,7 +239,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
         super.viewWillTransition(to: size, with: coordinator)
-        coordinator.animate(alongsideTransition: nil) { _ in self.video.orientationChanged() }
+        coordinator.animate(alongsideTransition: nil) { _ in self.video.orientationChanged(); self.media?.hostResized() }
     }
 
     override func viewDidLoad() {
@@ -379,6 +380,20 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             let nav = UINavigationController(rootViewController: browser)
             nav.modalPresentationStyle = .pageSheet
             present(nav, animated: true)
+        case "standMedia":
+            // the floating player of YouTube, Spotify and Apple Music (StandMediaFloat.swift)
+            switch body["op"] as? String ?? "" {
+            case "open":
+                let f = media ?? StandMediaFloat(frame: .zero)
+                media = f
+                f.openOut = { url in UIApplication.shared.open(url) }
+                f.closed = { [weak self] in self?.media = nil; self?.send("standMediaEvent", ["op": "closed"]) }
+                f.event = { [weak self] m in self?.send("standMediaEvent", m) }
+                f.open(body, in: view)
+            case "close": media?.close()
+            case "cmd": media?.command(body)
+            default: break
+            }
         case "standDone":
             if let p = body["path"] as? String, p.hasPrefix("/__incoming/") {
                 try? FileManager.default.removeItem(at: incomingDir.appendingPathComponent(String(p.dropFirst("/__incoming/".count))))

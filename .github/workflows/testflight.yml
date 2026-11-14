@@ -34,7 +34,7 @@ jobs:
       - name: Bundle the web app
         run: |
           mkdir -p ios/Stand/www
-          cp -R index.html manifest.webmanifest css js vendor icons ios/Stand/www/
+          cp -R index.html media.html manifest.webmanifest css js vendor icons ios/Stand/www/
           if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
           if [ -d examples ]; then cp -R examples ios/Stand/www/; fi
 
