@@ -2383,6 +2383,7 @@ function wirePanels() {
   $('#lyTitle').addEventListener('change', (e) => edit(() => { C.score.title = e.target.value.trim() || 'Untitled'; $('#cpTitle').textContent = C.score.title; }, { keepSel: true }));
   $('#lySubtitle').addEventListener('change', (e) => edit(() => { C.score.subtitle = e.target.value.trim(); }, { keepSel: true }));
   $('#lyComposer').addEventListener('change', (e) => edit(() => { C.score.composer = e.target.value.trim(); }, { keepSel: true }));
+  $$('#lyBarNums button').forEach((b) => b.addEventListener('click', () => { edit(() => { if (b.dataset.v === 'system') delete C.score.layout.barNums; else C.score.layout.barNums = b.dataset.v; }, { keepSel: true }); $$('#lyBarNums button').forEach((x) => x.classList.toggle('on', x === b)); }));
   for (const [id, key] of [['#lyArranger', 'arranger'], ['#lyLyricist', 'lyricist'], ['#lyRights', 'rights']]) $(id).addEventListener('change', (e) => edit(() => { const v = e.target.value.trim(); if (v) C.score[key] = v; else delete C.score[key]; }, { keepSel: true }));
   // (kept while you type too, and when Compose closes: on the iPad the fields are not always told they were left)
   { let t = 0; for (const id of ['#lyTitle', '#lySubtitle', '#lyComposer']) $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(flushLayoutNames, 700); }); }
@@ -2678,7 +2679,7 @@ function renderMixer() {
 }
 function renderLayout() {
   if (!C.score) return;
-  C.lyFor = C.id; $('#lyTitle').value = C.score.title || ''; $('#lySubtitle').value = C.score.subtitle || ''; $('#lyComposer').value = C.score.composer || ''; $('#lyArranger').value = C.score.arranger || ''; $('#lyLyricist').value = C.score.lyricist || ''; $('#lyRights').value = C.score.rights || '';
+  C.lyFor = C.id; $('#lyTitle').value = C.score.title || ''; $('#lySubtitle').value = C.score.subtitle || ''; $('#lyComposer').value = C.score.composer || ''; $('#lyArranger').value = C.score.arranger || ''; $('#lyLyricist').value = C.score.lyricist || ''; $('#lyRights').value = C.score.rights || ''; $$('#lyBarNums button').forEach((x) => x.classList.toggle('on', x.dataset.v === (C.score.layout.barNums || 'system')));
   $('#lyPage').value = C.score.layout.page || 'A4'; $('#lyOrient').value = C.score.layout.landscape ? '1' : '0';
   $('#lyConcert').checked = C.score.layout.concert !== false; $('#lyHide').checked = !!C.score.layout.hideEmpty;
   const box = $('#lyStaff'); box.textContent = '';

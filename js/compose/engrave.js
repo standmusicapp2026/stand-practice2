@@ -442,7 +442,9 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   }
   // bar number at the start of each line (not the first)
   const m0 = sys.measures[0].m;
-  if (m0 > 0) text(ctx, String(barNumber(score, m0)), x0, top - 1.6, 1.3, TEXT_FONT, 'italic');
+  // bar numbers: at the start of each line (as usual), on every bar, every fifth bar, or none
+  const BN = (lay.opts && lay.opts.barNums) || 'system';
+  if (m0 > 0 && BN !== 'none' && (BN !== 'five' || barNumber(score, m0) % 5 === 0)) text(ctx, String(barNumber(score, m0)), x0, top - 1.6, 1.3, TEXT_FONT, 'italic');
   // start of the line: clef, key, time
   const key0 = keyAt(score, m0), time0 = timeAt(score, m0);
   // (a time signature kept out of sight: music written with none, or one the file hides)
@@ -847,6 +849,8 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
   drawBarline(ctx, ms.bar || (lastInSys && mm.end === score.measures.length - 1 ? 'final' : 'single'), bx, sys.staves, lay);
   if (ms.bar && ms.bar !== 'single' && !(ms.bar === 'final' && m === score.measures.length - 1)) hitBox({ id: 'bar' + m, kind: 'barline', name: ms.bar, m }, bx - 2.4, bx + 0.25, top, bot);
   if (ms.start === 'repeat') { const rx = isFirst ? sys.x0 + sys.head - 1.2 : mm.x0; drawRepeatStart(ctx, rx, sys.staves); hitBox({ id: 'rs' + m, kind: 'repstart', name: 'repeat', m }, rx - 0.2, rx + 2.4, top, bot); }
+  { const BN = (lay.opts && lay.opts.barNums) || 'system', n = barNumber(score, m);
+    if (!isFirst && n > 0 && (BN === 'every' || (BN === 'five' && n % 5 === 0)) && !ms.rehearsal) text(ctx, String(n), mm.x0 + 0.2, top - 1.6, 1.3, TEXT_FONT, 'italic'); }
   // ---- above the bar: tempo, rehearsal marks, text
   if (ms.tempo && (ms.tempo.text || (ms.tempo.bpm && ms.tempo.show !== false))) { const tx = isFirst ? sys.x0 + sys.head : contentX0 - 0.8, ty = top - Math.max(3.2, sys.above - 0.6); const tw = drawTempo(ctx, ms.tempo, tx, ty); hitBox({ id: 'tempo' + m, kind: 'tempo', name: ms.tempo.text || String(ms.tempo.bpm), m }, tx - 0.2, tx + Math.max(2, tw || 6), ty - 2.2, ty + 0.6); }
   if (ms.rehearsal) { const tx = mm.x0 + 0.2, ty = top - Math.max(3.5, sys.above - 0.6); const w = textWidth(ctx, ms.rehearsal, 2.1, TEXT_FONT, '700'); ctx.lineWidth = 0.15; ctx.strokeRect(tx - 0.4, ty - 2, w + 0.8, 2.5); text(ctx, ms.rehearsal, tx, ty, 2.1, TEXT_FONT, '700'); hitBox({ id: 'reh' + m, kind: 'rehearsal', name: ms.rehearsal, m }, tx - 0.5, tx + w + 0.5, ty - 2.1, ty + 0.6); }
