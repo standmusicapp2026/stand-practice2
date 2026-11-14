@@ -253,11 +253,52 @@ export function fitBar(bar, time) {
   if (sum < total) out.push(...restsFor(sum, total - sum, time));
   return out;
 }
+// After any change: a bar of any voice that no longer adds up (a tuplet cut short by an edit) is
+// put right: tuplet groups that are not whole become rests, then the bar is fitted. Returns how
+// many bars were put right.
+export function repairScore(score) {
+  let n = 0;
+  for (const st of allStaves(score)) for (const key of ['bars', 'v2', 'v3', 'v4']) {
+    const bars = st[key]; if (!bars) continue;
+    for (let m = 0; m < bars.length; m++) {
+      const bar = bars[m]; if (!bar) continue;
+      const time = timeAt(score, m), total = barTicks(time);
+      if (bar.reduce((a, e) => a + ticksOf(e, time), 0) === total) continue;
+      const out = []; let p = 0;
+      for (let i = 0; i < bar.length;) {
+        if (!bar[i].tup) { out.push(bar[i]); p += ticksOf(bar[i], time); i++; continue; }
+        let j = i + 1; while (j < bar.length && bar[j].tup && bar[j].tup.n === bar[i].tup.n && bar[j].tup.i !== 0) j++;
+        const g = bar.slice(i, j), len = g.reduce((a, e) => a + ticksOf(e, time), 0), whole = g.length === bar[i].tup.n && bar[i].tup.i === 0;
+        if (whole) out.push(...g); else { const r = Math.round(len / 15) * 15; if (r > 0) out.push(...restsFor(p, r, time)); }
+        p += len; i = j;
+      }
+      bars[m] = fitBar(out, time); n++;
+    }
+  }
+  return n;
+}
 // Write an event (note, chord or rest) over [pos, pos+len) in bar m of a staff. Anything there is
 // replaced; a note that sticks out of the bar continues in the next bar, tied.
+// A tuplet that a plain note or rest is written over (all of it or a part) becomes rests first:
+// a group cut in two would not add up.
+function clearTuplets(st, m, pos, len, time) {
+  const bar = st.bars[m]; if (!bar || !bar.some((e) => e.tup)) return;
+  const starts = eventStarts(bar, time);
+  let i = 0; const out = []; let changed = false;
+  while (i < bar.length) {
+    if (!bar[i].tup) { out.push(bar[i]); i++; continue; }
+    let j = i + 1; while (j < bar.length && bar[j].tup && bar[j].tup.n === bar[i].tup.n && bar[j].tup.i !== 0) j++;
+    const g0 = starts[i], g1 = j < bar.length ? starts[j] : starts[i] + bar.slice(i, j).reduce((a, e) => a + ticksOf(e, time), 0);
+    if (g0 < pos + len && pos < g1 && (g1 - g0) % 15 === 0) { out.push(...restsFor(g0, g1 - g0, time)); changed = true; }
+    else out.push(...bar.slice(i, j));
+    i = j;
+  }
+  if (changed) st.bars[m] = out;
+}
 export function writeEvent(score, st, m, pos, ev) {
   const time = timeAt(score, m);
   const total = barTicks(time);
+  if (!ev.tup) clearTuplets(st, m, pos, Math.min(evTicks(ev), total - pos), time);
   // a value too short to be followed by any written rest (a double-dotted 32nd, a dotted 64th)
   // loses a dot, so every bar always adds up exactly
   while (!ev.tup && ev.dots && evTicks(ev) % 30) ev.dots--;

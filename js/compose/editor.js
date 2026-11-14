@@ -158,6 +158,8 @@ function edit(fn, opts = {}) {
   const before = JSON.stringify(C.score);
   let r; C.inEdit = true; try { r = fn(); } finally { C.inEdit = false; }
   if (r === false) { if (JSON.stringify(C.score) !== before) { C.score = JSON.parse(before); pruneSel(); relayout(); } return; }
+  // (whatever the change, every bar still adds up)
+  try { M.repairScore(C.score); } catch (e) { console.error(e); }
   checkDoubt();
   C.undo.push(before); if (C.undo.length > 150) C.undo.shift(); C.redo = [];
   if (!opts.keepSel) pruneSel();
@@ -715,7 +717,9 @@ function commitWrite(tg) {
       const ev = { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots };
       if (at) for (const k of ['dyn', 'txt', 'txtStyle', 'fing', 'chord']) if (at[k]) ev[k] = M.clone(at[k]);
       if (tupN()) ev.tup = { ...tupObj(C.tool.dur), ...(at && at.tup && at.tup.i !== undefined ? { i: at.tup.i } : {}) };
-      if (at && at.tup && tupN() && M.evTicks(at) === M.evTicks(ev)) bar[idx] = ev; else M.writeEvent(C.score, st, m, pos, ev);
+      if (at && at.tup && tupN() && M.evTicks(at) === M.evTicks(ev)) bar[idx] = ev;
+      // (a tuplet rest only takes the place of a note of its tuplet; elsewhere it is a plain rest)
+      else { delete ev.tup; M.writeEvent(C.score, st, m, pos, ev); }
       newId = ev.id; return;
     }
     const n = noteFromTarget(tg);
@@ -945,8 +949,10 @@ function transposeToKey(from, to) {
 }
 function setDuration(t) {
   C.tool.dur = t; C.tool.rest = C.tool.rest && true;
-  const evs = selEvents();
-  if (evs.length && C.mode === 'select') {
+  // (notes of a tuplet keep their value, and a tuplet is written note by note with the pencil: a
+  // single note changed in or out of a group would leave the bar not adding up)
+  const evs = selEvents().filter((f) => !f.ev.tup);
+  if (evs.length && C.mode === 'select' && !tupN()) {
     edit(() => {
       // (one after another, each found again where it is now: a longer note written first takes
       // the place of the next ones, which are then gone)
@@ -955,7 +961,7 @@ function setDuration(t) {
         if (i < 0) continue;
         const time = M.timeAt(C.score, f.m); let pos = 0; for (let k = 0; k < i; k++) pos += M.ticksOf(bar[k], time);
         const ev = { ...M.clone(bar[i]), t, dots: C.tool.dots, full: false };
-        if (tupN()) ev.tup = tupObj(t); else delete ev.tup;
+        delete ev.tup;
         M.writeEvent(C.score, f.st, f.m, pos, ev);
       }
     }, { keepSel: true });
@@ -2245,6 +2251,8 @@ function writeAfter(L) {
   const f = selEvents().pop(); if (!f) { hint('Select a note first: what you type goes after it.'); return; }
   const time = M.timeAt(C.score, f.m);
   let m = f.m, pos = f.pos + M.ticksOf(f.ev, time);
+  // (after a note of a tuplet: past the rest of its group, which stays whole)
+  if (f.ev.tup) { const bar = f.st.bars[f.m]; for (let i = f.i + 1; i < bar.length && bar[i].tup && !(bar[i].tup.i === 0); i++) pos += M.ticksOf(bar[i], time); }
   if (pos >= M.barTicks(time)) { m++; pos = 0; if (m >= C.score.measures.length) edit(() => M.addBars(C.score, 1)); }
   // (the last note written, looking back past rests, decides the octave)
   let ref = null; { let q = { m: f.m, i: f.i, ev: f.ev }, guard = 0; while (q && guard++ < 64) { if (q.ev.notes && q.ev.notes.length) { ref = q.ev.notes[0].s; break; } q = M.prevEvent(C.score, f.st, q.m, q.i); } }
@@ -2252,7 +2260,7 @@ function writeAfter(L) {
   let n = null;
   if (L !== null) { let s = Math.floor(ref / 7) * 7 + L; if (s - ref > 3) s -= 7; if (ref - s > 3) s += 7; n = { s, a: M.keyAlter(M.keyAt(C.score, m), s) }; }
   let id = null;
-  edit(() => { const ev = n ? { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [n] } : { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots }; if (tupN()) ev.tup = tupObj(C.tool.dur); M.writeEvent(C.score, f.st, m, pos, ev); id = ev.id; });
+  edit(() => { const ev = n ? { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [n] } : { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots }; M.writeEvent(C.score, f.st, m, pos, ev); id = ev.id; });
   C.sel.clear(); if (id) C.sel.add(id); relayout(); syncSelBar();
   if (n) { unlock(); sampler.preview(soundOf(f.part), M.midiOf(n.s, n.a), 0.6, 0.4, f.part.mix || undefined); }
 }
@@ -2304,7 +2312,8 @@ function repeatSel() {
 }
 // Q halves the value of the selected notes, W doubles it
 function scaleDur(k) {
-  const evs = selEvents().filter((f) => !f.ev.full); if (!evs.length) return;
+  // (notes of a tuplet keep their value: the group would no longer add up)
+  const evs = selEvents().filter((f) => !f.ev.full && !f.ev.tup); if (!evs.length) { if (C.sel.size) hint('Notes of a tuplet keep their value.', 1800); return; }
   edit(() => {
     for (const f of evs.slice().sort((a, b) => a.m - b.m || a.pos - b.pos)) {
       const bar = f.st.bars[f.m] || [], i = bar.findIndex((e) => e.id === f.ev.id); if (i < 0) continue;
