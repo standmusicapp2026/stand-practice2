@@ -26,7 +26,7 @@ async function stroke(kind = 'pen', fx = 0.4, fy = 0.4) {
 }
 const key = (k) => (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true }));
 const closePanels = async () => { for (const b of $$('aside.panel:not([hidden]) [data-close]')) b.click(); await sleep(400); };
-const home = async () => { await closePanels(); if (!$('#score').hidden) $('#backBtn').click(); if (!$('#compose').hidden) $('#cpBack').click(); await waitFor(() => !$('#library').hidden, 15000); await sleep(600); };
+const home = async () => { $('.tour-skip') && $('.tour-skip').click(); await sleep(200); await closePanels(); if (!$('#score').hidden) $('#backBtn').click(); if (!$('#compose').hidden) $('#cpBack').click(); await waitFor(() => !$('#library').hidden, 15000); await sleep(600); };
 
 // Leaving Stand with the metronome on, as a musician does (another app, then back), three times:
 // it keeps playing and nothing breaks. Then leaving with nothing playing: the sound rests (nothing
