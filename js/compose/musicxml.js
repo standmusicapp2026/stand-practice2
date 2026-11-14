@@ -581,6 +581,7 @@ export function fromMusicXML(xmlText) {
     part.staves = Array.from({ length: nSt }, (_, i) => ({ id: newId(), clef: inst.clefs[i] || (i > 0 && nSt === 2 ? 'bass' : inst.clefs[0]), bars: [] }));
     score.parts.push(part);
     let divisions = firstDiv(pel), tr = { steps: 0, semis: 0 }, trSeen = false;
+    const partBeams = !!pel.querySelector('note > beam');
     let time = [4, 4];
     const measureEls = [...pel.querySelectorAll(':scope > measure')];
     // marks waiting for the next note on a staff, lines being drawn, the last note on a staff
@@ -752,6 +753,11 @@ export function fromMusicXML(xmlText) {
             const slT = [...el.querySelectorAll('slur')].map((x) => x.getAttribute('type'));
             if (slT.includes('start')) { ev.slur = 'start'; if (slT.includes('stop')) ev.slurEnd2 = true; } else if (slT.includes('stop')) ev.slur = 'end';
           } else delete ev.notes;
+          // the beams as the file has them (when it has any): where one starts, notes joined, notes on their own
+          if (!isChord && !ev.rest && ev.t >= 8 && partBeams) {
+            const bm = q(el, 'beam[number="1"]') || q(el, 'beam'); const bv = bm ? bm.textContent.trim() : '';
+            if (bv === 'begin') ev.beam = 'start'; else if (bv === 'continue' || bv === 'end') ev.beam = 'join'; else if (!bm) ev.nobeam = true;
+          }
           if (isChord && !ev.rest) {
             const host = list.find((x) => x.pos === start && x.ev.notes);
             if (host) { host.ev.notes.push(ev.notes[0]); continue; }

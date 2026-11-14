@@ -1056,6 +1056,12 @@ function sameBeat(bar, a, b, time) {
   const unit = time[1] === 8 && time[0] % 3 === 0 ? (M.WHOLE / 8) * 3 : time[1] === 8 ? (M.WHOLE / 8) * (time[0] <= 4 ? time[0] : 2) : time[1] === 2 ? M.WHOLE / 4 : M.WHOLE / time[1];
   return Math.floor(starts[ia] / unit) === Math.floor(starts[ib] / unit);
 }
+// beams by hand: a new beam on the selected notes, joined to the note before, or none
+function setBeam(kind) {
+  const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest); if (!evs.length) { hint('Select the notes first (eighths or shorter).'); return; }
+  edit(() => { for (const f of evs) { delete f.ev.beam; delete f.ev.nobeam; if (kind === 'none') f.ev.nobeam = true; else if (kind) f.ev.beam = kind; } }, { keepSel: true });
+  hint(kind === 'start' ? 'A new beam starts here.' : kind === 'join' ? 'Joined to the note before.' : kind === 'none' ? 'No beam: each note has its flag.' : 'Beamed by the beat, as usual.', 1800);
+}
 function setTie() {
   const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest); if (!evs.length) { hint('Select a note to tie to the next one.'); return; }
   edit(() => {
@@ -1695,6 +1701,16 @@ function renderTab() {
     g3.append(mbtn('', 'Down a semitone', false, () => moveSemis(-1), { svg: 'i-down' }));
     g3.append(mbtn('', 'Up an octave', false, () => moveNotes(7), { draw: (gg, W, H) => gC(gg, GL.ott['8va'], W, H, 3.4), small: 'octave up' }));
     g3.append(mbtn('', 'Down an octave', false, () => moveNotes(-7), { draw: (gg, W, H) => gC(gg, GL.ott['8vb'], W, H, 3.4), small: 'octave down' }));
+    lab('Beams');
+    const gb = grid('four');
+    const cur = evs.length ? (evs[0].ev.nobeam ? 'none' : evs[0].ev.beam || 'auto') : null;
+    const beamIcon = (kind) => (gg, W, H) => { const y0 = H * 0.3, y1 = H * 0.72, xs = [W * 0.2, W * 0.42, W * 0.62, W * 0.84]; gg.lineWidth = 0.14; for (const x of xs) { gg.beginPath(); gg.moveTo(x, y0); gg.lineTo(x, y1); gg.stroke(); gg.beginPath(); gg.ellipse(x - 0.45, y1, 0.55, 0.4, -0.4, 0, Math.PI * 2); gg.fill(); }
+      const bar = (a, b) => gg.fillRect(xs[a], y0, xs[b] - xs[a], 0.42);
+      if (kind === 'auto') bar(0, 3); else if (kind === 'start') { bar(0, 1); bar(2, 3); } else if (kind === 'join') bar(0, 3); else if (kind === 'none') for (const x of xs) { gg.beginPath(); gg.moveTo(x, y0); gg.quadraticCurveTo(x + 0.9, y0 + 0.5, x + 0.6, y0 + 1.3); gg.stroke(); } };
+    gb.append(mbtn('', 'Beams as usual, by the beat', cur === 'auto', () => setBeam(null), { draw: beamIcon('auto'), small: 'as usual' }));
+    gb.append(mbtn('', 'A new beam starts on this note', cur === 'start', () => setBeam('start'), { draw: beamIcon('start'), small: 'start here' }));
+    gb.append(mbtn('', 'Joined to the note before', cur === 'join', () => setBeam('join'), { draw: beamIcon('join'), small: 'join' }));
+    gb.append(mbtn('', 'No beam: a flag of its own', cur === 'none', () => setBeam('none'), { draw: beamIcon('none'), small: 'no beam' }));
     lab('Note heads');
     const gh = grid('four');
     const curHead = evs.length ? (evs[0].ev.notes ? (evs[0].ev.head || null) : undefined) : (C.tool.head || null);

@@ -1176,6 +1176,9 @@ function beamGroups(evs, time) {
     const beamable = !e.ev.rest && e.ev.t >= 8 && e.notes.length && !e.ev.nobeam;
     if (!beamable) { flush(); continue; }
     const g = Math.floor(e.pos / unit);
+    // (beams set by hand, or read from the file: a new beam starts here, or this note joins the one before)
+    if (cur.length && e.ev.beam === 'start') flush();
+    else if (cur.length && e.ev.beam === 'join') { cur.push(e); continue; }
     if (cur.length) {
       const last = cur[cur.length - 1];
       // a tuplet group beams on its own: a new group (its first note) starts a new beam
