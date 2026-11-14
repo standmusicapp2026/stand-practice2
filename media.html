@@ -50,13 +50,14 @@ const host = (op, extra) => {
   try { parent.postMessage({ standMedia: m }, '*'); } catch {}
 };
 const SPEEDS = [0.5, 0.6, 0.75, 0.85, 1, 1.1, 1.25];
-const P = { kind: null, yt: null, sp: null, a: null, b: null, speed: 1, url: '', tick: 0, playing: false };
+const T = (x) => (P.tr && P.tr[x]) || x;
+const P = { tr: null, kind: null, yt: null, sp: null, a: null, b: null, speed: 1, url: '', tick: 0, playing: false };
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function say(t, html) { const m = $('#msg') || Object.assign(document.createElement('div'), { id: 'msg' }); if (!m.parentNode) $('#stage').append(m); if (html) m.innerHTML = t; else m.textContent = t; m.hidden = false; }
 function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = null; P.sp = null; P.a = P.b = null; P.playing = false; syncBar(); }
 function syncBar() {
   $('#bPlay').innerHTML = P.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>';
-  $('#bPlay').setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
+  $('#bPlay').setAttribute('aria-label', T(P.playing ? 'Pause' : 'Play'));
   $('#bSpeed').textContent = Math.round(P.speed * 100) + '%';
   $('#bA').classList.toggle('on', P.a !== null); $('#bB').classList.toggle('on', P.b !== null);
   document.body.classList.toggle('nobar', P.kind !== 'youtube');
@@ -74,16 +75,16 @@ function loadYouTubeApi() {
 }
 async function openYouTube(id, start) {
   const div = document.createElement('div'); div.id = 'yt'; $('#stage').append(div);
-  say('Loading the video…');
-  let YT; try { YT = await loadYouTubeApi(); } catch { say('YouTube could not be reached. Check the internet connection, then try again.'); host('error', { code: 'net' }); return; }
+  say(T('Loading the video…'));
+  let YT; try { YT = await loadYouTubeApi(); } catch { say(T('YouTube could not be reached. Check the internet connection, then try again.')); host('error', { code: 'net' }); return; }
   P.yt = new YT.Player('yt', {
     videoId: id, width: '100%', height: '100%',
     playerVars: { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(start || 0), origin: location.origin, enablejsapi: 1 },
     events: {
       onReady: () => { const m = $('#msg'); if (m) m.hidden = true; try { P.yt.setPlaybackRate(P.speed); } catch {} host('ready'); },
       onStateChange: (e) => { P.playing = e.data === 1; syncBar(); host('state', { playing: P.playing }); },
-      onError: (e) => { const why = { 2: 'This link is not a video YouTube knows.', 5: 'This video cannot play here.', 100: 'This video is no longer on YouTube, or it is private.', 101: 'Whoever put this video on YouTube does not let it play outside YouTube.', 150: 'Whoever put this video on YouTube does not let it play outside YouTube.', 153: 'YouTube did not accept where this player is shown.' }[e.data] || 'This video cannot play here.';
-        say(why + ' <a href="#" id="goOut">Open it in YouTube</a>', true); const g = $('#goOut'); if (g) g.onclick = (ev) => { ev.preventDefault(); host('openOut', { url: P.url }); }; host('error', { code: e.data }); },
+      onError: (e) => { const why = T({ 2: 'This link is not a video YouTube knows.', 5: 'This video cannot play here.', 100: 'This video is no longer on YouTube, or it is private.', 101: 'Whoever put this video on YouTube does not let it play outside YouTube.', 150: 'Whoever put this video on YouTube does not let it play outside YouTube.', 153: 'YouTube did not accept where this player is shown.' }[e.data] || 'This video cannot play here.');
+        say(why + ' <a href="#" id="goOut"></a>', true); const go0 = $('#goOut'); if (go0) go0.textContent = T('Open it in YouTube'); const g = $('#goOut'); if (g) g.onclick = (ev) => { ev.preventDefault(); host('openOut', { url: P.url }); }; host('error', { code: e.data }); },
     },
   });
   P.tick = setInterval(() => {
@@ -110,11 +111,12 @@ function openApple(path) {
   $('#stage').append(f);
 }
 window.mediaOpen = (o) => {
+  if (o.tr) { P.tr = o.tr; for (const b of document.querySelectorAll('#bar button[aria-label]')) b.setAttribute('aria-label', T(b.dataset.en || (b.dataset.en = b.getAttribute('aria-label')))); }
   clear(); P.kind = o.kind; P.url = o.url || ''; P.speed = 1; syncBar();
   if (o.kind === 'youtube') openYouTube(o.id, o.start);
   else if (o.kind === 'spotify') openSpotify(o.type, o.id);
   else if (o.kind === 'apple') openApple(o.path);
-  else say('This link cannot play here.');
+  else say(T('This link cannot play here.'));
 };
 // Stand asks: pause (when the player is put away at the side), play, the speed
 window.mediaCmd = (c) => {

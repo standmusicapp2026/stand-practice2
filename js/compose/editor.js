@@ -2127,7 +2127,10 @@ async function togglePlay(from) {
   }
   const P = C.practice, loop = P.loop && C.selBars ? { from: C.selBars.from, to: C.selBars.to } : null;
   if (loop) { start = loop.from; pos = 0; }
-  if (P.speed !== 1 || loop) hint((P.speed !== 1 ? `At ${Math.round(P.speed * 100)}% of the tempo. ` : '') + (loop ? (loop.from === loop.to ? `Bar ${M.barNumber(C.score, loop.from)} again and again.` : `Bars ${M.barNumber(C.score, loop.from)}–${M.barNumber(C.score, loop.to)} again and again.`) : ''), 2600);
+  if (P.speed !== 1 || loop) {
+    const sp = Math.round(P.speed * 100), a = M.barNumber(C.score, loop ? loop.from : 0), z = M.barNumber(C.score, loop ? loop.to : 0);
+    hint(!loop ? `At ${sp}% of the tempo.` : P.speed === 1 ? (a === z ? `Bar ${a} again and again.` : `Bars ${a}–${z} again and again.`) : (a === z ? `At ${sp}% of the tempo, bar ${a} again and again.` : `At ${sp}% of the tempo, bars ${a}–${z} again and again.`), 2600);
+  }
   else if (P.loop && !C.selBars) hint('To play a passage again and again, select its bars first.', 2600);
   $('#cpPlay').classList.add('on'); $('#cpPlay').querySelector('span').textContent = 'Loading';
   await player.play(C.score, { from: start, pos, speed: P.speed, loop, click: P.click, countIn: P.countIn, swing: P.swing });
@@ -2284,7 +2287,7 @@ function addInterval(iv, dir) {
     if (!f.ev.notes.some((x) => x.s === s)) f.ev.notes.push({ s, a: M.keyAlter(M.keyAt(C.score, f.m), s) });
     f.ev.notes.sort((a, b) => a.s - b.s);
   } }, { keepSel: true });
-  hint(`A ${['', '', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'octave', 'ninth'][iv]} ${dir > 0 ? 'above' : 'below'} added.`, 1500);
+  hint(dir > 0 ? 'Added above.' : 'Added below.', 1500);
 }
 // R: the selection again, right after it
 function repeatSel() {

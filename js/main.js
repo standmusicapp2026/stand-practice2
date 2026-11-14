@@ -10728,9 +10728,12 @@ function mediaOf(url) {
 }
 function ytStart(u) { const t = u.searchParams.get('t') || u.searchParams.get('start') || ''; const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(t); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; }
 const MEDIA = { box: null, kind: '' };
+const MEDIA_WORDS = ['Loading…', 'Loading the video…', 'YouTube could not be reached. Check the internet connection, then try again.', 'This link is not a video YouTube knows.', 'This video cannot play here.', 'This video is no longer on YouTube, or it is private.', 'Whoever put this video on YouTube does not let it play outside YouTube.', 'YouTube did not accept where this player is shown.', 'Open it in YouTube', 'This link cannot play here.', 'Play', 'Pause', 'Back 5 seconds', 'On 5 seconds', 'Speed', 'Loop from here', 'Loop to here', 'Open in its app', 'Close'];
 function openMedia(url, name) {
   const o = mediaOf(url); if (!o) { window.open(url, '_blank', 'noopener'); return; }
   o.url = url; o.title = name || '';
+  // (the little player speaks the language of the app)
+  o.tr = {}; for (const x of MEDIA_WORDS) { const t = globalThis.__tr ? globalThis.__tr(x) : x; if (t && t !== x) o.tr[x] = t; }
   unlock();
   hidePanel();
   // (in the iPad app: a player of its own, which YouTube accepts)
