@@ -65,6 +65,8 @@ const V3 = () => (globalThis.__kfV ?? 3) === 3;
 const V2 = () => (globalThis.__kfV ?? 3) >= 2;
 // (the settings found best on real music — Bach suites, scales — and confirmed on pieces not used to find them)
 const KF_DEFAULTS = {"__kfH": 8.816, "__kfOwn": 0.8, "__kfM": 0.8, "__kfHalf": 5, "__kfHalfW": 5, "__kfNear": 1.68, "__kfFit": 0.482, "__kfEps": 0.41, "__kfRestW": 0.8, "__kfChroma": 0, "__kfH3": 0.247, "__kfFreshH": 0.17, "__kfNew": 1.398, "__kfGone": 0.4, "__kfGoneN": 12, "__kfSettle": 1258, "__kfMinNotes": 5, "__kfStartW": 1.2, "__kfMix": 0.2, "__kfTriad": 1, "__kfQuiet": 0.3, "__kfLowRun": 6, "__kfGap": 800, "__kfD": 2.709, "__kfRiv": 1.513, "__kfFreshMs": 19000, "__kfLvQ": 0.35, "__kfCL": 2.571};
+// how many fifths apart two keys are (a minor key counted as its relative major)
+const fifthsApart = (a, b) => { const m = (k) => ((k.pc + (k.minor ? 3 : 0)) * 7) % 12; const d = ((m(a) - m(b)) % 12 + 12) % 12; return Math.min(d, 12 - d); };
 const G = (k, d) => globalThis[k] ?? KF_DEFAULTS[k] ?? d;
 // A note heard is now and then the wrong note (an attack, an overtone: about one in ten, and more
 // in a room or a scratchy attack): each note
@@ -127,8 +129,8 @@ export class KeyFollower {
   // move the drone away from it a moment later)
   set(pc, minor) {
     const now = this._now();
-    this.fastBg = now + 2500; this.flFrom = now; this.key = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0);
-    this.notesSince = 0; this.movedAt = now; this.recent = []; this.cur = null; this.durs = [];
+    this.fastBg = now + 2500; this.flFrom = now; this.key = { pc, minor }; this.home = { pc, minor }; this.cand = null; this.onsets = 0; this._resetPost(); this.pa = null; if (this.w) this.w.fill(0);
+    this.notesSince = 0; this.movedAt = now; this.recent = []; this.recentAt = []; this.cur = null; this.durs = [];
     if (this.r) this.r.fill(0);
     if (this.C) this.C.fill(0);
   }
@@ -388,7 +390,7 @@ export class KeyFollower {
         if (this.pcRun === RUN && !fresh && this.lastNotePc !== undefined) { this.pcRun = 0; this.prevPc = -1; return; }
         if (this.pcRun < RUN) return;
         if (this.pcRun === RUN && V2()) this._noteOn(pc, now - 40 * (RUN + 1));
-        if (this.pcRun === RUN) { this.lastNotePc = pc; this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); }
+        if (this.pcRun === RUN) { this.lastNotePc = pc; this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); const ra = this.recentAt || (this.recentAt = []); ra.push(now); if (ra.length > 24) ra.shift(); }
         // each note counts once: a little for being played, then for as long as it sounds, up to a cap
         const add = (this.pcRun === RUN ? 0.15 : 0) + (this.noteW < NOTE_CAP ? Math.min(dt, NOTE_CAP - this.noteW) : 0);
         this.noteW += dt;
@@ -409,7 +411,7 @@ export class KeyFollower {
       // (and, while you play on without a pause, the steadier way of the earlier ear: the likely key over
       // the last few seconds — it follows a piece that moves to a near key, where only one note changes)
       // (not just after a pause: there the new piece is judged as above, on its own notes)
-      if (G('__kfHyb', 1) && this.key === k0 && !(G('__kfHybF', 1) && now - (this.freshAt ?? -1e12) < G('__kfHybMs', 14000)) && !this._tuning()) this._decide2(now);
+      if (G('__kfHyb', 1) && this.key === k0 && !(G('__kfHybF', 1) && now - (this.freshAt ?? -1e12) < G('__kfHybMs', 14000)) && !this._tuned(now)) this._decide2(now);
       return;
     }
     if (V2()) { this._decide2(now); return; }
@@ -495,6 +497,18 @@ export class KeyFollower {
     const top4 = Object.values(cnt).sort((a, b) => b - a).slice(0, 4).reduce((a, b) => a + b, 0);
     return moves >= 4 && fifths / moves >= 0.5 && top4 / n >= 0.8;
   }
+  // (and a little after it: a long open string, a note misheard now and then, does not end the tuning)
+  // (slow open strings, a string a little out of tune or heard a half step off: the slide of a half step
+  // is the same string, and the moves between strings are fifths)
+  _tuningSlow() {
+    const rc = this.recent || [], ra = this.recentAt || []; if (rc.length < 6 || ra.length !== rc.length) return false;
+    const from = Math.max(1, rc.length - 12); let base = rc[from - 1], moves = 0, fifths = 0; const cnt = {};
+    for (let i = from; i < rc.length; i++) { const d = ((rc[i] - base) % 12 + 12) % 12; if (d === 0 || d === 1 || d === 11) continue; base = rc[i]; moves++; cnt[base % 12] = (cnt[base % 12] || 0) + 1; if (d >= 5 && d <= 7) fifths++; }
+    if (moves < 4) return false;
+    const top4 = Object.values(cnt).sort((a, b) => b - a).slice(0, 4).reduce((a, b) => a + b, 0);
+    return fifths / moves >= 0.5 && top4 / moves >= 0.8 && (ra[ra.length - 1] - ra[from - 1]) / moves >= G('__kfTuneSlow', 1000);
+  }
+  _tuned(now) { if (this._tuning() || this._tuningSlow()) this.tunedAt = now; return now - (this.tunedAt ?? -1e12) < G('__kfTuneMs', 6000); }
   _decide3(now) {
     const S = this._sens(), cur = this.key;
     // what the ear believes now (shown under the drone)
@@ -517,7 +531,10 @@ export class KeyFollower {
     const nk = { pc: k1 % 12, minor: k1 >= 12 };
     const near = relative(cur, nk) || cur.pc === nk.pc;
     const fresh = now - (this.freshAt ?? -1e12) < G('__kfFreshMs', 8000);
-    const H = lerp(G('__kfH', 4.5) * 1.5, G('__kfH', 4.5) * 0.7, S) * (near ? G('__kfNear', 1.4) : 1) * (fresh ? G('__kfFreshH', 0.7) : 1);
+    // (a key two or more fifths away, while a key plays on without a pause, wants more proof: music
+    // passes through such keys for a bar or two without going there)
+    const far = !near && fifthsApart(cur, nk) >= 2 && !fresh;
+    const H = lerp(G('__kfH', 4.5) * 1.5, G('__kfH', 4.5) * 0.7, S) * (near ? G('__kfNear', 1.4) : 1) * (fresh ? G('__kfFreshH', 0.7) : 1) * (far ? G('__kfFar', 1) : 1);
     const wm = k2 < 0 ? 99 : W[k1] - W[k2];
     this.dbg = { k: k1, C: +C[k1].toFixed(2), C2: +cm.toFixed(2), H: +H.toFixed(2), wm: +wm.toFixed(2) };
     if (cm < H || C[k1] < H * G('__kfOwn', 0.6) || wm < G('__kfM', 0.8)) return;
@@ -685,6 +702,18 @@ export class KeyFollower {
       const chromatic = steps >= 8 && semi / steps > (globalThis.__kfSemi ?? 0.4);
       const settled = now - (this.movedAt ?? -1e12) >= lerp(6000, 3000, S);
       calmOk = spread <= (globalThis.__kfSpread ?? 9) && !chromatic && settled && (this.notesSince || 0) >= 4;
+      // (a key far from the drone's, without a pause: only when its own notes are really there, not a
+      // low note or two heard a half step off — a G heard as F♯, an A as B♭, while you tune)
+      if (calmOk && fifthsApart(cur, best) >= 2) {
+        const cOf = (k) => k.minor ? [0, 2, 3, 5, 7, 8, 11] : [0, 2, 4, 5, 7, 9, 11];
+        const cn = cOf(best), co = cOf(cur); let own = 0;
+        for (let i = 0; i < 12; i++) if (cn.includes((i - best.pc + 12) % 12) && !co.includes((i - cur.pc + 12) % 12)) own += r[i];
+        // (and its keynote is heard; and not away from the piece's own key while that is still likely:
+        // from D back to G, not on to C)
+        const hm = this.home, hi = hm ? hm.pc + (hm.minor ? 12 : 0) : -1;
+        const homeNear = hm && hi !== b && fifthsApart(hm, cur) <= 1 && p[hi] >= G('__kfHomeP', 0.1);
+        if (own < G('__kfFar2', 0.3) * totR || r[best.pc] < G('__kfFarT', 0.1) * totR || homeNear) { calmOk = false; this.dbg.far = [+(own / Math.max(1e-9, totR)).toFixed(2), +(r[best.pc] / Math.max(1e-9, totR)).toFixed(2), !!homeNear]; }
+      }
       this.dbg.guard = [spread, chromatic, settled];
     }
     if (!want || !calmOk) { if (this.cand && now - this.cand.lastOk > 700) this.cand = null; return; }
