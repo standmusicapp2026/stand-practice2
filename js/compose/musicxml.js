@@ -348,7 +348,8 @@ export async function readMusicFile(file) {
     if (!path || !files[path]) throw new Error('No MusicXML score was found inside this file.');
     xml = decodeXml(files[path]);
   } else {
-    if (head[0] === 0x4D && head[1] === 0x54 && head[2] === 0x68 && head[3] === 0x64) throw new Error('This is a MIDI file. Open a MusicXML file (.musicxml or .mxl) here.');
+    // a MIDI file: read too (notes on the nearest sixteenth or triplet)
+    if (head[0] === 0x4D && head[1] === 0x54 && head[2] === 0x68 && head[3] === 0x64) { globalThis.__guessInst = guessInst; const R = await import('./midiread.js'); return migrateScore(R.fromMidi(buf, name)); }
     if (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) throw new Error('This is a PDF. Add it to your library to read it, or open a MusicXML file here.');
     xml = decodeXml(buf);
   }

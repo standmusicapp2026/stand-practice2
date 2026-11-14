@@ -1265,7 +1265,7 @@ window.standIncoming = async (msg) => {
     if (NATIVE && NATIVE.standDone) for (const p of paths) NATIVE.standDone.postMessage({ path: p });
     // a MusicXML score (.mxl, .musicxml, or an .xml that is one): it opens in Compose, on the iPad and the iPhone
     { const nm0 = (k) => (msg.names && msg.names[k]) || (paths.length === 1 ? msg.name : '') || String(paths[k]).split('/').pop() || '';
-      const isMusic = async (k) => { const n = nm0(k); if (/\.(mxl|musicxml)$/i.test(n)) return true; if (!/\.xml$/i.test(n)) return false; try { const head = await blobs[k].slice(0, 4096).text(); return /<score-(partwise|timewise)\b/.test(head.replace(/\0/g, '')); } catch { return false; } };
+      const isMusic = async (k) => { const n = nm0(k); if (/\.(mxl|musicxml|mid|midi)$/i.test(n)) return true; if (!/\.xml$/i.test(n)) return false; try { const head = await blobs[k].slice(0, 4096).text(); return /<score-(partwise|timewise)\b/.test(head.replace(/\0/g, '')); } catch { return false; } };
       const music = []; for (let k = 0; k < blobs.length; k++) if (await isMusic(k)) music.push(k);
       if (music.length && music.length === blobs.length) {
         if (!$('#score').hidden) await closeScore();

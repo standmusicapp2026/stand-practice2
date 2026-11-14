@@ -241,6 +241,18 @@ export function tidyBar(bar, time) {
   return out;
 }
 
+// A bar that must add up whatever came in: trailing rests give way, the last value is shortened, or
+// rests fill the end (only for music read from files, whose bars may be written loosely).
+export function fitBar(bar, time) {
+  const total = barTicks(time), out = tidyBar(bar, time);
+  let sum = out.reduce((a, e) => a + ticksOf(e, time), 0);
+  while (sum > total && out.length > 1 && out[out.length - 1].rest) sum -= ticksOf(out.pop(), time);
+  if (sum > total) { const e = out[out.length - 1], room = total - (sum - ticksOf(e, time)); const v = room > 0 && valueOf(room); if (v) { e.t = v.t; e.dots = v.dots; delete e.tup; delete e.full; sum = total; } }
+  // (still too long: the last values go, and rests fill what is left)
+  while (sum > total && out.length > 1) sum -= ticksOf(out.pop(), time);
+  if (sum < total) out.push(...restsFor(sum, total - sum, time));
+  return out;
+}
 // Write an event (note, chord or rest) over [pos, pos+len) in bar m of a staff. Anything there is
 // replaced; a note that sticks out of the bar continues in the next bar, tied.
 export function writeEvent(score, st, m, pos, ev) {

@@ -58,6 +58,9 @@ targets:
           - CFBundleTypeName: MusicXML score
             LSHandlerRank: Alternate
             LSItemContentTypes: [org.w3c.music-notation.musicxml, org.w3c.music-notation.musicxml.uncompressed, org.musicxml.musicxml, org.musicxml.compressed, com.recordare.musicxml, com.recordare.musicxml.compressed, com.recordare.musicxml.uncompressed, com.makemusic.musicxml, public.xml]
+          - CFBundleTypeName: MIDI file
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.midi-audio]
         UTImportedTypeDeclarations:
           - UTTypeConformsTo: [public.data, public.content, public.zip-archive]
             UTTypeDescription: MusicXML (compressed)
