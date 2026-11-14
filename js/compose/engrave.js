@@ -15,8 +15,8 @@ export const GL = {
   noteWhole: '', noteHalf: '', noteBlack: '', noteX: '', noteDoubleWhole: '',
   // note heads other than the normal ones (SMuFL: X and diamond), by duration: whole, half, black
   headX: { 1: '\uE0A9', 2: '\uE0A9', 4: '\uE0A7' }, headDia: { 1: '\uE0DE', 2: '\uE0DE', 4: '\uE0DB' },
-  flagUp: { 8: '', 16: '', 32: '', 64: '' }, flagDown: { 8: '', 16: '', 32: '', 64: '' },
-  rest: { 1: '', 2: '', 4: '', 8: '', 16: '', 32: '', 64: '' },
+  flagUp: { 8: '', 16: '', 32: '', 64: '', 128: '' }, flagDown: { 8: '', 16: '', 32: '', 64: '', 128: '' },
+  rest: { 1: '', 2: '', 4: '', 8: '', 16: '', 32: '', 64: '', 128: '' },
   acc: { '-2': '', '-1': '', 0: '', 1: '', 2: '' },
   dot: '', brace: '',
   ts: (d) => String.fromCharCode(0xE080 + d), common: '', cut: '',
@@ -145,7 +145,7 @@ export function layoutScore(score, opts = {}) {
     // changes drawn inside the line
     const prevKey = m ? keyAt(score, m - 1) : null;
     const keyChange = m > 0 && ms.key !== undefined && ms.key !== null && ms.key !== prevKey;
-    const timeChange = m > 0 && !!ms.time;
+    const timeChange = m > 0 && !!ms.time && !ms.timeHide;
     const clefChange = m > 0 && info.some((s) => clefAt(s.st, m) !== clefEnd(s.st, m - 1));
     cols.push({ m, time, total, segs, ideal, allFull, keyChange, timeChange, clefChange, hasAcc, ms });
   }
@@ -179,7 +179,7 @@ export function layoutScore(score, opts = {}) {
     // the start of each line: clef, key, time
     const key0 = keyAt(score, m0);
     const keyW = Math.max(...info.map((s) => keyWidth(concert ? key0 : writtenKey(key0, s.inst))), 0);
-    const head = 1 + 3.2 + keyW + (first || cols[m0].timeChange ? timeWidth(cols[m0].time) : 0) + 0.6;
+    const head = 1 + 3.2 + keyW + ((first && !score.measures[0].timeHide) || cols[m0].timeChange ? timeWidth(cols[m0].time) : 0) + 0.6;
     let used = head, list = [];
     while (gi < groups.length) {
       const g = groups[gi];
@@ -439,7 +439,8 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   if (m0 > 0) text(ctx, String(barNumber(score, m0)), x0, top - 1.6, 1.3, TEXT_FONT, 'italic');
   // start of the line: clef, key, time
   const key0 = keyAt(score, m0), time0 = timeAt(score, m0);
-  const showTime = sys.first || score.measures[m0].time;
+  // (a time signature kept out of sight: music written with none, or one the file hides)
+  const showTime = (sys.first && !score.measures[0].timeHide) || (score.measures[m0].time && !score.measures[m0].timeHide);
   const maxKW = Math.max(0, ...staves.map((q) => keyWidth(lay.concert ? key0 : writtenKey(key0, q.inst))));
   for (const s of staves) {
     const clef = clefAt(s.st, m0);
@@ -831,7 +832,7 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
       CUR_MARK = null;
       cx += keyWidth(key || prevKey) + 1;
     }
-    if (ms.time) { CUR_MARK = { id: 'time' + m, kind: 'time', name: ms.time.join('/'), m }; for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.y, ms.timeSym); CUR_MARK = null; cx += timeWidth(ms.time); }
+    if (ms.time && !ms.timeHide) { CUR_MARK = { id: 'time' + m, kind: 'time', name: ms.time.join('/'), m }; for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.y, ms.timeSym); CUR_MARK = null; cx += timeWidth(ms.time); }
   }
   const contentX0 = cx + 1.3 + (ms.start === 'repeat' ? 2 : 0);
   // ---- barline at the end of the bar
@@ -1252,7 +1253,7 @@ function drawStemFlag(ctx, e, sy) {
   e.stemTip = st.y1; e.stemX = st.x;
   line(ctx, st.x, st.y0, st.x, st.y1, STEM_T);
   if (e.ev.t >= 8) {
-    const fg = (e.up ? GL.flagUp : GL.flagDown)[Math.min(64, e.ev.t)];
+    const fg = (e.up ? GL.flagUp : GL.flagDown)[Math.min(128, e.ev.t)];
     glyph(ctx, fg, st.x - STEM_T / 2, st.y1);
   }
 }
@@ -1334,7 +1335,7 @@ function drawRest(ctx, e, sy, time) {
   const ev = e.ev;
   if (ev.full) { glyph(ctx, GL.rest[1], e.x, yOf(sy, 6)); return; }
   const t = ev.t;
-  const g = GL.rest[Math.min(64, t)];
+  const g = GL.rest[Math.min(128, t)];
   const p = t === 1 ? 6 : t === 2 ? 4 : 4;
   glyph(ctx, g, e.x, yOf(sy, p));
   for (let d = 0; d < (ev.dots || 0); d++) glyph(ctx, GL.dot, e.x + gm(g).w + 0.4 + d * 0.55, yOf(sy, 5));

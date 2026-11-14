@@ -2,12 +2,12 @@
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
 import { hasVoice2, hasVoice, voiceView,
-  WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
+  WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
 } from './model.js';
 import * as M0 from './model.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const TYPE = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' };
+const TYPE = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th', 128: '128th' };
 const TYPE_BACK = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, +k]));
 const CLEF_XML = { treble: ['G', 2, 0], bass: ['F', 4, 0], alto: ['C', 3, 0], tenor: ['C', 4, 0], treble8: ['G', 2, -1], bass8: ['F', 4, -1], perc: ['percussion', 0, 0], treble8va: ['G', 2, 1], bass8va: ['F', 4, 1], soprano: ['C', 1, 0], mezzo: ['C', 2, 0], baritoneC: ['C', 5, 0], baritoneF: ['F', 3, 0], frenchviolin: ['G', 1, 0] };
 const ART_XML = { stacc: 'staccato', stacciss: 'staccatissimo', ten: 'tenuto', acc: 'accent', marc: 'strong-accent', breath: 'breath-mark', caes: 'caesura' };
@@ -30,25 +30,26 @@ export function toMusicXML(score0) {
   w(`<encoding><software>Stand</software><encoding-date>${new Date().toISOString().slice(0, 10)}</encoding-date></encoding></identification>`);
   w('<part-list>');
   score.parts.forEach((p, i) => {
-    const inst = INST[p.inst] || INST.piano, id = 'P' + (i + 1);
+    const inst = M0.instOf(p), id = 'P' + (i + 1);
     w(`<score-part id="${id}"><part-name>${esc(p.name)}</part-name><part-abbreviation>${esc(p.abbr)}</part-abbreviation>`);
     w(`<score-instrument id="${id}-I1"><instrument-name>${esc(inst.name)}</instrument-name></score-instrument>`);
     w(`<midi-instrument id="${id}-I1"><midi-channel>${(i % 15) + 1 + (i % 15 >= 9 ? 1 : 0)}</midi-channel><midi-program>${GM[p.sound || inst.sound] || 1}</midi-program></midi-instrument></score-part>`);
   });
   w('</part-list>');
   score.parts.forEach((p, pi) => {
-    const inst = INST[p.inst] || INST.piano;
+    const inst = M0.instOf(p);
     w(`<part id="P${pi + 1}">`);
     for (let m = 0; m < score.measures.length; m++) {
       const ms = score.measures[m];
       const time = timeAt(score, m);
-      w(`<measure number="${M0.barNumber(score, m)}"${m === 0 && M0.pickupOf(score) ? ' implicit="yes"' : ''}>`);
+      const short = (m === 0 && M0.pickupOf(score)) || (ms.len > 0 && ms.len < (time[0] * WHOLE) / time[1]);
+      w(`<measure number="${M0.barNumber(score, m)}"${short ? ' implicit="yes"' : ''}>`);
       if (ms.start === 'repeat') w('<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>');
       // attributes: at the start and where things change
       const attrs = [];
       if (m === 0) attrs.push(`<divisions>${WHOLE / 4}</divisions>`);
       if (m === 0 || (ms.key !== undefined && ms.key !== null)) attrs.push(`<key><fifths>${writtenKey(keyAt(score, m), inst)}</fifths></key>`);
-      if (m === 0 || ms.time) attrs.push(`<time${ms.timeSym ? ` symbol="${ms.timeSym}"` : ''}><beats>${time[0]}</beats><beat-type>${time[1]}</beat-type></time>`);
+      if (m === 0 || ms.time) attrs.push(`<time${ms.timeSym ? ` symbol="${ms.timeSym}"` : ''}${ms.timeHide ? ' print-object="no"' : ''}><beats>${time[0]}</beats><beat-type>${time[1]}</beat-type></time>`);
       if (m === 0 && p.staves.length > 1) attrs.push(`<staves>${p.staves.length}</staves>`);
       p.staves.forEach((st, si) => {
         const clef = clefAt(st, m);
@@ -291,71 +292,286 @@ export async function unzip(buf) {
   for (let i = 0; i < n; i++) {
     const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
     const name = dec.decode(new Uint8Array(buf, p + 46, nlen));
+    p += 46 + nlen + xlen + clen;
+    if (name.endsWith('/') || (method !== 0 && method !== 8)) continue;
     const lnlen = dv.getUint16(off + 26, true), lxlen = dv.getUint16(off + 28, true);
     const data = new Uint8Array(buf, off + 30 + lnlen + lxlen, csize);
-    files[name] = method === 0 ? data : new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
-    p += 46 + nlen + xlen + clen;
+    try { files[name] = method === 0 ? data : new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); } catch { /* (one damaged entry: the others are still read) */ }
   }
   return files;
 }
+// The text of an XML file in whatever encoding it was saved in: UTF-8, UTF-16 (Finale and some
+// Windows programs write it, with or without the mark at the start) or an older one it names.
+export function decodeXml(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let enc = 'utf-8';
+  if (b[0] === 0xFF && b[1] === 0xFE) enc = 'utf-16le';
+  else if (b[0] === 0xFE && b[1] === 0xFF) enc = 'utf-16be';
+  else if (b[0] === 0x3C && b[1] === 0x00) enc = 'utf-16le';
+  else if (b[0] === 0x00 && b[1] === 0x3C) enc = 'utf-16be';
+  else if (!(b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF)) {
+    const head = String.fromCharCode(...b.subarray(0, 200));
+    const m = /^<\?xml[^>]*encoding\s*=\s*["']([A-Za-z0-9._-]+)["']/.exec(head);
+    // (a file that says UTF-16 while its bytes are plain text is read as it really is)
+    if (m && !/^utf-?(8|16)/i.test(m[1])) { try { new TextDecoder(m[1]); enc = m[1]; } catch {} }
+  }
+  let s = new TextDecoder(enc).decode(b);
+  if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1);
+  // (the encoding named at the top no longer says what it is: it is text now)
+  return s.replace(/^(<\?xml[^>]*?)\s+encoding\s*=\s*["'][^"']*["']/, '$1');
+}
 export async function readMusicFile(file) {
   const buf = await file.arrayBuffer();
-  const head = new Uint8Array(buf, 0, 4);
+  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  const name = String((file && file.name) || '');
+  if (!buf.byteLength) throw new Error('This file is empty.');
   let xml;
   if (head[0] === 0x50 && head[1] === 0x4b) {
-    const files = await unzip(buf);
-    const dec = new TextDecoder();
-    let path = Object.keys(files).find((k) => /\.(musicxml|xml)$/i.test(k) && !k.startsWith('META-INF'));
-    if (files['META-INF/container.xml']) { const m = dec.decode(files['META-INF/container.xml']).match(/full-path="([^"]+)"/); if (m && files[m[1]]) path = m[1]; }
-    xml = dec.decode(files[path]);
-  } else xml = new TextDecoder().decode(buf);
+    let files;
+    try { files = await unzip(buf); } catch { throw new Error('This compressed file could not be opened. Export it again as MusicXML (.mxl or .musicxml).'); }
+    const names = Object.keys(files);
+    if (/\.mscz$/i.test(name) || names.some((k) => /\.mscx$/i.test(k))) throw new Error('This is a MuseScore file. In MuseScore, choose File › Export › MusicXML, then open that file here.');
+    let path = null;
+    const cont = names.find((k) => /^META-INF\/container\.xml$/i.test(k));
+    if (cont) {
+      const m = decodeXml(files[cont]).match(/full-path\s*=\s*["']([^"']+)["']/);
+      if (m) { const want = decodeURIComponent(m[1]).replace(/^\.?\//, ''); path = names.find((k) => k === want) || names.find((k) => k.toLowerCase() === want.toLowerCase()) || null; }
+    }
+    if (!path) path = names.find((k) => /\.(musicxml|xml)$/i.test(k) && !/^META-INF\//i.test(k) && !/(^|\/)\./.test(k)) || null;
+    if (!path || !files[path]) throw new Error('No MusicXML score was found inside this file.');
+    xml = decodeXml(files[path]);
+  } else {
+    if (head[0] === 0x4D && head[1] === 0x54 && head[2] === 0x68 && head[3] === 0x64) throw new Error('This is a MIDI file. Open a MusicXML file (.musicxml or .mxl) here.');
+    if (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) throw new Error('This is a PDF. Add it to your library to read it, or open a MusicXML file here.');
+    xml = decodeXml(buf);
+  }
   return fromMusicXML(xml);
 }
-function guessInst(name, program, clefs) {
-  const n = (name || '').toLowerCase();
+// A score written measure by measure (each measure holding every part) is turned around, part by
+// part, as most programs write it.
+function partwise(doc) {
+  const tw = doc.documentElement;
+  if (!tw || tw.tagName !== 'score-timewise') return doc;
+  const out = document.implementation.createDocument(null, 'score-partwise', null);
+  const root = out.documentElement;
+  for (const a of tw.attributes) root.setAttribute(a.name, a.value);
+  const parts = new Map();
+  for (const ch of [...tw.children]) {
+    if (ch.tagName !== 'measure') { root.append(out.importNode(ch, true)); continue; }
+    for (const p of [...ch.children]) {
+      if (p.tagName !== 'part') continue;
+      const id = p.getAttribute('id');
+      if (!parts.has(id)) { const pe = out.createElement('part'); pe.setAttribute('id', id); parts.set(id, pe); }
+      const me = out.createElement('measure');
+      for (const a of ch.attributes) me.setAttribute(a.name, a.value);
+      for (const c of [...p.children]) me.append(out.importNode(c, true));
+      parts.get(id).append(me);
+    }
+  }
+  for (const pe of parts.values()) root.append(pe);
+  return out;
+}
+// "3+2" beats (an additive time) count as 5
+const beatsOf = (s) => String(s || '').split('+').reduce((a, x) => a + (parseInt(x, 10) || 0), 0) || 4;
+// A length (in ticks) as a written value: a plain one, a dotted one, or a note of a tuplet (when the
+// file gives a duration that no plain value has, and no note type, or a type that does not match).
+const TUP_TRY = [[3, 2], [5, 4], [6, 4], [7, 4], [9, 8], [5, 2], [7, 8], [2, 3], [4, 3], [10, 8], [11, 8], [12, 8], [13, 8], [15, 8], [6, 5]];
+// Rests for a gap that plain values cannot fill (beside a tuplet cut short, a tuplet shared between
+// two staves): rests of that tuplet, then plain ones for what is left.
+const TUP_UNITS = [40, 80, 160, 320, 640, 48, 96, 192, 384, 24, 20, 64, 128];
+function gapRests(p, g, time) {
+  if (g <= 0) return [];
+  if (g % 15 === 0) return restsFor(p, g, time);
+  const v = valueFor(g);
+  if (v && v.tup && g >= 20) return [{ id: newId(), rest: true, t: v.t, dots: v.dots, tup: v.tup, keep: true }];
+  for (const u of TUP_UNITS) {
+    const uv = valueFor(Math.round(u)); if (!uv || !uv.tup) continue;
+    for (let k = Math.floor(g / u); k >= 1; k--) {
+      const left = Math.round(g - k * u);
+      if (left < 0 || left % 15) continue;
+      const tr = Array.from({ length: k }, () => ({ id: newId(), rest: true, t: uv.t, dots: uv.dots, tup: { ...uv.tup }, keep: true }));
+      return [...tr, ...restsFor(p + Math.round(k * u), left, time)];
+    }
+  }
+  // (what is left is rounding in the file: the nearest length that can be written)
+  return restsFor(p, Math.round(g / 15) * 15, time);
+}
+function valueFor(d) {
+  const v = valueOf(d); if (v) return v;
+  for (const [n, m] of TUP_TRY) {
+    const base = (d * n) / m, r = Math.round(base);
+    if (Math.abs(base - r) > 0.5) continue;
+    const b = valueOf(r); if (b) return { t: b.t, dots: b.dots, tup: { n, m, base: b.t } };
+  }
+  return null;
+}
+// Which instrument a part is, from its name in any of the usual languages (the most particular
+// names first: a bass clarinet is not a clarinet, a violoncello is not a violin, a bass drum is not a bass).
+const INST_WORDS = [
+  ['piccolotrumpet', ['piccolo trumpet']], ['piccolo', ['piccolo', 'ottavino', 'petite flute', 'kleine flote', 'picc']],
+  ['altoflute', ['alto flute', 'flauto contralto', 'altflote']], ['bassflute', ['bass flute', 'bassflote']],
+  ['flute', ['flute', 'flauto', 'flauti', 'flote', 'flauta', 'fl.']],
+  ['sopranorecorder', ['soprano recorder', 'descant recorder', 'sopranblockflote']], ['tenorrecorder', ['tenor recorder']], ['bassrecorder', ['bass recorder']], ['recorder', ['recorder', 'blockflote', 'flauto dolce', 'flute a bec']],
+  ['oboedamore', ['oboe d\'amore', 'oboe d’amore', 'oboe damore']], ['englishhorn', ['english horn', 'cor anglais', 'corno inglese', 'englischhorn', 'corno ingles']],
+  ['oboe', ['oboe', 'oboi', 'hautbois', 'ob.']],
+  ['contrabassclarinet', ['contrabass clarinet', 'kontrabassklarinette']], ['bassclarinet', ['bass clarinet', 'clarinetto basso', 'bassklarinette', 'clarinette basse', 'clarinete bajo', 'b. cl']], ['altoclarinet', ['alto clarinet']], ['bassethorn', ['basset horn', 'corno di bassetto', 'bassetthorn']],
+  ['clarinet', ['clarinet', 'clarinetto', 'clarinetti', 'klarinette', 'clarinette', 'clarinete', 'cl.']],
+  ['contrabassoon', ['contrabassoon', 'contrafagotto', 'kontrafagott', 'contrebasson', 'double bassoon', 'cbsn']],
+  ['bassoon', ['bassoon', 'fagott', 'fagotto', 'fagotti', 'basson', 'fagote', 'bsn']],
+  ['sopsax', ['soprano sax']], ['altosax', ['alto sax']], ['tenorsax', ['tenor sax']], ['barisax', ['baritone sax', 'bari sax']], ['basssax', ['bass sax']],
+  ['wagnertuba', ['wagner tuba']], ['flugelhorn', ['flugelhorn']], ['tenorhorn', ['tenor horn', 'tenorhorn', 'alto horn']],
+  ['horn', ['horn', 'corno', 'corni', 'cor ', 'cors', 'trompa', 'hn.']],
+  ['basstrumpet', ['bass trumpet', 'basstrompete']], ['cornet', ['cornet', 'cornetto', 'kornett']],
+  ['trumpet', ['trumpet', 'tromba', 'trombe', 'trompete', 'trompette', 'trompeta', 'tpt']],
+  ['basstrombone', ['bass trombone', 'bassposaune', 'b. trb', 'b trb']], ['altotrombone', ['alto trombone', 'altposaune']],
+  ['trombone', ['trombone', 'tromboni', 'posaune', 'trb', 'tbn']],
+  ['euphonium', ['euphonium']], ['cimbasso', ['cimbasso']], ['tuba', ['tuba']],
+  ['timpani', ['timpani', 'pauke', 'timbales', 'timbal', 'timp']],
+  ['glockenspiel', ['glockenspiel', 'campanelli', 'glock']], ['xylophone', ['xylophone', 'xilofono', 'xylophon', 'xylo']], ['vibraphone', ['vibraphone', 'vibrafono', 'vibraphon', 'vibes']], ['marimba', ['marimba']], ['tubularbells', ['tubular bells', 'chimes', 'campane', 'rohrenglocken']], ['crotales', ['crotales']], ['handbells', ['handbell']],
+  ['snare', ['snare', 'side drum', 'tamburo', 'caisse claire', 'kleine trommel', 'caja']], ['bassdrum', ['bass drum', 'gran cassa', 'grosse caisse', 'grosse trommel', 'kick drum', 'bombo']],
+  ['suspcymbal', ['suspended cymbal', 'splash', 'ride cymbal', 'piatto sospeso']], ['cymbals', ['cymbal', 'piatti', 'becken', 'cymbales', 'platillos']],
+  ['triangle', ['triangle', 'triangolo', 'triangel', 'triangulo']], ['tambourine', ['tambourine', 'tamburello', 'tamburin', 'pandereta']], ['woodblock', ['wood block', 'woodblock', 'holzblock']], ['tomtoms', ['tom-tom', 'tom tom', 'toms']], ['castanets', ['castanet', 'castagnette', 'kastagnette']], ['congas', ['conga']], ['bongos', ['bongo']], ['drumset', ['drum set', 'drum kit', 'drumset', 'drums', 'batteria', 'schlagzeug']],
+  ['harpsichord', ['harpsichord', 'cembalo', 'clavecin', 'clave']], ['celesta', ['celesta', 'celeste']], ['harmonium', ['harmonium']], ['organ', ['organ', 'orgel', 'organo', 'orgue', 'organo']], ['epiano', ['electric piano', 'e-piano', 'rhodes']], ['accordion', ['accordion', 'akkordeon', 'fisarmonica', 'accordeon', 'acordeon']], ['bandoneon', ['bandoneon']],
+  ['piano', ['piano', 'klavier', 'pianoforte', 'fortepiano']],
+  ['harp', ['harp', 'harfe', 'arpa', 'harpe']],
+  ['bassguitar', ['bass guitar', 'electric bass', 'e-bass', 'bass gtr']], ['eguitar', ['electric guitar', 'e-guitar', 'e-gitarre']], ['steelguitar', ['acoustic guitar', 'steel guitar', 'steel-string']], ['twelvestring', ['12-string']],
+  ['guitar', ['guitar', 'gitarre', 'chitarra', 'guitare', 'guitarra', 'gtr']], ['mandolin', ['mandolin']], ['banjo', ['banjo']], ['ukulele', ['ukulele']], ['theorbo', ['theorbo', 'tiorba']], ['lute', ['lute', 'laute', 'liuto', 'luth']],
+  ['violadagamba', ['viola da gamba', 'gamba']], ['violone', ['violone']],
+  ['contrabass', ['contrabass', 'double bass', 'kontrabass', 'contrebasse', 'contrabbasso', 'contrabajo', 'string bass', 'cb.', 'd.b.']],
+  ['cello', ['violoncell', 'cello', 'vc.', 'vlc']],
+  ['viola', ['viola', 'bratsche', 'vla', 'va.']],
+  ['violin', ['violin', 'violino', 'violon', 'geige', 'vln', 'vl.']],
+  ['mezzo', ['mezzo']], ['countertenor', ['countertenor', 'contratenor']], ['contralto', ['contralto']], ['soprano', ['soprano', 'sopran', 'canto']],
+  ['alto', ['alto', 'alt ']], ['tenor', ['tenor', 'tenore']], ['baritone', ['baritone', 'bariton', 'baritono']], ['bass', ['bass', 'basso', 'bajo']],
+  ['voice', ['voice', 'voce', 'vocal', 'stimme', 'voix', 'voz', 'singer', 'melody']],
+  ['drumset', ['percussion', 'perc.', 'schlagwerk', 'percusion', 'percussioni']],
+];
+const ABBR = new Set(['picc', 'tpt', 'trb', 'tbn', 'bsn', 'cbsn', 'vla', 'vln', 'vlc', 'gtr', 'timp', 'xylo', 'toms', 'glock', 'kick']);
+const norm = (x) => ' ' + String(x || '').toLowerCase().replace(/♭/g, 'b').replace(/♯/g, '#').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim() + ' ';
+function guessInst(name, program, clefs, sure) {
+  const n = norm(name);
   let best = null;
-  // (the exact name first; else the longest name it begins with: "Violin II" is not "Violin")
-  if (n) best = INSTRUMENTS.find((i) => n === i.name.toLowerCase()) || null;
+  // (the exact name first; else the longest name it begins with, as a whole word: "Violin II" is
+  // not "Violin", "Bassoons" is not "Bass")
+  if (n.trim()) best = INSTRUMENTS.find((i) => n === norm(i.name)) || null;
   // (a plural before a name it begins with: "Violini I" is the violins, not a violin)
-  const plural = /\b(violins|violini|violons|violas|viole|cellos|violoncellos|violoncelli|violoncelles|contrabasses|double basses|kontrabässe|contrabassi)\b/.test(n);
-  if (n && !best && !plural) best = INSTRUMENTS.filter((i) => n.startsWith(i.name.toLowerCase())).sort((a, b) => b.name.length - a.name.length)[0] || null;
+  const plural = /\b(violins|violini|violons|violas|viole|cellos|violoncellos|violoncelli|violoncelles|contrabasses|double basses|kontrabasse|contrabassi)\b/.test(n);
+  // (the instrument whose name it begins with, and the most particular word it holds: the longer one decides)
+  let sw = null, swLen = 0, kw = null, kwLen = 0;
+  if (n.trim() && !best && !plural) for (const i of INSTRUMENTS) { const w = norm(i.name).trimEnd(); if (n.startsWith(w) && /[\s\d.,(]/.test(n[w.length] || ' ') && w.length > swLen) { sw = i; swLen = w.length; } }
   // (a plural is a section: violins, violas, cellos, basses)
-  if (!best) for (const [k, words] of [['violin1', ['violins', 'violini', 'violons']], ['violas', ['violas', 'viole', 'altos']], ['cellos', ['cellos', 'violoncellos', 'violoncelli', 'violoncelles']], ['contrabasses', ['contrabasses', 'double basses', 'kontrabässe', 'contrabassi']]]) {
+  if (!best) for (const [k, words] of [['violin1', ['violins', 'violini', 'violons']], ['violas', ['violas', 'viole', ' altos']], ['cellos', ['cellos', 'violoncellos', 'violoncelli', 'violoncelles']], ['contrabasses', ['contrabasses', 'double basses', 'kontrabasse', 'contrabassi']]]) {
     if (words.some((w) => n.includes(w))) { best = INST[k] && k === 'violin1' && /\b(ii|2)\b/.test(n) ? INST.violin2 : INST[k]; break; }
   }
-  if (!best) for (const [k, words] of [['violin', ['violin', 'vln', 'violino']], ['viola', ['viola', 'vla']], ['cello', ['cello', 'violoncell', 'vc']], ['contrabass', ['contrabass', 'double bass', 'kontrabass']], ['flute', ['flute', 'flauto', 'fl.']], ['oboe', ['oboe']], ['clarinet', ['clarinet']], ['bassoon', ['bassoon', 'fagott']], ['horn', ['horn', 'corno']], ['trumpet', ['trumpet', 'tromba']], ['trombone', ['trombone']], ['tuba', ['tuba']], ['piano', ['piano', 'klavier']], ['harp', ['harp', 'arpa']], ['guitar', ['guitar']], ['soprano', ['soprano']], ['alto', ['alto']], ['tenor', ['tenor']], ['bass', ['bass']], ['timpani', ['timpani', 'pauken']], ['organ', ['organ']], ['voice', ['voice', 'voce', 'canto']]]) {
-    if (words.some((w) => n.includes(w))) { best = INST[k]; break; }
+  if (!best) for (const [k, words] of INST_WORDS) {
+    if (!INST[k]) continue;
+    const hit = words.find((w) => (ABBR.has(w) ? new RegExp('[\\s(]' + w + '[\\s.)\\d]').test(n) : n.includes(w)));
+    if (hit) { kw = INST[k]; kwLen = hit.length; break; }
   }
+  if (!best) best = sw && swLen >= kwLen ? sw : kw || sw;
+  if (sure) return best;
   if (!best && program) { const sid = Object.entries(GM).find(([, v]) => v === program); if (sid) best = INSTRUMENTS.find((i) => i.sound === sid[0]); }
   if (!best) best = clefs >= 2 ? INST.piano : INST.violin;
   return best;
 }
 export function fromMusicXML(xmlText) {
-  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
-  if (doc.querySelector('parsererror')) throw new Error('This file is not MusicXML.');
+  let doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) {
+    // (a stray character before the start, a stray "&", a DTD with its own names: tried once more without them)
+    const fixed = String(xmlText).replace(/^[^<]+/, '').replace(/<!DOCTYPE[^>[]*(\[[\s\S]*?\])?\s*>/i, '').replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
+    doc = new DOMParser().parseFromString(fixed, 'application/xml');
+    if (doc.querySelector('parsererror')) throw new Error('This file is not MusicXML, or it is damaged.');
+  }
+  const rootTag = doc.documentElement ? doc.documentElement.tagName : '';
+  if (rootTag === 'mei') throw new Error('This is an MEI file. Open a MusicXML file (.musicxml or .mxl) here.');
+  if (rootTag !== 'score-partwise' && rootTag !== 'score-timewise') throw new Error('This file is not MusicXML.');
+  doc = partwise(doc);
+  for (const k of Object.keys(TUPC)) delete TUPC[k];
   const q = (el, sel) => el.querySelector(sel);
   const txt = (el, sel) => { const e = sel ? q(el, sel) : el; return e ? e.textContent.trim() : ''; };
-  const title = txt(doc, 'work > work-title') || txt(doc, 'movement-title') || 'Imported score';
+  const title = txt(doc, 'work > work-title') || txt(doc, 'movement-title') || txt(doc, 'credit-words') || 'Imported score';
   const composer = txt(doc, 'creator[type="composer"]');
-  const partEls = [...doc.querySelectorAll('score-partwise > part')];
-  if (!partEls.length) throw new Error('No parts in this file. Only “partwise” MusicXML is supported.');
+  const partEls = [...doc.querySelectorAll('score-partwise > part')].filter((p) => p.querySelector(':scope > measure'));
+  if (!partEls.length) throw new Error('There is no music in this file.');
   const listEls = Object.fromEntries([...doc.querySelectorAll('part-list > score-part')].map((sp) => [sp.getAttribute('id'), sp]));
+  // a part called only "1 2" or "3" inside a group named "Horns in F": "Horns in F 1 2"
+  const groupOf = {};
+  { const open = new Map(); for (const e of [...(doc.querySelector('part-list') || { children: [] }).children]) {
+      if (e.tagName === 'part-group') { const n = e.getAttribute('number') || '1'; if (e.getAttribute('type') === 'start') open.set(n, (e.querySelector('group-name') || {}).textContent || ''); else open.delete(n); }
+      else if (e.tagName === 'score-part') { const names = [...open.values()].filter((x) => x && x.trim()); if (names.length) groupOf[e.getAttribute('id')] = names[names.length - 1].trim(); } } }
   const score = newScore({ title, composer, insts: ['piano'], bars: 1 });
   score.parts = []; score.measures = [];
   const nMeasures = Math.max(...partEls.map((p) => p.querySelectorAll(':scope > measure').length));
   for (let m = 0; m < nMeasures; m++) score.measures.push({});
+  // (which part states the time and the key of each measure: the first that does)
+  const timeOwner = [], keyOwner = [];
+  // a transposing part: written to sounding, octaves included (piccolo, guitar, double bass, glockenspiel)
+  const trOf = (t) => { const oc = +txt(t, 'octave-change') || 0; return { steps: (+txt(t, 'diatonic') || 0) + 7 * oc, semis: (+txt(t, 'chromatic') || 0) + 12 * oc }; };
+  const firstDiv = (pel) => { const d = pel.querySelector('measure attributes divisions'); return (d && +d.textContent) || 1; };
+  // how long each measure really is, in every part (a pickup bar, a shorter bar at a repeat or at
+  // the end, a bar longer than its time, music with no time signature at all)
+  {
+    const lens = new Array(nMeasures).fill(0), implicit = new Array(nMeasures).fill(false), times = [];
+    timeOwner.length = 0; keyOwner.length = 0;
+    partEls.forEach((pel, pi) => {
+      let div = firstDiv(pel), tm = [4, 4];
+      [...pel.querySelectorAll(':scope > measure')].forEach((mel, m) => {
+        if (mel.getAttribute('implicit') === 'yes') implicit[m] = true;
+        let pos = 0, end = 0;
+        const d = (el) => ((+txt(el, 'duration') || 0) * 480) / div;
+        for (const el of mel.children) {
+          const t = el.tagName;
+          if (t === 'attributes') {
+            const dv = q(el, 'divisions'); if (dv) div = +dv.textContent || div;
+            const tb = q(el, 'time beats'); if (tb) { tm = [beatsOf(tb.textContent), +txt(el, 'time beat-type') || 4]; if (timeOwner[m] === undefined) timeOwner[m] = pi; }
+            if (q(el, 'key fifths') && keyOwner[m] === undefined) keyOwner[m] = pi;
+          }
+          else if (t === 'backup') pos = Math.max(0, pos - d(el));
+          else if (t === 'forward') { pos += d(el); end = Math.max(end, pos); }
+          else if (t === 'note') {
+            if (q(el, 'grace') || q(el, 'chord')) continue;
+            const r = q(el, 'rest'), len = d(el);
+            if (!(r && r.getAttribute('measure') === 'yes')) end = Math.max(end, pos + len);
+            pos += len;
+          }
+        }
+        lens[m] = Math.max(lens[m], Math.round(end));
+        if (pi === (timeOwner[m] ?? 0) || !times[m]) times[m] = tm.slice();
+      });
+    });
+    const noTime = !doc.querySelector('time beats');
+    if (noTime) score.measures[0].timeHide = true;
+    for (let m = 0; m < nMeasures; m++) {
+      const tm = times[m] || times[m - 1] || [4, 4], full = (tm[0] * WHOLE) / tm[1], L = lens[m];
+      if (!L) continue;
+      // (a bar a little too long is a mistake in the file, not a longer bar; lengths go to the
+      // nearest 128th, so the bar can always be written)
+      const R = Math.abs(L - Math.round(L / 15) * 15) <= 5 ? Math.round(L / 15) * 15 : L;
+      if (noTime ? Math.abs(R - full) > 2 : R > full + 60) score.measures[m].len = R;
+      else if (implicit[m] && R < full - 2) { if (m === 0) score.measures[0].pickup = R; else score.measures[m].len = R; }
+    }
+    // (a last bar that completes the pickup bar)
+    const last = nMeasures - 1, tl = times[last] || [4, 4], fl = (tl[0] * WHOLE) / tl[1];
+    if (last > 0 && score.measures[0].pickup && !score.measures[last].len && lens[last] > 0 && Math.abs(lens[last] + score.measures[0].pickup - fl) <= 2) score.measures[last].len = lens[last];
+  }
   partEls.forEach((pel, pi) => {
     const sp = listEls[pel.getAttribute('id')];
-    const pname = sp ? txt(sp, 'part-name') : 'Part ' + (pi + 1);
+    let pname = (sp ? txt(sp, 'part-name') : '').replace(/\s+/g, ' ').trim();
+    const gname = groupOf[pel.getAttribute('id')] || '', iname = sp ? txt(sp, 'score-instrument instrument-name') : '';
+    if (/^[\dIVXivx.,&+\- ]*$/.test(pname)) pname = ((gname || iname) + ' ' + pname).trim();
+    if (!pname) pname = 'Part ' + (pi + 1);
     const program = sp ? +txt(sp, 'midi-program') || 0 : 0;
-    const firstStaves = +txt(pel, 'measure attributes staves') || 1;
-    const inst = guessInst(pname, program, firstStaves);
+    // (as many staves as the part says, or as its music uses)
+    const nSt = Math.min(6, Math.max(1, ...[...pel.querySelectorAll('measure attributes staves')].map((e) => +e.textContent || 1), ...[...pel.querySelectorAll('measure > note > staff, measure > direction > staff, measure > harmony > staff')].map((e) => +e.textContent || 1)));
+    let inst = guessInst(pname, program, nSt, true);
+    if (!inst && iname) inst = guessInst(iname, program, nSt, true);
+    if (!inst) inst = guessInst(pname, program, nSt);
     const part = newPart(inst.id);
     part.name = pname || inst.name; part.abbr = (sp && txt(sp, 'part-abbreviation')) || inst.abbr;
     // the staves come from the file
-    part.staves = Array.from({ length: firstStaves }, (_, i) => ({ id: newId(), clef: inst.clefs[i] || inst.clefs[0], bars: [] }));
+    part.staves = Array.from({ length: nSt }, (_, i) => ({ id: newId(), clef: inst.clefs[i] || (i > 0 && nSt === 2 ? 'bass' : inst.clefs[0]), bars: [] }));
     score.parts.push(part);
-    let divisions = 1, tr = { steps: 0, semis: 0 };
+    let divisions = firstDiv(pel), tr = { steps: 0, semis: 0 }, trSeen = false;
     let time = [4, 4];
     const measureEls = [...pel.querySelectorAll(':scope > measure')];
     // marks waiting for the next note on a staff, lines being drawn, the last note on a staff
@@ -369,6 +585,7 @@ export function fromMusicXML(xmlText) {
       // (up to four voices on each staff: the first one met is voice 1, the others 2, 3 and 4 in turn)
       const perStaffV = part.staves.map(() => ({ 2: [], 3: [], 4: [] }));
       const voiceOf = part.staves.map(() => null);
+      const extraV = part.staves.map(() => ({}));
       const vMap = part.staves.map(() => new Map());
       let pos = 0, lastStart = 0;
       const ms = score.measures[m];
@@ -376,15 +593,22 @@ export function fromMusicXML(xmlText) {
         const tag = el.tagName;
         if (tag === 'attributes') {
           if (q(el, 'divisions')) divisions = +txt(el, 'divisions') || 1;
-          if (q(el, 'key fifths') && pi === 0) {
+          if (q(el, 'key fifths') && pi === (keyOwner[m] ?? 0)) {
             // a transposing first part (clarinet, horn…) writes its own key: the score keeps the sounding key
-            const t = q(el, 'transpose') ? { steps: +txt(el, 'transpose diatonic') || 0, semis: +txt(el, 'transpose chromatic') || 0 } : tr;
+            const t = q(el, 'transpose') ? trOf(q(el, 'transpose')) : tr;
             let k = +txt(el, 'key fifths') + ((t.steps || t.semis) ? fifthsOfInterval(t.steps, t.semis) : 0);
             while (k > 7) k -= 12; while (k < -7) k += 12;
             ms.key = k;
           }
-          if (q(el, 'time beats') && pi === 0) { time = [+txt(el, 'time beats') || 4, +txt(el, 'time beat-type') || 4]; ms.time = time.slice(); const sym = q(el, 'time') && q(el, 'time').getAttribute('symbol'); if (sym === 'common' || sym === 'cut') ms.timeSym = sym; }
-          else if (q(el, 'time beats')) time = [+txt(el, 'time beats') || 4, +txt(el, 'time beat-type') || 4];
+          if (q(el, 'time beats') && pi === (timeOwner[m] ?? 0)) {
+            time = [beatsOf(txt(el, 'time beats')), +txt(el, 'time beat-type') || 4];
+            const sym = q(el, 'time') && q(el, 'time').getAttribute('symbol');
+            // (a time stated again, the same as before, is not a change)
+            const before = m > 0 ? timeAt(score, m - 1) : null;
+            if (!before || before[0] !== time[0] || before[1] !== time[1] || (sym || '') !== ((score.measures.slice(0, m).reverse().find((x) => x.time) || {}).timeSym || '')) { ms.time = time.slice(); if (sym === 'common' || sym === 'cut') ms.timeSym = sym; }
+            if (q(el, 'time').getAttribute('print-object') === 'no') ms.timeHide = true;
+          }
+          else if (q(el, 'time beats')) time = [beatsOf(txt(el, 'time beats')), +txt(el, 'time beat-type') || 4];
           for (const c of el.querySelectorAll('clef')) {
             const k = (+c.getAttribute('number') || 1) - 1; if (!part.staves[k]) continue;
             const sign = txt(c, 'sign'), line = +txt(c, 'line'), oct = +txt(c, 'clef-octave-change') || 0;
@@ -393,9 +617,10 @@ export function fromMusicXML(xmlText) {
             if (pos > 0) { pend[k].clef = clef; part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m + 1] = clef; }
             else if (m === 0) part.staves[k].clef = clef; else { part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m] = clef; }
           }
-          if (q(el, 'transpose')) tr = { steps: +txt(el, 'transpose diatonic') || 0, semis: +txt(el, 'transpose chromatic') || 0 };
-        } else if (tag === 'backup') pos -= Math.round((+txt(el, 'duration') * 480) / divisions);
-        else if (tag === 'forward') pos += Math.round((+txt(el, 'duration') * 480) / divisions);
+          if (q(el, 'transpose')) { tr = trOf(q(el, 'transpose')); if (!trSeen) { trSeen = true; const it = inst.tr || { steps: 0, semis: 0 }; if ((it.steps || 0) !== tr.steps || (it.semis || 0) !== tr.semis) part.tr = { ...tr }; } }
+        // (the place in the bar is kept exact, and rounded to ticks only where a note is put)
+        } else if (tag === 'backup') pos = Math.max(0, pos - (+txt(el, 'duration') * 480) / divisions);
+        else if (tag === 'forward') pos += (+txt(el, 'duration') * 480) / divisions;
         else if (tag === 'barline') {
           if (q(el, 'repeat[direction="forward"]')) ms.start = 'repeat';
           if (q(el, 'repeat[direction="backward"]')) ms.bar = 'repeat';
@@ -451,26 +676,37 @@ export function fromMusicXML(xmlText) {
             }
             continue;
           }
-          const k = (+txt(el, 'staff') || 1) - 1;
+          const k = Math.min(part.staves.length, Math.max(1, +txt(el, 'staff') || 1)) - 1;
           if (!part.staves[k]) continue;
           const voice = txt(el, 'voice') || '1';
           if (voiceOf[k] === null) voiceOf[k] = voice;
           if (voice !== voiceOf[k] && !vMap[k].has(voice) && vMap[k].size < 3) vMap[k].set(voice, vMap[k].size + 2);
-          const dur = Math.round(((+txt(el, 'duration') || 0) * 480) / divisions);
+          const durF = ((+txt(el, 'duration') || 0) * 480) / divisions;
           const isChord = !!q(el, 'chord');
-          const start = isChord ? lastStart : pos;
-          if (!isChord) { lastStart = pos; pos += dur; }
-          if (voice !== voiceOf[k] && !vMap[k].has(voice)) continue;
-          const inV2 = voice !== voiceOf[k], vNo = inV2 ? vMap[k].get(voice) : 1;
-          const list = inV2 ? perStaffV[k][vNo] : perStaff[k];
+          const start = Math.round(isChord ? lastStart : pos);
+          const dur = Math.round((isChord ? lastStart : pos) + durF) - start;
+          if (!isChord) { lastStart = pos; pos += durF; }
+          // (a fifth voice or more on one staff: its notes go wherever there is room, below)
+          const over = voice !== voiceOf[k] && !vMap[k].has(voice);
+          const inV2 = voice !== voiceOf[k], vNo = inV2 && !over ? vMap[k].get(voice) : 1;
+          const list = over ? (extraV[k][voice] = extraV[k][voice] || []) : inV2 ? perStaffV[k][vNo] : perStaff[k];
           const type = TYPE_BACK[txt(el, 'type')];
           const dots = el.querySelectorAll('dot').length;
           const tm = q(el, 'time-modification');
           let ev = { id: newId(), t: type || 4, dots, rest: !!q(el, 'rest') };
           if (!type) { const v = valueOf(dur); if (v) { ev.t = v.t; ev.dots = v.dots; } }
           if (q(el, 'rest') && q(el, 'rest').getAttribute('measure') === 'yes') ev = { id: newId(), rest: true, full: true, t: 1, dots: 0 };
-          if (tm) {
-            ev.tup = { n: +txt(tm, 'actual-notes') || 3, m: +txt(tm, 'normal-notes') || 2, base: ev.t };
+          if (tm) ev.tup = { n: +txt(tm, 'actual-notes') || 3, m: +txt(tm, 'normal-notes') || 2, base: ev.t };
+          // the duration in the file decides when the note type does not match it (or there is none):
+          // the value that has that length, a note of a tuplet, or, when nothing has it, tied notes
+          let drop = false, split = false;
+          if (!ev.full && dur > 0 && !isChord && Math.abs(evTicks(ev) - dur) > 2) {
+            const v = valueFor(dur) || valueFor(dur + 1) || valueFor(dur - 1) || valueFor(dur + 2) || valueFor(dur - 2);
+            // (the file's own tuplet, when it is the one found)
+            if (v && !(v.tup && ev.tup && v.tup.n === ev.tup.n && v.tup.m === ev.tup.m && v.t === ev.t)) { ev.t = v.t; ev.dots = v.dots; if (v.tup) ev.tup = v.tup; else delete ev.tup; }
+            else if (!v) { if (ev.rest) drop = true; else split = true; }
+          }
+          if (ev.tup) {
             // each note's place in its group (so septuplets and the like add up exactly)
             if (!isChord) { const key = k + ':' + voice, c = TUPC[key]; ev.tup.i = c && c.n === ev.tup.n && c.i < ev.tup.n - 1 ? c.i + 1 : 0; TUPC[key] = { n: ev.tup.n, i: ev.tup.i }; }
           } else if (!isChord) delete TUPC[k + ':' + voice];
@@ -518,37 +754,79 @@ export function fromMusicXML(xmlText) {
             for (const sp of openSpans) if (sp.k === k && !sp.a) sp.a = { m, pos: start };
             lastAt[k] = { m, pos: start };
           }
-          list.push({ pos: start, ev, dur });
+          list.push({ pos: start, ev, dur, drop, split });
         }
       }
-      // a first bar marked as incomplete, and shorter than the time: a pickup bar
-      if (m === 0 && pi === 0 && mel && mel.getAttribute('implicit') === 'yes') {
-        let len = 0; for (const l of perStaff) for (const x of l) if (!x.ev.full) len = Math.max(len, x.pos + x.dur);
-        if (len > 0 && len < barTicks(time)) ms.pickup = Math.round(len);
-      }
-      const timeB = m === 0 && ms.pickup ? [time[0], time[1], ms.pickup] : time;
-      // build each staff's bar, with rests in any gaps
+      const timeB = timeAt(score, m).length > 2 ? [time[0], time[1], timeAt(score, m)[2]] : time;
+      // build each staff's bar, with rests in any gaps: each voice in its own lane; a note that
+      // overlaps another of its voice (or of a fifth voice) goes to a lane where there is room
       const bt = barTicks(timeB);
       part.staves.forEach((st, k) => {
-        const list = perStaff[k].filter((x) => x.pos >= 0 && x.pos < bt).sort((a, b) => a.pos - b.pos);
-        const evs = []; let p = 0;
-        for (const x of list) {
-          if (x.pos < p) continue;
-          if (x.pos > p) evs.push(...restsFor(p, x.pos - p, timeB));
-          evs.push(x.ev); p = x.pos + (x.ev.full ? bt : x.dur);
+        const lanes = [[], [], [], []];
+        const lenOf = (x) => Math.max(1, x.ev.full ? bt : x.dur);
+        const clash = (li, a, b, notesOnly) => lanes[li].some((y) => (!notesOnly || !y.ev.rest) && a < y.pos + lenOf(y) && y.pos < b);
+        const spill = [];
+        const native = [perStaff[k], perStaffV[k][2], perStaffV[k][3], perStaffV[k][4]];
+        native.forEach((l, li) => {
+          for (const x of l.filter((x) => x.pos >= 0 && x.pos < bt && !x.drop).sort((a, b) => a.pos - b.pos)) {
+            const a = x.pos, b = Math.min(bt, a + lenOf(x));
+            if (!clash(li, a, b)) lanes[li].push(x); else if (x.ev.notes) spill.push(x);
+          }
+        });
+        for (const l of Object.values(extraV[k])) for (const x of l) if (x.pos >= 0 && x.pos < bt && !x.drop && x.ev.notes) spill.push(x);
+        for (const x of spill.sort((a, b) => a.pos - b.pos)) {
+          const a = x.pos, b = Math.min(bt, a + lenOf(x));
+          // (the same moment and length as a note already there: one chord)
+          let host = null;
+          for (const L of lanes) { host = L.find((y) => y.pos === a && y.ev.notes && lenOf(y) === lenOf(x)); if (host) break; }
+          if (host) { for (const n of x.ev.notes) if (!host.ev.notes.some((h) => h.s === n.s && h.a === n.a)) host.ev.notes.push(n); continue; }
+          const li = [0, 1, 2, 3].find((i) => !clash(i, a, b, true));
+          if (li === undefined) continue;
+          lanes[li] = lanes[li].filter((y) => !(y.ev.rest && a < y.pos + lenOf(y) && y.pos < b));
+          lanes[li].push(x);
         }
-        if (p < bt) evs.push(...restsFor(p, bt - p, timeB));
-        st.bars[m] = evs.length ? tidyBar(evs, timeB) : restBar(timeB);
+        const build = (L) => {
+          const evs = []; let p = 0;
+          for (const x of L.sort((a, b) => a.pos - b.pos)) {
+            // (a tick or two out, from rounding in the file: put right next to the note before)
+            // (overlaps inside a voice were moved to other lanes above, so a note that starts before
+            // the end of the one before is only rounding in the file)
+            // (nothing shorter than a 128th can be written: a smaller gap is rounding)
+            if (x.pos >= p + 15) evs.push(...gapRests(p, x.pos - p, timeB)); else x.pos = p;
+            if (x.pos >= bt) continue;
+            const len = x.ev.full ? bt : Math.min(x.dur, bt - x.pos);
+            // (a note that runs past the end of the bar is cut at the barline)
+            if (!x.ev.full && x.ev.notes && x.pos + M0.ticksOf(x.ev, timeB) > bt + 2) x.split = true;
+            if (x.split && x.ev.notes) {
+              // a length no written value has: tied notes that add up to it
+              const pcs = M0.decompose(x.pos, len, timeB, false);
+              if (pcs.reduce((s2, pc) => s2 + pc.ticks, 0) === len) {
+                pcs.forEach((pc, i) => evs.push(i === 0 ? { ...x.ev, t: pc.t, dots: pc.dots, notes: x.ev.notes.map((n) => ({ ...n, tie: i < pcs.length - 1 ? true : n.tie })) }
+                  : { id: newId(), t: pc.t, dots: pc.dots, notes: x.ev.notes.map((n) => ({ ...n, tie: i < pcs.length - 1 ? true : n.tie })) }));
+                p = x.pos + len; continue;
+              }
+            }
+            evs.push(x.ev); p = x.pos + (x.ev.full ? bt : M0.ticksOf(x.ev, timeB));
+          }
+          if (bt - p >= 15) evs.push(...gapRests(p, bt - p, timeB));
+          if (!evs.length) return restBar(timeB);
+          // (whatever the file held, the bar adds up exactly: rests at its end give way, or fill it)
+          const out = tidyBar(evs, timeB);
+          let sum = out.reduce((a, e) => a + M0.ticksOf(e, timeB), 0);
+          while (sum > bt && out.length > 1 && out[out.length - 1].rest) sum -= M0.ticksOf(out.pop(), timeB);
+          if (sum > bt) { const e = out[out.length - 1], room = bt - (sum - M0.ticksOf(e, timeB)); const v = room > 0 && (valueFor(room) || valueOf(room)); if (v) { e.t = v.t; e.dots = v.dots; if (v.tup) e.tup = v.tup; else delete e.tup; sum = bt - room + M0.ticksOf(e, timeB); } }
+          if (sum < bt) out.push(...gapRests(sum, bt - sum, timeB));
+          return out;
+        };
+        st.bars[m] = build(lanes[0]);
         for (const vn of [2, 3, 4]) {
-          if (!perStaffV[k][vn].length) continue;
-          const l2 = perStaffV[k][vn].filter((x) => x.pos >= 0 && x.pos < bt).sort((a, b) => a.pos - b.pos);
-          const e2 = []; let p2 = 0;
-          for (const x of l2) { if (x.pos < p2) continue; if (x.pos > p2) e2.push(...restsFor(p2, x.pos - p2, timeB)); e2.push(x.ev); p2 = x.pos + (x.ev.full ? bt : x.dur); }
-          if (p2 < bt) e2.push(...restsFor(p2, bt - p2, timeB));
-          const key = 'v' + vn; st[key] = st[key] || []; st[key][m] = tidyBar(e2, timeB);
+          if (!lanes[vn - 1].length) continue;
+          const key = 'v' + vn; st[key] = st[key] || []; st[key][m] = build(lanes[vn - 1]);
         }
       });
     }
+    // ("Trumpet in C" with no transposition in the file: written as it sounds)
+    if (!trSeen && inst.tr && (inst.tr.steps || inst.tr.semis) && /\bin (c|do|ut)\b/i.test(pname)) part.tr = { steps: 0, semis: 0 };
   });
   for (const p of score.parts) for (const st of p.staves) for (const key of ['v2', 'v3', 'v4']) if (st[key]) for (let m = 0; m < score.measures.length; m++) if (!st[key][m]) st[key][m] = restBar(timeAt(score, m));
   score.spans = (score.spans || []).filter((sp) => sp.a && sp.b);

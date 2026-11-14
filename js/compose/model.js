@@ -27,7 +27,8 @@ export function evTicks(ev) {
 export const barTicks = (time) => (time[2] > 0 ? time[2] : (time[0] * WHOLE) / time[1]);
 // Standard values that fit, longest first: [ticks, t, dots]
 const VALUES = [];
-for (const t of [1, 2, 4, 8, 16, 32, 64]) { VALUES.push([baseTicks(t) * 1.75, t, 2], [baseTicks(t) * 1.5, t, 1], [baseTicks(t), t, 0]); }
+// (128th notes too, as Beethoven writes them: plain only, a dotted one has no whole number of ticks)
+for (const t of [1, 2, 4, 8, 16, 32, 64, 128]) { for (const [k, d] of [[1.75, 2], [1.5, 1], [1, 0]]) if (Number.isInteger(baseTicks(t) * k)) VALUES.push([baseTicks(t) * k, t, d]); }
 VALUES.sort((a, b) => b[0] - a[0]);
 export function valueOf(ticks) { const v = VALUES.find((x) => x[0] === ticks); return v ? { t: v[1], dots: v[2] } : null; }
 
@@ -160,20 +161,27 @@ export function newScore({ title = 'Untitled', composer = '', insts = ['piano'],
   return score;
 }
 export const restBar = (time) => [{ id: newId(), rest: true, full: true, t: 1, dots: 0, ticks: barTicks(time) }];
+// A part's instrument; a part may be pitched in another key than the instrument usually is (a
+// trumpet in C, a clarinet in A written as one in B♭ file): its own transposition then counts.
+export function instOf(part) { const base = INST[part.inst] || INST.piano; return part.tr ? { ...base, tr: part.tr } : base; }
 export const allStaves = (score) => score.parts.flatMap((p) => p.staves);
 export function staffInfo(score) {
   const out = [];
-  score.parts.forEach((p, pi) => p.staves.forEach((st, si) => out.push({ st, part: p, pi, si, inst: INST[p.inst] || INST.piano })));
+  score.parts.forEach((p, pi) => p.staves.forEach((st, si) => out.push({ st, part: p, pi, si, inst: instOf(p) })));
   return out;
 }
 export function timeAt(score, m) {
+  // (a bar of its own length, shorter or longer than its time: at a repeat, at the end, or music
+  // written with no time signature)
+  const own = score.measures[m] && score.measures[m].len > 0 ? score.measures[m].len : 0;
   for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].time) {
     const t = score.measures[i].time;
+    if (own) return [t[0], t[1], own];
     // the pickup bar (anacrusis): the time of the score, and how long this first bar is
     if (m === 0 && pickupOf(score)) return [t[0], t[1], pickupOf(score)];
     return t.length > 2 ? t.slice(0, 2) : t;
   }
-  return m === 0 && pickupOf(score) ? [4, 4, pickupOf(score)] : [4, 4];
+  return own ? [4, 4, own] : m === 0 && pickupOf(score) ? [4, 4, pickupOf(score)] : [4, 4];
 }
 // the length of the pickup bar, or 0 when the first bar is a whole bar
 export function pickupOf(score) { const p = score.measures[0] && score.measures[0].pickup; return p > 0 && p < (((score.measures[0].time || [4, 4])[0] * WHOLE) / (score.measures[0].time || [4, 4])[1]) ? p : 0; }
@@ -370,7 +378,7 @@ export function deleteBars(score, from, n) {
 }
 // A new time signature: bars from here until the next change are fitted to it.
 export function setTime(score, m, time) {
-  score.measures[m].time = time.slice(0, 2);
+  score.measures[m].time = time.slice(0, 2); delete score.measures[m].len; delete score.measures[m].timeHide;
   for (let i = m; i < score.measures.length; i++) {
     if (i > m && score.measures[i].time) break;
     const tt = timeAt(score, i);   // (the pickup bar keeps its own length)
