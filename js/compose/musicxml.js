@@ -811,8 +811,11 @@ export function fromMusicXML(xmlText) {
             const fgs = [...el.querySelectorAll('technical fingering')].map((x) => x.textContent.trim()).filter(Boolean); if (fgs.length) ev.fing = fgs.join(' ');
             { const sn = el.querySelector('technical string'); const k2 = sn ? parseInt(sn.textContent, 10) : 0;
               // (a fretted instrument: the string the note is played on, for its tablature; a bowed one: the string marked)
-              if (k2 >= 1 && part.staves[k].isTab) n.ts = k2;
-              else if (k2 >= 1 && inst.tuning) { n.ts = k2; if (k2 <= 6) ev.str = ['I', 'II', 'III', 'IV', 'V', 'VI'][k2 - 1]; }
+              // (and the fret the file gives, kept while the note keeps its pitch: tm)
+              const fr = el.querySelector('technical fret'), k3 = fr ? parseInt(fr.textContent, 10) : NaN;
+              const keepFret = () => { if (k3 >= 0 && k3 <= 36) { n.tf = k3; n.tm = midiOf(n.s, n.a); } };
+              if (k2 >= 1 && part.staves[k].isTab) { n.ts = k2; keepFret(); }
+              else if (k2 >= 1 && inst.tuning) { n.ts = k2; keepFret(); if (k2 <= 6) ev.str = ['I', 'II', 'III', 'IV', 'V', 'VI'][k2 - 1]; }
               else if (k2 >= 1 && k2 <= 4) ev.str = ['I', 'II', 'III', 'IV'][k2 - 1]; }
             // a note can end one slur and start the next
             const slT = [...el.querySelectorAll('slur')].map((x) => x.getAttribute('type'));
@@ -931,7 +934,7 @@ export function fromMusicXML(xmlText) {
           const above = evsAt(main, m);
           for (const [q, ev] of evsAt(t, m)) for (const n of ev.notes) {
             if (!n.ts) continue; const md = midiOf(n.s, n.a);
-            for (const [q2, e2] of above) if (Math.abs(q2 - q) <= 2) { const hit = e2.notes.find((x) => !x.ts && midiOf(x.s, x.a) === md); if (hit) { hit.ts = n.ts; break; } }
+            for (const [q2, e2] of above) if (Math.abs(q2 - q) <= 2) { const hit = e2.notes.find((x) => !x.ts && midiOf(x.s, x.a) === md); if (hit) { hit.ts = n.ts; if (n.tf != null) { hit.tf = n.tf; hit.tm = md; } break; } }
           }
         }
         const gone = new Set(part.staves.filter((st) => st.isTab).map((st) => st.id));
@@ -944,7 +947,9 @@ export function fromMusicXML(xmlText) {
         part.staves = [T]; score.spans = (score.spans || []).filter((sp) => !gone.has(sp.st));
       }
       part.tab = true;
-      if (tun && !(inst.tuning && inst.tuning.join() === tun.join())) part.tuning = tun;
+      // (a tuning written an octave or two away from the instrument's is the instrument's own)
+      const sameUpToOctaves = (x, y) => x && y && x.length === y.length && (x[0] - y[0]) % 12 === 0 && x.every((v, i) => v - y[i] === x[0] - y[0]);
+      if (tun && !sameUpToOctaves(tun, inst.tuning)) part.tuning = tun;
       for (const st of part.staves) { delete st.isTab; delete st.tuning; }
     } else for (const st of part.staves) delete st.tuning;
     // ("Trumpet in C" with no transposition in the file: written as it sounds)

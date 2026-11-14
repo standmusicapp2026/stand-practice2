@@ -286,7 +286,8 @@ export function layoutScore(score, opts = {}) {
     const base = shown[i - 1].pi === s.pi ? staffGapSame : staffGapOther;
     const need = ext[i - 1].below + ext[i].above + 0.6;
     // (lyrics always get their room, every verse: words must never run into the next staff)
-    const g = Math.max(base, Math.min(need, base + GROW), ext[i - 1].lyrB ? ext[i - 1].lyrB + 1.4 + Math.min(ext[i].above, 2.5) : 0);
+    // (a tablature moves down as far as the notes above it reach: they must never touch its numbers)
+    const g = Math.max(base, s.tab ? need : Math.min(need, base + GROW), ext[i - 1].lyrB ? ext[i - 1].lyrB + 1.4 + Math.min(ext[i].above, 2.5) : 0);
     gapAbove.set(s.k, Math.max(gapAbove.get(s.k) || 0, g));
   });
   // the distance from one system to the next: one for the whole score
@@ -348,7 +349,7 @@ function titleHeight(score, spMm, opts) {
 
 // How far notes reach above and below the staff in a system (sp beyond the staff).
 function staffExtent(score, s, sy, concert) {
-  if (s.tab) { s.lyr = 0; return { above: 0.6, below: 0.6, lyr: 0, lyrB: 0 }; }
+  if (s.tab) { s.lyr = 0; return { above: 0.6, below: 0.6 + tabH(s) - 4, lyr: 0, lyrB: 0 }; }
   let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false; let nVerse = 0, figN = 0;
   for (const mm of sy.measures) for (let m = mm.m; m <= mm.end; m++) {
     const clef0 = clefAt(s.st, m);
@@ -461,7 +462,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   const score = lay.score;
   const x0 = sys.x0, x1 = sys.x1;
   const staves = sys.staves;
-  const top = staves[0].y, bottom = staves[staves.length - 1].y + 4;
+  const top = staves[0].y, bottom = staffBot(staves[staves.length - 1]);
   ctx.lineCap = 'butt';
   // staff lines
   for (const s of staves) {
@@ -478,7 +479,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
     for (const s of staves) {
       if (done.has(s.pi)) continue; done.add(s.pi);
       const ps = staves.filter((x) => x.pi === s.pi);
-      const yy = (ps[0].y + ps[ps.length - 1].y + 4) / 2 + 0.55;
+      const yy = (ps[0].y + staffBot(ps[ps.length - 1])) / 2 + 0.55;
       const ci = s.part.instCh ? instAt(s.part, sys.measures[0].m) : null, chg = ci && ci.id !== s.part.inst;
       text(ctx, chg ? (sys.first ? ci.name : ci.abbr) : sys.first ? s.part.name : s.part.abbr, nx - (ps[0].inst.brace && ps.length > 1 ? 1.2 : 0), yy, 1.55, TEXT_FONT, '', 'right');
     }
@@ -496,9 +497,9 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   for (const s of staves) {
     if (s.tab) {
       // TAB, upright, in place of a clef; no key (the frets say it all); the time as on the staff above
-      const n = s.tab.length, sz = Math.min(1.7, (4 / (n - 1)) * 1.45 + 0.25);
-      ['T', 'A', 'B'].forEach((c, i) => text(ctx, c, x0 + 1.9, s.y + 2 + (i - 1) * sz * 0.82 + sz * 0.36, sz, TEXT_FONT, '700', 'center'));
-      if (showTime) drawTime(ctx, time0, x0 + 4.4 + maxKW + 0.2, s.y, score.measures[m0].timeSym);
+      const h = tabH(s), sz = Math.min(2.4, h / 3.3), mid = s.y + h / 2;
+      ['T', 'A', 'B'].forEach((c, i) => text(ctx, c, x0 + 1.9, mid + (i - 1) * sz * 0.85 + sz * 0.36, sz, TEXT_FONT, '700', 'center'));
+      if (showTime) drawTime(ctx, time0, x0 + 4.4 + maxKW + 0.2, mid - 2, score.measures[m0].timeSym);
       continue;
     }
     const clef = clefAt(s.st, m0);
@@ -832,7 +833,7 @@ function drawBrackets(ctx, sys, staves) {
     while (j + 1 < staves.length && staves[j + 1].inst.fam === fam && !['keys', 'pluck'].includes(fam)) j++;
     const multiParts = new Set(staves.slice(i, j + 1).map((s) => s.pi)).size > 1;
     if (multiParts || (j > i && !staves[i].inst.brace)) {
-      const t = staves[i].y - 0.5, b = staves[j].y + 4.5, x = sys.x0 - 1.0;
+      const t = staves[i].y - 0.5, b = staffBot(staves[j]) + 0.5, x = sys.x0 - 1.0;
       ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(x, t); ctx.lineTo(x, b); ctx.stroke();
       ctx.lineWidth = 0.18;
       ctx.beginPath(); ctx.moveTo(x - 0.25, t); ctx.quadraticCurveTo(x + 0.6, t - 0.1, x + 1.6, t - 1.1); ctx.stroke();
@@ -904,11 +905,11 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
       }
       cx += w;
     }
-    if (ms.time && !ms.timeHide) { CUR_MARK = { id: 'time' + m, kind: 'time', name: ms.time.join('/'), m }; for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.y, ms.timeSym); CUR_MARK = null; cx += timeWidth(ms.time); }
+    if (ms.time && !ms.timeHide) { CUR_MARK = { id: 'time' + m, kind: 'time', name: ms.time.join('/'), m }; for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.tab ? (s.y + staffBot(s)) / 2 - 2 : s.y, ms.timeSym); CUR_MARK = null; cx += timeWidth(ms.time); }
   }
   const contentX0 = cx + 1.3 + (ms.start === 'repeat' ? 2 : 0);
   // ---- barline at the end of the bar
-  const top = sys.staves[0].y, bot = sys.staves[sys.staves.length - 1].y + 4;
+  const top = sys.staves[0].y, bot = staffBot(sys.staves[sys.staves.length - 1]);
   const bx = mm.x1;
   drawBarline(ctx, ms.bar || (lastInSys && mm.end === score.measures.length - 1 ? 'final' : 'single'), bx, sys.staves, lay);
   if (ms.bar && ms.bar !== 'single' && !(ms.bar === 'final' && m === score.measures.length - 1)) hitBox({ id: 'bar' + m, kind: 'barline', name: ms.bar, m }, bx - 2.4, bx + 0.25, top, bot);
@@ -976,21 +977,21 @@ function drawBarline(ctx, type, x, staves, lay) {
     const join = cur && !s.tab && !cur.tab && (cur.pi === s.pi || (cur.fam === s.inst.fam && !['keys', 'pluck', 'voice'].includes(s.inst.fam)));
     // (a one-line staff: the barline a space above and below its line)
     const one = linesOf(s) === 1;
-    if (join) { cur.b = s.y + (one ? 3 : 4); cur.pi = s.pi; } else { cur = { t: s.y + (one ? 1 : 0), b: s.y + (one ? 3 : 4), pi: s.pi, fam: s.inst.fam, tab: !!s.tab }; groups.push(cur); }
+    if (join) { cur.b = s.y + (one ? 3 : 4); cur.pi = s.pi; } else { cur = { t: s.y + (one ? 1 : 0), b: one ? s.y + 3 : staffBot(s), pi: s.pi, fam: s.inst.fam, tab: !!s.tab }; groups.push(cur); }
   }
   for (const g of groups) {
     if (type === 'final') { line(ctx, x - 1.15, g.t, x - 1.15, g.b, 0.16); ctx.fillRect(x - 0.5, g.t, 0.5, g.b - g.t); }
     else if (type === 'double') { line(ctx, x - 0.75, g.t, x - 0.75, g.b, 0.16); line(ctx, x, g.t, x, g.b, 0.16); }
     else if (type === 'repeat') {
       line(ctx, x - 1.15, g.t, x - 1.15, g.b, 0.16); ctx.fillRect(x - 0.5, g.t, 0.5, g.b - g.t);
-      for (const s of staves) if (s.y >= g.t - 0.1 && s.y + 4 <= g.b + 0.1) { glyph(ctx, GL.repeatDot, x - 2.1, s.y + 1.5); glyph(ctx, GL.repeatDot, x - 2.1, s.y + 2.5); }
+      for (const s of staves) if (s.y >= g.t - 0.1 && staffBot(s) <= g.b + 0.1) { const c = (s.y + staffBot(s)) / 2; glyph(ctx, GL.repeatDot, x - 2.1, c - 0.5); glyph(ctx, GL.repeatDot, x - 2.1, c + 0.5); }
     } else line(ctx, x, g.t, x, g.b, 0.16);
   }
 }
 function drawRepeatStart(ctx, x, staves) {
-  const t = staves[0].y + (linesOf(staves[0]) === 1 ? 1 : 0), b = staves[staves.length - 1].y + (linesOf(staves[staves.length - 1]) === 1 ? 3 : 4);
+  const t = staves[0].y + (linesOf(staves[0]) === 1 ? 1 : 0), b = linesOf(staves[staves.length - 1]) === 1 ? staves[staves.length - 1].y + 3 : staffBot(staves[staves.length - 1]);
   ctx.fillRect(x, t, 0.5, b - t); line(ctx, x + 1.15, t, x + 1.15, b, 0.16);
-  for (const s of staves) { glyph(ctx, GL.repeatDot, x + 1.7, s.y + 1.5); glyph(ctx, GL.repeatDot, x + 1.7, s.y + 2.5); }
+  for (const s of staves) { const c = (s.y + staffBot(s)) / 2; glyph(ctx, GL.repeatDot, x + 1.7, c - 0.5); glyph(ctx, GL.repeatDot, x + 1.7, c + 0.5); }
 }
 function drawTempo(ctx, tempo, x, y) {
   let xx = x;
@@ -1273,10 +1274,15 @@ const highestAbove = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.m
 const lowestBelow = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, -n.p / 2 + (!e.up ? STEM_LEN + (e.ev.tup ? 2.3 : 0) : 0.5)); const near = (e.ev.art || []).filter((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)).length; if (near && e.up) h += near * 1.0; return h; };
 // ---------- tablature ----------
 // the lines of a tablature in the height of a staff: l from the bottom line (the lowest string)
-function tabY(s, l) { return s.y + 4 - (l * 4) / (s.tab.length - 1); }
+// (a space and a half between the lines, as engravers set a tablature, so the numbers have room)
+export const TAB_GAP = 1.5;
+function tabH(s) { return (s.tab.length - 1) * TAB_GAP; }
+function tabY(s, l) { return s.y + tabH(s) - l * TAB_GAP; }
+// the bottom line of a staff (a tablature reaches lower than a staff)
+function staffBot(s) { return s.tab ? s.y + tabH(s) : s.y + 4; }
 function drawTabBar(ctx, lay, s, m, time, xs, mm, hm, hit, opts) {
-  const sel = opts.selection || new Set(), n = s.tab.length, gap = 4 / (n - 1);
-  const sz = Math.min(1.45, gap * 1.2 + 0.25);
+  const sel = opts.selection || new Set(), gap = TAB_GAP;
+  const sz = 1.4;
   const paper = opts.paper || '#ffffff';
   const bars = [[s.st.bars[m] || [], 1], ...VOICES.filter((v) => hasVoice(s.st, v, m)).map((v) => [s.st[voiceKey(v)][m], v])];
   for (const [bar, v] of bars) {

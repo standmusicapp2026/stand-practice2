@@ -22,7 +22,8 @@ export function hasTab(part) { return !!(part && part.tab && tabTuning(part)); }
 // null for a note that does not fit.
 export function placeChord(midis, tuning, prev = null, fixed = []) {
   const n = midis.length, S = tuning.length;
-  const order = midis.map((m, k) => k).sort((a, b) => midis[b] - midis[a]);
+  // (the notes with a string asked for first, so the others do not take it; then high to low)
+  const order = midis.map((m, k) => k).sort((a, b) => (fixed[b] ? 1 : 0) - (fixed[a] ? 1 : 0) || midis[b] - midis[a]);
   let best = null, bestCost = Infinity;
   const cur = new Array(n).fill(null), used = new Array(S).fill(false);
   const cost = () => {
@@ -32,6 +33,9 @@ export function placeChord(midis, tuning, prev = null, fixed = []) {
     if (prev !== null && played.length) c += (Math.max(0, prev - lo) + Math.max(0, hi - (prev + 3))) * 0.8;
     // (a note left out of a chord costs more than any reach)
     c += cur.filter((x) => !x).length * 100;
+    // (a string left out between two that sound cannot be strummed past: a fretted note is better)
+    const on = cur.filter(Boolean).map((x) => x.i);
+    if (on.length > 2) c += (Math.max(...on) - Math.min(...on) + 1 - on.length) * 1.5;
     return c;
   };
   const go = (j) => {
@@ -75,21 +79,24 @@ export function tabPlan(score, st, tuning) {
       for (const ev of bar) { if (ev.notes && ev.notes.length && !ev.rest && !ev.cue) { if (!at.has(p)) at.set(p, []); at.get(p).push(ev); } p += ticksOf(ev, time); }
     }
     for (const p of [...at.keys()].sort((a, b) => a - b)) {
-      const notes = [], fixed = [], keep = [];
+      const notes = [], fixed = [], keep = [], own = new Map();
       for (const ev of at.get(p)) for (const n of ev.notes) {
         const md = midiOf(n.s, n.a);
         const h = held.get(md);
         if (h) { keep.push([n, h]); continue; }
+        // (the fret a file gave, while the note has the pitch it had there)
+        if (n.ts >= 1 && n.ts <= S && n.tf != null && n.tm === md && !own.has(S - n.ts)) { own.set(S - n.ts, [n, n.tf]); continue; }
         const strMark = ev.notes.length === 1 && ev.str ? { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6 }[ev.str] : 0;
         notes.push([n, md]); fixed.push(n.ts >= 1 && n.ts <= S ? n.ts : strMark || 0);
       }
       held.clear();
       // (notes held over keep their strings; the new ones take the others)
       for (const [n, h] of keep) out.set(n, { ...h, tied: true });
-      const taken = new Set(keep.map(([, h]) => h.i));
+      for (const [i, [n, f]] of own) out.set(n, { i, fret: f, str: S - i });
+      const taken = new Set([...keep.map(([, h]) => h.i), ...own.keys()]);
       const t2 = tuning.map((x, i) => (taken.has(i) ? -999 : x));
       const pl = placeChord(notes.map(([, md]) => md), t2, prev, fixed);
-      const frets = [];
+      const frets = [...own.values()].map(([, f]) => f);
       notes.forEach(([n], k) => { const c = pl[k]; if (!c) return; out.set(n, { i: c.i, fret: c.fret, str: S - c.i }); frets.push(c.fret); });
       prev = handAfter(prev, frets);
       for (const ev of at.get(p)) for (const n of ev.notes) if (n.tie && out.get(n)) held.set(midiOf(n.s, n.a), { i: out.get(n).i, fret: out.get(n).fret, str: out.get(n).str });
