@@ -27,6 +27,18 @@
   #msg[hidden] { display: none; }
   body.audio #stage { background: var(--bg); }
   body.nobar #bar .yt { display: none; }
+  /* the repeat button: tapped once (the start is marked) it waits for the end; on, it repeats */
+  #bLoop { gap: 4px; }
+  #bLoop .lt:empty { display: none; }
+  #bLoop.arm { box-shadow: inset 0 0 0 2px var(--acc); color: var(--acc); }
+  #bLoop.on .lt, #bLoop.arm .lt { font-variant-numeric: tabular-nums; font-size: 12px; }
+  /* a small player: the buttons closer, the time left out; smaller still, no 5-second jumps */
+  @media (max-width: 340px) { #bar { gap: 3px; padding: 0 4px; } #bar button { min-width: 30px; padding: 0 6px; } #bar .t { display: none; } #bar .x { margin-left: auto; } #bar .x ~ .x { margin-left: 0; } }
+  @media (max-width: 270px) { #bBack, #bFwd { display: none !important; } }
+  /* (small: the repeat button shows its state by its colour alone; waiting for the end, it pulses) */
+  @media (max-width: 380px) { #bLoop .lt { display: none; } #bLoop.arm { animation: armp 1.2s ease-in-out infinite; } }
+  @keyframes armp { 50% { box-shadow: inset 0 0 0 2px transparent; } }
+  @media (prefers-reduced-motion: reduce) { #bLoop.arm { animation: none; } }
 </style>
 </head>
 <body>
@@ -36,8 +48,7 @@
   <button id="bBack" class="yt" aria-label="Back 5 seconds">−5</button>
   <button id="bFwd" class="yt" aria-label="On 5 seconds">+5</button>
   <button id="bSpeed" class="yt" aria-label="Speed">100%</button>
-  <button id="bA" class="yt" aria-label="Loop from here">A</button>
-  <button id="bB" class="yt" aria-label="Loop to here">B</button>
+  <button id="bLoop" class="yt" aria-label="Repeat a passage: tap where it starts"><svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg><span class="lt"></span></button>
   <span class="t" id="time"></span>
   <button id="bOpen" class="x" aria-label="Open in its app"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
   <button id="bClose" class="x" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
@@ -51,16 +62,28 @@ const host = (op, extra) => {
   try { parent.postMessage({ standMedia: m }, '*'); } catch {}
 };
 const SPEEDS = [0.5, 0.6, 0.75, 0.85, 1, 1.1, 1.25];
+// The speeds this video really has: YouTube plays only its own (often 0.25, 0.5, 0.75, 1, 1.25…) and
+// moves any other toward 1 (asked for 85%, it would play at 100% while the button said 85%).
+function ratesOf(yt) {
+  let av = []; try { av = (yt.getAvailablePlaybackRates && yt.getAvailablePlaybackRates()) || []; } catch {}
+  av = av.filter((r) => typeof r === 'number' && r >= 0.25 && r <= 1.5);
+  if (!av.length) return [1];
+  const ours = SPEEDS.filter((r) => av.includes(r));
+  return ours.length >= 3 ? ours : av.slice().sort((a, b) => a - b);
+}
 const T = (x) => (P.tr && P.tr[x]) || x;
-const P = { tr: null, kind: null, yt: null, sp: null, a: null, b: null, speed: 1, url: '', tick: 0, playing: false };
+const P = { tr: null, kind: null, yt: null, sp: null, a: null, b: null, speed: 1, rates: null, url: '', tick: 0, playing: false };
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function say(t, html) { const m = $('#msg') || Object.assign(document.createElement('div'), { id: 'msg' }); if (!m.parentNode) $('#stage').append(m); if (html) m.innerHTML = t; else m.textContent = t; m.hidden = false; }
-function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = null; P.sp = null; P.a = P.b = null; P.playing = false; syncBar(); }
+function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = null; P.sp = null; P.a = P.b = null; P.rates = null; P.playing = false; syncBar(); }
 function syncBar() {
   $('#bPlay').innerHTML = P.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>';
   $('#bPlay').setAttribute('aria-label', T(P.playing ? 'Pause' : 'Play'));
   $('#bSpeed').textContent = Math.round(P.speed * 100) + '%';
-  $('#bA').classList.toggle('on', P.a !== null); $('#bB').classList.toggle('on', P.b !== null);
+  const lp = $('#bLoop'), on = P.a !== null && P.b !== null, arm = P.a !== null && P.b === null;
+  lp.classList.toggle('on', on); lp.classList.toggle('arm', arm);
+  lp.querySelector('.lt').textContent = on ? fmt(P.a) + '–' + fmt(P.b) : arm ? fmt(P.a) + '–…' : '';
+  lp.setAttribute('aria-label', T(on ? 'Stop repeating' : arm ? 'Tap where the passage ends' : 'Repeat a passage: tap where it starts'));
   document.body.classList.toggle('nobar', P.kind !== 'youtube');
   document.body.classList.toggle('audio', P.kind === 'spotify' || P.kind === 'apple');
 }
@@ -82,7 +105,9 @@ async function openYouTube(id, start) {
     videoId: id, width: '100%', height: '100%',
     playerVars: { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(start || 0), origin: location.origin, enablejsapi: 1 },
     events: {
-      onReady: () => { const m = $('#msg'); if (m) m.hidden = true; try { P.yt.setPlaybackRate(P.speed); } catch {} host('ready'); },
+      onReady: () => { const m = $('#msg'); if (m) m.hidden = true; P.rates = ratesOf(P.yt); try { P.yt.setPlaybackRate(P.speed); } catch {} host('ready'); },
+      // (YouTube says which speed it really plays: that is what the button shows)
+      onPlaybackRateChange: (e) => { if (typeof e.data === 'number' && e.data > 0) { P.speed = e.data; syncBar(); } },
       onStateChange: (e) => { P.playing = e.data === 1; syncBar(); host('state', { playing: P.playing }); },
       onError: (e) => { const why = T({ 2: 'This link is not a video YouTube knows.', 5: 'This video cannot play here.', 100: 'This video is no longer on YouTube, or it is private.', 101: 'Whoever put this video on YouTube does not let it play outside YouTube.', 150: 'Whoever put this video on YouTube does not let it play outside YouTube.', 153: 'YouTube did not accept where this player is shown.' }[e.data] || 'This video cannot play here.');
         say(why + ' <a href="#" id="goOut"></a>', true); const go0 = $('#goOut'); if (go0) go0.textContent = T('Open it in YouTube'); const g = $('#goOut'); if (g) g.onclick = (ev) => { ev.preventDefault(); host('openOut', { url: P.url }); }; host('error', { code: e.data }); },
@@ -92,7 +117,7 @@ async function openYouTube(id, start) {
     if (!P.yt || !P.yt.getCurrentTime) return;
     const t = P.yt.getCurrentTime(), d = P.yt.getDuration ? P.yt.getDuration() : 0;
     if (P.a !== null && P.b !== null && t >= P.b) P.yt.seekTo(P.a, true);
-    $('#time').textContent = fmt(t) + (d ? ' / ' + fmt(d) : '') + (P.a !== null && P.b !== null ? '  ↻' : '');
+    $('#time').textContent = P.a !== null && P.b === null ? T('Tap again where it ends') : fmt(t) + (d ? ' / ' + fmt(d) : '');
   }, 250);
 }
 // ---- Spotify: its own player (a part of a track without a Spotify login in this player) ----
@@ -128,11 +153,30 @@ window.mediaCmd = (c) => {
 $('#bPlay').onclick = () => { if (!P.yt || !P.yt.getPlayerState) return; if (P.yt.getPlayerState() === 1) P.yt.pauseVideo(); else P.yt.playVideo(); };
 $('#bBack').onclick = () => { if (P.yt && P.yt.seekTo) P.yt.seekTo(Math.max(0, P.yt.getCurrentTime() - 5), true); };
 $('#bFwd').onclick = () => { if (P.yt && P.yt.seekTo) P.yt.seekTo(P.yt.getCurrentTime() + 5, true); };
-$('#bSpeed').onclick = () => { const i = SPEEDS.indexOf(P.speed); P.speed = SPEEDS[(i + 1) % SPEEDS.length]; try { P.yt.setPlaybackRate(P.speed); } catch {} syncBar(); };
-$('#bA').onclick = () => { if (!P.yt || !P.yt.getCurrentTime) return; if (P.a !== null && P.b !== null) { P.a = P.b = null; } else P.a = P.yt.getCurrentTime(); syncBar(); };
-$('#bB').onclick = () => { if (!P.yt || P.a === null) return; const t = P.yt.getCurrentTime(); if (t > P.a + 0.3) { P.b = t; P.yt.seekTo(P.a, true); } syncBar(); };
+$('#bSpeed').onclick = () => {
+  if (!P.yt || !P.yt.setPlaybackRate) return;
+  const R = P.rates && P.rates.length ? P.rates : SPEEDS;
+  // (the next speed after the one playing now)
+  const next = R.find((r) => r > P.speed + 0.001) ?? R[0];
+  P.speed = next; try { P.yt.setPlaybackRate(next); } catch {} syncBar();
+};
+// Repeat a passage, with one button: a tap where it starts, a tap where it ends (it goes back to the
+// start and repeats), a tap to stop repeating.
+$('#bLoop').onclick = () => {
+  if (!P.yt || !P.yt.getCurrentTime) return;
+  const t = P.yt.getCurrentTime();
+  if (P.a !== null && P.b !== null) { P.a = P.b = null; }
+  else if (P.a === null) P.a = t;
+  else if (t > P.a + 0.3) { P.b = t; P.yt.seekTo(P.a, true); }
+  else P.a = t;   // (the end before the start: the start is marked again here)
+  syncBar();
+};
 $('#bClose').onclick = () => { clear(); host('close'); };
 $('#bOpen').onclick = () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVideo) P.yt.pauseVideo(); host('openOut', { url: P.url }); };
+// Stand out of sight (another app, the screen locked): a video pauses, as YouTube asks (no playing
+// in the background)
+document.addEventListener('visibilitychange', () => { if (document.hidden && P.kind === 'youtube' && P.yt && P.yt.pauseVideo) try { P.yt.pauseVideo(); } catch {} });
+window.addEventListener('pagehide', () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVideo) try { P.yt.pauseVideo(); } catch {} });
 // (in a browser: what to play comes in the address)
 try { const h = decodeURIComponent(location.hash.slice(1)); if (h) window.mediaOpen(JSON.parse(h)); } catch {}
 host('loaded');

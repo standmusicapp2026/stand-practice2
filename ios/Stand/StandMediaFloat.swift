@@ -5,9 +5,10 @@ import WebKit
 // Apple Music player, chosen from the recordings saved with a score (Listen). It is a web view of its
 // own, loaded with an https address, so YouTube knows where its player is shown (a page of Stand's
 // own address would be turned away). Drag it by its top bar; drag the corner of the bar to make it
-// bigger or smaller; push it off the side of the screen to put it away (a small tab stays at the
-// edge: tap it to bring the player back). Put away, a video pauses: YouTube does not let a video
-// play where it cannot be seen. Nothing is drawn over the video itself.
+// bigger or smaller; push it off the side of the screen and it becomes as small as it may be at that
+// edge, still playing; push it off again to put it away (a small tab stays at the edge: tap it to
+// bring the player back). Put away, a video pauses: YouTube does not let a video play where it
+// cannot be seen. Nothing is drawn over the video itself.
 final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
     static let base = URL(string: "https://com.paulo.stand/")!
     private(set) var web: WKWebView!
@@ -58,6 +59,11 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         web.layer.cornerRadius = 12
         web.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         web.clipsToBounds = true
+        // Stand away from the screen (home, another app, the iPad locked): a video pauses. Stand may
+        // play sound in the background (the metronome), but YouTube does not let a video go on
+        // playing where it is not seen.
+        NotificationCenter.default.addObserver(self, selector: #selector(leaving), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(leaving), name: UIApplication.didEnterBackgroundNotification, object: nil)
         #if DEBUG
         if #available(iOS 16.4, *) { web.isInspectable = true }
         #endif
@@ -106,7 +112,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
 
     // ---- from Stand's page
     func open(_ o: [String: Any], in host: UIView) {
-        kind = o["kind"] as? String ?? ""
+        kind = o["kind"] as? String ?? ""; docked = 0
         if superview == nil {
             host.addSubview(self)
             let saved = UserDefaults.standard.string(forKey: "standMediaFrame.\(kind)").map { NSCoder.cgRect(for: $0) }
@@ -119,6 +125,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         event?(["op": "frame", "x": frame.minX, "y": frame.minY, "w": frame.width, "h": frame.height, "hw": host.bounds.width, "hh": host.bounds.height])
     }
     func command(_ c: [String: Any]) { js("window.mediaCmd && window.mediaCmd(\(json(c)))") }
+    @objc private func leaving() { if kind == "youtube", superview != nil { command(["cmd": "pause"]) } }
     func close() {
         js("document.body.textContent = ''")
         removeFromSuperview()
@@ -144,7 +151,9 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
     }
 
     // ---- sizes
-    private var minW: CGFloat { kind == "youtube" ? 356 : 260 }
+    // (a YouTube picture must have at least 200 × 200 points; narrower than that it is letterboxed)
+    private var minW: CGFloat { kind == "youtube" ? 220 : 260 }
+    private var docked: CGFloat = 0         // made small at the left (-1) or right (1) edge, still playing
     private var minH: CGFloat { kind == "youtube" ? 26 + 200 + 44 : 26 + 80 + 44 }
     private func defaultFrame(in host: UIView) -> CGRect {
         let safe = host.safeAreaInsets
@@ -171,16 +180,18 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         let t = g.translation(in: host)
         frame.origin = CGPoint(x: start.minX + t.x, y: start.minY + t.y)
         if g.state == .ended || g.state == .cancelled {
-            // (more than half of it off the side: put away at that edge)
-            if frame.midX < host.bounds.minX + 10 { tuck(-1); return }
-            if frame.midX > host.bounds.maxX - 10 { tuck(1); return }
+            // (more than half of it off the side: first made as small as it may be at that edge, still
+            // playing; pushed off again from there, put away, and a video pauses)
+            let side: CGFloat = frame.midX < host.bounds.minX + 10 ? -1 : frame.midX > host.bounds.maxX - 10 ? 1 : 0
+            if side != 0 { if docked == side { tuck(side) } else { dock(side) }; return }
+            docked = 0
             UIView.animate(withDuration: 0.2) { self.frame = self.fitted(self.frame, in: host) }
             keep()
         }
     }
     @objc private func sizePlayer(_ g: UIPanGestureRecognizer) {
         guard let host = superview, tuckedSide == 0 else { return }
-        if g.state == .began { start = frame }
+        if g.state == .began { start = frame; docked = 0 }
         let t = g.translation(in: host)
         // (the corner is at the top right: wider to the right, taller upwards)
         var f = CGRect(x: start.minX, y: start.minY + t.y, width: start.width + t.x, height: start.height - t.y)
@@ -195,6 +206,16 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         let w = big ? minW : min(host.bounds.width * 0.7, 760)
         let h = kind == "youtube" ? 26 + w * 9 / 16 + 44 : frame.height
         UIView.animate(withDuration: 0.25) { self.frame = self.fitted(CGRect(x: self.frame.maxX - w, y: self.frame.maxY - h, width: w, height: h), in: host) }
+        keep()
+    }
+    private func dock(_ side: CGFloat) {
+        guard let host = superview else { return }
+        let b = host.bounds.inset(by: host.safeAreaInsets)
+        let w = min(minW, b.width), h = kind == "youtube" ? minH : min(frame.height, 26 + 152 + 44)
+        docked = side
+        UIView.animate(withDuration: 0.25) {
+            self.frame = self.fitted(CGRect(x: side < 0 ? b.minX + 8 : b.maxX - w - 8, y: self.frame.minY, width: w, height: h), in: host)
+        }
         keep()
     }
     private func tuck(_ side: CGFloat) {
@@ -212,7 +233,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
     }
     @objc private func untuck() {
         guard tuckedSide != 0, let host = superview else { return }
-        tuckedSide = 0
+        tuckedSide = 0; docked = 0
         if kind != "youtube" { js("document.querySelectorAll('iframe').forEach((f) => { if (f.dataset.src) f.src = f.dataset.src; })") }
         tab.isHidden = true; web.isHidden = false; grab.isHidden = false
         UIView.animate(withDuration: 0.25) { self.frame = self.fitted(self.shown, in: host); self.layer.cornerRadius = 14 }

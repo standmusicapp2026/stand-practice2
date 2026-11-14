@@ -327,7 +327,7 @@ html:not([lang="en"]) .btn svg { flex: none; }
 .rec-metro.on .rm-pp { color: var(--good); }
 .rec-metro-hint { margin: -2px 0 4px 30px; font-size: 12.5px; }
 /* 1, 2, 3, 4 before recording: big, in the middle, over the camera too */
-.rec-count { position: fixed; inset: 0; z-index: 9000; display: grid; place-items: center; pointer-events: none; }
+.rec-count { position: fixed; inset: 0; z-index: 850; display: grid; place-items: center; pointer-events: none; }
 .rec-count[hidden] { display: none; }
 .rec-count b { display: grid; place-items: center; width: 168px; height: 168px; border-radius: 50%; background: rgba(20, 24, 40, .72); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: #fff; font: 700 96px/1 var(--font-num); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
 .rec-count b.go { animation: rec-count-pop .5s cubic-bezier(.2, .9, .3, 1.2); }
@@ -683,7 +683,16 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
   .tb-btn { min-width: 50px; padding: 0 2px; font-size: 10px; letter-spacing: -.01em; }
   .tb-tools { min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .tb-tools::-webkit-scrollbar { display: none; }
+  /* (the page number always shows whole: before, on an iPad mini upright, longer words on the tools,
+     as in German or French, pushed it out of sight; the title gives way first) */
+  .tb-title { min-width: min-content; }
+  .tb-title strong { width: 0; flex: 1 1 auto; }
+  #pageLabel { flex: none; }
 }
+@media (max-width: 800px) { .tb-btn { min-width: 46px; } }
+/* (a tool never squeezed narrower than its word: with long words the row scrolls instead of the
+   words running into each other) */
+@media (max-width: 900px) { .tb-tools .tb-btn { flex-shrink: 0; } }
 @media (max-width: 700px) {
   .tb-btn { min-width: 48px; }
   .tb-btn span:not(.rec-dot) { display: none; }
@@ -1929,7 +1938,7 @@ body.phone .stat b { font-size: 22px; }
 .topbar > .icon-btn { flex: none; min-width: 40px; }
 
 /* linking a device once, with a code */
-.pair-back { z-index: 2000; }
+.pair-back { z-index: 850; }   /* (under the floating YouTube player: YouTube allows nothing in front of its video) */
 .pair .pair-say { margin: 0; }
 .pair-find { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14.5px; color: var(--accent-text); padding: 6px 0; }
 .pair-find i { width: 10px; height: 10px; border-radius: 5px; background: currentColor; animation: linkpulse 1.4s ease-in-out infinite; }

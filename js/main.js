@@ -10738,7 +10738,7 @@ function mediaOf(url) {
 }
 function ytStart(u) { const t = u.searchParams.get('t') || u.searchParams.get('start') || ''; const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(t); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; }
 const MEDIA = { box: null, kind: '' };
-const MEDIA_WORDS = ['Loading…', 'Loading the video…', 'YouTube could not be reached. Check the internet connection, then try again.', 'This link is not a video YouTube knows.', 'This video cannot play here.', 'This video is no longer on YouTube, or it is private.', 'Whoever put this video on YouTube does not let it play outside YouTube.', 'YouTube did not accept where this player is shown.', 'Open it in YouTube', 'This link cannot play here.', 'Play', 'Pause', 'Back 5 seconds', 'On 5 seconds', 'Speed', 'Loop from here', 'Loop to here', 'Open in its app', 'Close'];
+const MEDIA_WORDS = ['Loading…', 'Loading the video…', 'YouTube could not be reached. Check the internet connection, then try again.', 'This link is not a video YouTube knows.', 'This video cannot play here.', 'This video is no longer on YouTube, or it is private.', 'Whoever put this video on YouTube does not let it play outside YouTube.', 'YouTube did not accept where this player is shown.', 'Open it in YouTube', 'This link cannot play here.', 'Play', 'Pause', 'Back 5 seconds', 'On 5 seconds', 'Speed', 'Repeat a passage: tap where it starts', 'Tap where the passage ends', 'Stop repeating', 'Tap again where it ends', 'Open in its app', 'Close'];
 function openMedia(url, name) {
   const o = mediaOf(url); if (!o) { window.open(url, '_blank', 'noopener'); return; }
   o.url = url; o.title = name || '';
@@ -10753,11 +10753,14 @@ function openMedia(url, name) {
 window.__mediaOf = mediaOf; window.__openMedia = openMedia;
 window.standMediaEvent = (m) => { if (m && m.op === 'closed') MEDIA.kind = ''; };
 // In a browser: the same player in a frame that floats over the page, moved by its top bar, sized by
-// its corner, put away at the side (a video pauses there).
+// its corner; pushed off the side, made small at the edge (still playing), and pushed off again, put
+// away (a video pauses there).
+// (the least width of a YouTube player: its picture must have at least 200 × 200 points)
+const MEDIA_MIN_YT = 220;
 function mediaFrame(o) {
   let box = MEDIA.box;
   const W = innerWidth, H = innerHeight, yt = o.kind === 'youtube';
-  const minW = yt ? Math.min(356, W - 16) : 260, w = Math.max(minW, Math.min(W - 32, yt ? 480 : 380)), h = yt ? 26 + w * 9 / 16 + 44 : o.kind === 'spotify' ? 26 + 152 + 44 : 26 + 175 + 44;
+  const minW = yt ? Math.min(MEDIA_MIN_YT, W - 16) : 260, w = Math.max(minW, Math.min(W - 32, yt ? 480 : 380)), h = yt ? 26 + w * 9 / 16 + 44 : o.kind === 'spotify' ? 26 + 152 + 44 : 26 + 175 + 44;
   if (!box) {
     box = MEDIA.box = el('div', 'media-float'); box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Player');
     const grab = el('div', 'mf-grab'); grab.setAttribute('aria-label', 'Move the player'); grab.append(el('span', 'mf-pill'));
@@ -10773,9 +10776,19 @@ function mediaFrame(o) {
     const mv = (e) => {
       if (!st) return; const dx = e.clientX - st.x, dy = e.clientY - st.y;
       if (st.kind === 'move') { box.style.left = st.l + dx + 'px'; box.style.top = st.t + dy + 'px'; }
-      else { const mw = MEDIA.kind === 'youtube' ? Math.min(356, innerWidth - 16) : 260, mh = MEDIA.kind === 'youtube' ? 270 : 150; const nw = Math.max(mw, Math.min(innerWidth - 16, st.w + dx)), nh = Math.max(mh, Math.min(innerHeight - 16, st.h - dy)); box.style.width = nw + 'px'; box.style.height = nh + 'px'; box.style.top = st.t + st.h - nh + 'px'; }
+      else { MEDIA.docked = 0; const mw = MEDIA.kind === 'youtube' ? Math.min(MEDIA_MIN_YT, innerWidth - 16) : 260, mh = MEDIA.kind === 'youtube' ? 270 : 150; const nw = Math.max(mw, Math.min(innerWidth - 16, st.w + dx)), nh = Math.max(mh, Math.min(innerHeight - 16, st.h - dy)); box.style.width = nw + 'px'; box.style.height = nh + 'px'; box.style.top = st.t + st.h - nh + 'px'; }
     };
-    const up = () => { if (!st || box.classList.contains('tucked')) { st = null; return; } const r = box.getBoundingClientRect(); const k = st.kind; st = null; if (k === 'move' && (r.left + r.width / 2 < 10 || r.left + r.width / 2 > innerWidth - 10)) tuck(r.left + r.width / 2 < 10 ? -1 : 1); else fit(); };
+    const up = () => { if (!st || box.classList.contains('tucked')) { st = null; return; } const r = box.getBoundingClientRect(); const k = st.kind; st = null;
+      // pushed off the side: first made as small as it may be, at that edge, still playing; pushed off
+      // again from there, put away (a video pauses: YouTube lets nothing play where it is not seen)
+      if (k === 'move' && (r.left + r.width / 2 < 10 || r.left + r.width / 2 > innerWidth - 10)) { const side = r.left + r.width / 2 < 10 ? -1 : 1; if (MEDIA.docked === side) tuck(side); else dock(side); }
+      else { if (k === 'move') MEDIA.docked = 0; fit(); } };
+    const dock = (side) => {
+      const r = box.getBoundingClientRect(), yt = MEDIA.kind === 'youtube';
+      const w = yt ? Math.min(MEDIA_MIN_YT, innerWidth - 16) : 260, h = yt ? 270 : Math.min(r.height, 26 + 152 + 44);
+      Object.assign(box.style, { width: w + 'px', height: h + 'px', left: (side < 0 ? 8 : innerWidth - w - 8) + 'px', top: Math.min(Math.max(r.top, 8), innerHeight - h - 8) + 'px' });
+      MEDIA.docked = side;
+    };
     grab.addEventListener('pointermove', mv); corner.addEventListener('pointermove', mv);
     grab.addEventListener('pointerup', up); corner.addEventListener('pointerup', up); grab.addEventListener('pointercancel', up); corner.addEventListener('pointercancel', up);
     const tuck = (side) => {
@@ -10786,11 +10799,11 @@ function mediaFrame(o) {
       if (MEDIA.kind !== 'youtube') { MEDIA.src = fr.src; fr.src = 'about:blank'; }
       box.classList.add('tucked'); tab.hidden = false; box.style.left = side < 0 ? '0px' : innerWidth - 34 + 'px'; box.style.top = Math.min(Math.max(r.top + r.height / 2 - 45, 8), innerHeight - 98) + 'px'; box.style.width = '34px'; box.style.height = '90px';
     };
-    tab.addEventListener('click', () => { const s0 = MEDIA.shown; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) Object.assign(box.style, { left: s0.l + 'px', top: s0.t + 'px', width: s0.w + 'px', height: s0.h + 'px' }); });
+    tab.addEventListener('click', () => { const s0 = MEDIA.shown; MEDIA.docked = 0; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) Object.assign(box.style, { left: s0.l + 'px', top: s0.t + 'px', width: s0.w + 'px', height: s0.h + 'px' }); });
     MEDIA.tuck = tuck;
     window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || e.source !== fr.contentWindow) return; if (m.op === 'close') { box.remove(); MEDIA.box = null; MEDIA.kind = ''; } else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
   }
-  MEDIA.kind = o.kind;
+  MEDIA.kind = o.kind; MEDIA.docked = 0;
   box.classList.remove('tucked'); box.querySelector('.mf-tab').hidden = true;
   Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: H - h - 16 + 'px' });
   box.querySelector('.mf-frame').src = 'media.html#' + encodeURIComponent(JSON.stringify(o));
