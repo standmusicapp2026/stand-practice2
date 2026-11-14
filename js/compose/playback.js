@@ -495,10 +495,10 @@ export class ScorePlayer {
   constructor() { this.playing = false; this.onTick = null; this.onEnd = null; }
   // (practice: speed 0.5–1.5 of the written tempo, the bars from–to again and again, a click on
   // each beat, a bar of clicks before)
-  async play(score, { from = 0, pos = 0, speed = 1, loop = null, click = false, countIn = false } = {}) {
+  async play(score, { from = 0, pos = 0, speed = 1, loop = null, click = false, countIn = false, swing = false } = {}) {
     this.stop();
     const tok = this._tok;
-    const tl = practiceTimeline(score, buildTimeline(score, { from }), { speed, loop, click: click || countIn, from });
+    const tl = practiceTimeline(score, buildTimeline(score, { from }), { speed, loop, click: click || countIn, from, swing });
     this.tl = tl;
     // (from a note in the middle of the bar: the music before it in that bar is left out)
     let skip = 0;
@@ -562,8 +562,17 @@ function clickAt(ctx, when, acc) {
   } catch {}
 }
 // The timeline made for practising: slower or faster, a passage over and over, the beats to click.
-export function practiceTimeline(score, tl, { speed = 1, loop = null, click = false, from = 0 } = {}) {
+export function practiceTimeline(score, tl, { speed = 1, loop = null, click = false, from = 0, swing = false } = {}) {
   const k = speed > 0 ? 1 / speed : 1;
+  // swing: the second eighth of each beat comes later (long–short, two thirds and one third)
+  if (swing) for (const n of tl.notes.concat(tl.marks)) {
+    if (n.pos === undefined || n.m === undefined) continue;
+    const time = timeAt(score, n.m); if (time[1] !== 4 && time[1] !== 2) continue;
+    const beat = WHOLE / 4, tp = tempoAt(score, n.m), sec = (60 / (tp.bpm || 96)) * (4 / (tp.beat || 4)) / (tp.dotted ? 1.5 : 1);
+    const inBeat = n.pos % beat;
+    if (inBeat === beat / 2) { n.t += sec / 6; if (n.dur) n.dur = Math.max(0.05, n.dur - sec / 6); if (n.env) n.env = n.env.map(([et, ev]) => [et + sec / 6, ev]); }
+    else if (inBeat === 0 && n.dur && n.dur < sec * 0.6) n.dur += sec / 6;
+  }
   const beatsOf = (m) => { const time = timeAt(score, m), full = barTicks(time.slice(0, 2)); const compound = time[1] === 8 && time[0] % 3 === 0 && time[0] > 3; const beat = compound ? (WHOLE / 8) * 3 : WHOLE / time[1]; const out = []; for (let p = 0; p < barTicks(time); p += beat) out.push(p); return { out, beat, full }; };
   let clicks = [];
   if (click && tl.tAt) tl.order.forEach((m, i) => { for (const p of beatsOf(m).out) clicks.push({ t: tl.tAt(i, p), acc: p === 0 }); });

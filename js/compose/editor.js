@@ -28,13 +28,13 @@ const C = {
   tool: { dur: 4, dots: 0, rest: false, tup: false, tupN: 3, head: null, acc: null, chord: false },
   mode: 'write', finger: false, sel: new Set(), selBars: null, undo: [], redo: [],
   tab: 'notes', placing: null, hover: null, clip: null, saveT: 0,
-  practice: { speed: 1, loop: false, click: false, countIn: false },
+  practice: { speed: 1, loop: false, click: false, countIn: false, swing: false },
 };
 // the practice settings of playing (Sound panel): shown, and kept for next time
 function syncPractice() {
   const P = C.practice; if (!$('#mxSpeed')) return;
   $('#mxSpeed').value = Math.round(P.speed * 100); $('#mxSpeedVal').textContent = Math.round(P.speed * 100) + '%';
-  $('#mxLoop').checked = !!P.loop; $('#mxClick').checked = !!P.click; $('#mxCountIn').checked = !!P.countIn;
+  $('#mxLoop').checked = !!P.loop; $('#mxClick').checked = !!P.click; $('#mxCountIn').checked = !!P.countIn; $('#mxSwing').checked = !!P.swing;
 }
 const player = new ScorePlayer();
 export const composeState = C;
@@ -2074,7 +2074,7 @@ function wireTop() {
   { const keep = () => { setSetting('composePractice', C.practice); syncPractice(); };
     $('#mxSpeed').addEventListener('input', (e) => { C.practice.speed = +e.target.value / 100; keep(); });
     $('#mxSpeed').addEventListener('change', () => { if (player.playing) { togglePlay(); togglePlay(); } });
-    for (const [id, key] of [['#mxLoop', 'loop'], ['#mxClick', 'click'], ['#mxCountIn', 'countIn']]) $(id).addEventListener('change', (e) => { C.practice[key] = e.target.checked; keep(); }); }
+    for (const [id, key] of [['#mxLoop', 'loop'], ['#mxClick', 'click'], ['#mxCountIn', 'countIn'], ['#mxSwing', 'swing']]) $(id).addEventListener('change', (e) => { C.practice[key] = e.target.checked; keep(); }); }
   $('#cpZoomIn').addEventListener('click', () => setZoom(C.zoom * 1.2));
   $('#cpZoomOut').addEventListener('click', () => setZoom(C.zoom / 1.2));
   $('#cpTitle').addEventListener('click', () => D.showPanel('cplayout'));
@@ -2124,7 +2124,7 @@ async function togglePlay(from) {
   if (P.speed !== 1 || loop) hint((P.speed !== 1 ? `At ${Math.round(P.speed * 100)}% of the tempo. ` : '') + (loop ? (loop.from === loop.to ? `Bar ${M.barNumber(C.score, loop.from)} again and again.` : `Bars ${M.barNumber(C.score, loop.from)}–${M.barNumber(C.score, loop.to)} again and again.`) : ''), 2600);
   else if (P.loop && !C.selBars) hint('To play a passage again and again, select its bars first.', 2600);
   $('#cpPlay').classList.add('on'); $('#cpPlay').querySelector('span').textContent = 'Loading';
-  await player.play(C.score, { from: start, pos, speed: P.speed, loop, click: P.click, countIn: P.countIn });
+  await player.play(C.score, { from: start, pos, speed: P.speed, loop, click: P.click, countIn: P.countIn, swing: P.swing });
   syncPlay();
 }
 function syncPlay() {
