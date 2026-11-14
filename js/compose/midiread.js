@@ -1,7 +1,7 @@
 // A standard MIDI file (.mid) read into a score, as Sibelius, Dorico and MuseScore do: each track (or
 // each channel of a single-track file) becomes an instrument, named from the track or its sound; the
-// notes are put on the nearest sixteenth (or eighth-note triplet, where a beat is played in threes),
-// chords are gathered, notes that overlap go to a second voice, a piano is split at middle C into
+// notes are put on the nearest sixteenth (or triplet: of eighths, sixteenths or quarters, where played in threes),
+// chords are gathered (a chord rolled by hand with its arpeggio sign), notes that overlap go to a second voice, a piano is split at middle C into
 // two staves; the time, the key and the tempo come from the file.
 import { INST } from './instruments.js';
 import { WHOLE, newScore, newPart, newId, timeAt, barTicks, decompose, writeEvent, spell, restBar, valueOf, allStaves, voiceView, fitBar } from './model.js';
@@ -111,53 +111,97 @@ export function fromMidi(buf, name = '') {
 }
 function barAt(bars, t) { let m = 0; for (let i = 0; i < bars.length; i++) if (bars[i].t <= t + 1) m = i; return m; }
 
-// Each beat is read on a grid of sixteenths, or of eighth-note triplets when its notes fall on those.
+// Each beat is read on a grid of sixteenths, or in threes where its notes fall there: eighth-note
+// triplets (three to a beat), sixteenth-note triplets (three to half a beat) or quarter-note triplets
+// (three over two beats). A triplet is a group: { start, span } in ticks, three places in its span.
 function quantize(bars, notes) {
+  const info = notes.map((n) => {
+    // (a note played a moment before a barline belongs to the bar it begins)
+    const m = barAt(bars, n.on + WHOLE / 96), b = bars[m], beat = WHOLE / b.time[1], tol = beat / 24;
+    const ok = b.time[1] <= 4 && !(b.time[1] === 8 && b.time[0] % 3 === 0);
+    const rel = n.on - b.t, bi = Math.min(b.time[0] - 1, Math.floor((rel + tol) / beat)), inBeat = rel - bi * beat;
+    const err = (x, g) => Math.abs(x - Math.round(x / g) * g);
+    const pair = bi - (bi % 2), inPair = rel - pair * beat;
+    return { n, m, b, beat, tol, ok, bi, inBeat, e16: err(inBeat, beat / 4), e8t: err(inBeat, beat / 3), e16t: err(inBeat, beat / 6), pair, eQ: err(inPair, (beat * 2) / 3) };
+  });
+  const groups = new Map();   // 'm:bi' (or 'm:bi:h' for half a beat) → { start, span }
+  const byKey = (f) => { const mp = new Map(); for (const x of info) if (x.ok) { const k = f(x); if (!mp.has(k)) mp.set(k, []); mp.get(k).push(x); } return mp; };
+  // (quarter-note triplets: two beats whose notes all fall on thirds of them, one off the sixteenths)
+  for (const [, xs] of byKey((x) => x.m + ':' + x.pair)) {
+    const x0 = xs[0]; if (x0.pair + 1 >= x0.b.time[0]) continue;
+    // (and one of them held over the beat in the middle: else they are eighth-note triplets)
+    const mid = x0.b.t + (x0.pair + 1) * x0.beat;
+    if (xs.every((x) => x.eQ <= x.tol) && xs.some((x) => x.eQ + 1 < x.e16 && x.n.on < mid && x.n.off > mid + x.tol)) {
+      const g = { start: x0.b.t + x0.pair * x0.beat, span: 2 * x0.beat };
+      groups.set(x0.m + ':' + x0.pair, g); groups.set(x0.m + ':' + (x0.pair + 1), g);
+    }
+  }
+  for (const [k, xs] of byKey((x) => x.m + ':' + x.bi)) {
+    if (groups.has(k)) continue; const x0 = xs[0], bStart = x0.b.t + x0.bi * x0.beat;
+    // (sixteenth-note triplets, by half a beat: a half with a note off the sixteenths and on sixths of the beat)
+    // (short notes only: a chord rolled by hand, its notes held on, is not a triplet)
+    if (xs.some((x) => x.e16t + 1 < Math.min(x.e16, x.e8t) && x.n.off - x.n.on <= x.beat / 2 + x.tol)) {
+      for (const h of [0, 1]) if (xs.some((x) => Math.min(1, Math.floor((x.inBeat + x.tol) / (x.beat / 2))) === h && x.e16 > x.tol)) groups.set(k + ':' + h, { start: bStart + (h * x0.beat) / 2, span: x0.beat / 2 });
+    } else if (xs.some((x) => x.e8t + 1 < x.e16)) groups.set(k, { start: bStart, span: x0.beat });
+  }
   const out = [];
-  for (const n of notes) {
-    const m = barAt(bars, n.on), b = bars[m], beat = WHOLE / b.time[1];
-    const rel = n.on - b.t, bi = Math.floor(rel / beat), inBeat = rel - bi * beat;
-    const g16 = beat / 4, g3 = beat / 3;
-    const e16 = Math.abs(inBeat - Math.round(inBeat / g16) * g16), e3 = Math.abs(inBeat - Math.round(inBeat / g3) * g3);
-    out.push({ ...n, m, bi, trip: e3 + 1 < e16 && b.time[1] <= 4 && !(b.time[1] === 8 && b.time[0] % 3 === 0) });
+  for (const x of info) {
+    const { n, b, beat, tol } = x, k = x.m + ':' + x.bi;
+    const grp = groups.get(k) || groups.get(k + ':' + Math.min(1, Math.floor((x.inBeat + tol) / (beat / 2)))) || null;
+    const g = grp ? grp.span / 3 : beat / 4, at = grp ? grp.start : b.t;
+    let on = at + Math.round((n.on - at) / g) * g;
+    if (grp && on >= grp.start + grp.span) on = grp.start + grp.span - g;
+    const len = Math.max(g, Math.round((n.off - on) / g) * g);
+    // (a triplet holds only its group: it ends where its group does)
+    const off = grp ? Math.min(on + len, grp.start + grp.span) : on + len;
+    out.push({ ...n, on, off, m: x.m, bi: x.bi, trip: !!grp, grp });
   }
-  // (a beat with one note on a triplet place is written in triplets as a whole)
-  const tripBeat = new Set(out.filter((x) => x.trip).map((x) => x.m + ':' + x.bi));
-  for (const x of out) {
-    const b = bars[x.m], beat = WHOLE / b.time[1], tr = tripBeat.has(x.m + ':' + x.bi), g = tr ? beat / 3 : beat / 4;
-    x.on = b.t + Math.round((x.on - b.t) / g) * g;
-    const len = Math.max(g, Math.round((x.off - x.on) / g) * g);
-    x.off = x.on + len; x.trip = tr;
-    // (a beat in triplets holds only its triplets: a triplet ends with its beat)
-    if (tr) { const bEnd = b.t + (Math.floor((x.on - b.t) / beat) + 1) * beat; x.off = Math.min(x.off, bEnd); }
-  }
-  // (and a note held into a beat of triplets is let go where that beat begins)
-  const starts = [...tripBeat].map((k) => { const [m, bi] = k.split(':').map(Number); const b = bars[m]; return b.t + bi * (WHOLE / b.time[1]); }).sort((a, b) => a - b);
+  // (and a note held into a group of triplets is let go where that group begins)
+  const starts = [...new Set([...groups.values()])].map((g) => g.start).sort((a, b) => a - b);
   for (const x of out) if (!x.trip) { const cut = starts.find((t) => t > x.on && t < x.off); if (cut !== undefined) x.off = cut; }
   return out.filter((x) => x.off > x.on);
 }
+// A chord rolled by hand (three or more notes begun one after another, a moment apart, held and let go
+// together) is one chord with an arpeggio sign, as it is written.
+function arpeggios(bars, raw) {
+  const ns = raw.map((n) => ({ ...n })).sort((a, b) => a.on - b.on || a.midi - b.midi);
+  for (let i = 0; i < ns.length; i++) {
+    const a = ns[i]; if (a.arp) continue;
+    const beat = WHOLE / bars[barAt(bars, a.on)].time[1];
+    if (a.off - a.on < beat * 0.75) continue;
+    const chain = [a];
+    for (let j = i + 1; j < ns.length; j++) {
+      const c = ns[j], last = chain[chain.length - 1];
+      if (c.on - last.on > beat / 6 || c.on - a.on > beat / 2) break;
+      if (!c.arp && Math.abs(c.off - a.off) <= beat / 4 && c.midi > last.midi) chain.push(c);
+    }
+    if (chain.length >= 3 && chain[chain.length - 1].on - a.on >= beat / 16) for (const c of chain) { c.on = a.on; c.off = a.off; c.arp = true; }
+  }
+  return ns;
+}
 function placeNotes(score, bars, part, st, raw, drums) {
   if (!raw.length) return;
-  const notes = quantize(bars, raw).sort((a, b) => a.on - b.on || b.midi - a.midi);
+  const notes = quantize(bars, drums ? raw : arpeggios(bars, raw)).sort((a, b) => a.on - b.on || b.midi - a.midi);
   // chords, and lanes (voices) so that nothing in one voice overlaps
   const lanes = [[], [], [], []];
   for (const n of notes) {
     let done = false;
-    for (const L of lanes) { const c = L.find((x) => x.on === n.on && x.off === n.off); if (c) { if (!c.midis.includes(n.midi)) c.midis.push(n.midi); done = true; break; } }
+    for (const L of lanes) { const c = L.find((x) => x.on === n.on && x.off === n.off); if (c) { if (!c.midis.includes(n.midi)) c.midis.push(n.midi); if (n.arp) c.arp = true; done = true; break; } }
     if (done) continue;
     let li = lanes.findIndex((L) => !L.length || L[L.length - 1].off <= n.on);
     if (li < 0) { const L = lanes[0]; L[L.length - 1].off = Math.max(L[L.length - 1].on + 1, n.on); li = 0; }   // (played legato: the note before is let go)
-    lanes[li].push({ on: n.on, off: n.off, midis: [n.midi], trip: n.trip });
+    lanes[li].push({ on: n.on, off: n.off, midis: [n.midi], trip: n.trip, grp: n.grp, arp: !!n.arp });
   }
   lanes.forEach((L, li) => {
     if (!L.length) return;
     const view = li === 0 ? st : voiceView(st, li + 1, score);
-    // (a beat in triplets is first filled with triplet rests, so it always adds up)
+    // (a group of triplets is first filled with triplet rests, so it always adds up)
     const done = new Set();
-    for (const c of L) if (c.trip) {
-      const m = barAt(bars, c.on), b = bars[m], time = timeAt(score, m), beat = WHOLE / time[1], bi = Math.floor((c.on - b.t) / beat);
-      if (done.has(m + ':' + bi)) continue; done.add(m + ':' + bi);
-      for (let k = 0; k < 3; k++) writeEvent(score, view, m, bi * beat + (k * beat) / 3, { id: newId(), rest: true, keep: true, t: time[1] * 2, dots: 0, tup: { n: 3, m: 2, base: time[1] * 2 } });
+    for (const c of L) if (c.grp) {
+      if (done.has(c.grp)) continue; done.add(c.grp);
+      const m = barAt(bars, c.grp.start), b = bars[m], g = c.grp.span / 3, v = valueOf(g * 1.5);
+      if (!v) continue;
+      for (let k = 0; k < 3; k++) writeEvent(score, view, m, c.grp.start - b.t + k * g, { id: newId(), rest: true, keep: true, t: v.t, dots: v.dots, tup: { n: 3, m: 2, base: v.t } });
     }
     for (const c of L) writeChord(score, bars, view, c, drums);
     // (a bar that does not add up after that, from triplets mixed with other notes, is written again
@@ -183,16 +227,17 @@ function writeChord(score, bars, st, c, drums) {
     const time = timeAt(score, m), beat = WHOLE / time[1];
     const more = end < c.off - 1;
     if (c.trip) {
-      // a triplet note: one or two triplet places, within its beat (what lasts longer is not tied on)
-      const g = beat / 3, slot = Math.round((pos % beat) / g), k = Math.max(1, Math.min(3 - slot, Math.round(len / g)));
-      const v = valueOf(k * g * 1.5) || valueOf(beat / 2);
+      // a triplet note: one to three places of its group (what lasts longer is not tied on)
+      const grp = c.grp || { start: b.t + Math.floor(pos / beat) * beat, span: beat }, gs = grp.start - b.t, g = grp.span / 3;
+      const slot = Math.max(0, Math.min(2, Math.round((pos - gs) / g))), k = Math.max(1, Math.min(3 - slot, Math.round(len / g)));
+      const v = valueOf(k * g * 1.5) || valueOf(g * 1.5);
       const ev = { id: newId(), t: v.t, dots: v.dots, tup: { n: 3, m: 2, base: v.t }, notes: notesOf(m) };
-      writeEvent(score, st, m, Math.floor(pos / beat) * beat + slot * g, ev);
+      writeEvent(score, st, m, gs + slot * g, ev);
       break;
     } else {
       const pieces = decompose(pos, len, time, false);
       let p = pos;
-      pieces.forEach((pc, i) => { writeEvent(score, st, m, p, { id: newId(), t: pc.t, dots: pc.dots, notes: notesOf(m).map((n) => ({ ...n, tie: more || i < pieces.length - 1 })) }); p += pc.ticks; });
+      pieces.forEach((pc, i) => { writeEvent(score, st, m, p, { id: newId(), t: pc.t, dots: pc.dots, notes: notesOf(m).map((n) => ({ ...n, tie: more || i < pieces.length - 1 })), ...(c.arp && t === c.on && !i && c.midis.length > 1 ? { art: ['arp'] } : {}) }); p += pc.ticks; });
     }
     t = end;
   }
