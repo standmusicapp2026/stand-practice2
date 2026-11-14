@@ -1488,6 +1488,13 @@
       <div class="ctl-head"><span>Room</span></div>
       <div class="seg full" id="mxRoom"></div>
     </section>
+    <section class="sub-card mx-practice" id="mxPractice">
+      <div class="ctl-head"><span>Practice</span><span class="num" id="mxSpeedVal">100%</span></div>
+      <input type="range" id="mxSpeed" min="40" max="150" step="5" value="100" aria-label="Speed">
+      <label class="check-row"><input type="checkbox" id="mxLoop"><span>Play the selected bars again and again</span></label>
+      <label class="check-row"><input type="checkbox" id="mxClick"><span>Click on every beat</span></label>
+      <label class="check-row"><input type="checkbox" id="mxCountIn"><span>A bar of clicks before</span></label>
+    </section>
     <div class="cp-mixer" id="cpMixer"></div>
     <button class="btn small ghost mx-adv-btn" id="mxAdvBtn">More settings</button>
     <section class="sub-card" id="mxAdv" hidden>
@@ -1506,6 +1513,11 @@
     <label class="field"><span>Title</span><input id="lyTitle" autocomplete="off"></label>
     <label class="field"><span>Subtitle</span><input id="lySubtitle" autocomplete="off"></label>
     <label class="field"><span>Composer</span><input id="lyComposer" autocomplete="off"></label>
+    <details class="ns-more ly-credits"><summary>Arranger, words, copyright</summary>
+      <label class="field"><span>Arranger</span><input id="lyArranger" autocomplete="off" placeholder="arr. Name"></label>
+      <label class="field"><span>Words by</span><input id="lyLyricist" autocomplete="off" placeholder="Words: Name"></label>
+      <label class="field"><span>Copyright</span><input id="lyRights" autocomplete="off" placeholder="© 2026 Name"></label>
+    </details>
     <div class="ctl-head"><span>Staff size</span><span class="num" id="lyStaffVal"></span></div>
     <div class="cp-staffsizes" id="lyStaff"></div>
     <div class="ctl-head"><span>Distance between staves</span><span class="num" id="lyStaffGapVal"></span></div>

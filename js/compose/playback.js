@@ -482,7 +482,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
   }
   notes.sort((a, b) => a.t - b.t);
   marks.sort((a, b) => a.t - b.t);
-  return { notes, marks, total, order, barStart };
+  return { notes, marks, total, order, barStart, tAt };
 }
 function keyAlterAt(score, m, s) { return keyAlter(keyAt(score, m), s); }
 
@@ -491,10 +491,12 @@ function keyAlterAt(score, m, s) { return keyAlter(keyAt(score, m), s); }
 const envSpan = (n) => (n.env && n.env.length ? [n.vel, ...n.env.map(([, ev]) => n.vel * ev)] : null);
 export class ScorePlayer {
   constructor() { this.playing = false; this.onTick = null; this.onEnd = null; }
-  async play(score, { from = 0, pos = 0 } = {}) {
+  // (practice: speed 0.5–1.5 of the written tempo, the bars from–to again and again, a click on
+  // each beat, a bar of clicks before)
+  async play(score, { from = 0, pos = 0, speed = 1, loop = null, click = false, countIn = false } = {}) {
     this.stop();
     const tok = this._tok;
-    const tl = buildTimeline(score, { from });
+    const tl = practiceTimeline(score, buildTimeline(score, { from }), { speed, loop, click: click || countIn, from });
     this.tl = tl;
     // (from a note in the middle of the bar: the music before it in that bar is left out)
     let skip = 0;
@@ -510,13 +512,18 @@ export class ScorePlayer {
     sampler.prepare(tl.notes.slice(first + 400).flatMap((n) => [n.vel, ...(envSpan(n) || []).slice(1)].map((vel) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel }))));
     this.loading = false;
     const ctx = getCtx();
-    this.t0 = ctx.currentTime + 0.12 - skip;
+    // (a bar of clicks before the music: the first bar's beats, at its tempo)
+    const lead = countIn && tl.lead ? tl.lead.length * tl.lead.beat : 0;
+    this.t0 = ctx.currentTime + 0.12 - skip + lead;
     this.next = first; this.playing = true; wantAudio(true, 'compose');
+    this.clicks = [...(countIn && tl.lead ? tl.lead.map((c, i) => ({ t: skip - lead + i * tl.lead.beat, acc: i === 0 })) : []), ...(click ? (tl.clicks || []).filter((c) => c.t >= skip - 0.001) : [])];
+    this.nextClick = 0;
     const pump = async () => {
       if (!this.playing) return;
       // (iOS replaced the sound system meanwhile: playing stops here rather than going on silent)
       if (getCtx() !== ctx) { this.stop(); if (this.onEnd) this.onEnd(); return; }
       const now = ctx.currentTime - this.t0;
+      while (this.nextClick < this.clicks.length && this.clicks[this.nextClick].t < now + 0.3) { const c = this.clicks[this.nextClick++]; if (this.t0 + c.t >= ctx.currentTime - 0.02) clickAt(ctx, this.t0 + c.t, c.acc); }
       while (this.next < tl.notes.length && tl.notes[this.next].t < now + 0.6) {
         const n = tl.notes[this.next++];
         const ch = sampler.channels.get(n.part) || sampler.channel(n.part, n.sid, DEFAULT_MIX());
@@ -543,6 +550,50 @@ export class ScorePlayer {
   }
 }
 
+// A short wooden click, louder on the first beat of the bar.
+function clickAt(ctx, when, acc) {
+  try {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.value = acc ? 1760 : 1320;
+    g.gain.setValueAtTime(0.0001, when); g.gain.exponentialRampToValueAtTime(acc ? 0.55 : 0.32, when + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+    o.connect(g); g.connect(ctx.destination); o.start(when); o.stop(when + 0.06);
+  } catch {}
+}
+// The timeline made for practising: slower or faster, a passage over and over, the beats to click.
+export function practiceTimeline(score, tl, { speed = 1, loop = null, click = false, from = 0 } = {}) {
+  const k = speed > 0 ? 1 / speed : 1;
+  const beatsOf = (m) => { const time = timeAt(score, m), full = barTicks(time.slice(0, 2)); const compound = time[1] === 8 && time[0] % 3 === 0 && time[0] > 3; const beat = compound ? (WHOLE / 8) * 3 : WHOLE / time[1]; const out = []; for (let p = 0; p < barTicks(time); p += beat) out.push(p); return { out, beat, full }; };
+  let clicks = [];
+  if (click && tl.tAt) tl.order.forEach((m, i) => { for (const p of beatsOf(m).out) clicks.push({ t: tl.tAt(i, p), acc: p === 0 }); });
+  // (the count-in: as many beats as the first bar has, at its tempo)
+  let lead = null;
+  if (click && tl.order.length) { const m0 = tl.order[0], b = beatsOf(m0); const tp = tempoAt(score, m0); const beatSec = (60 / (tp.bpm || 96)) * ((b.beat / (WHOLE / (tp.beat || 4))) / (tp.dotted ? 1.5 : 1)); lead = Array.from({ length: Math.max(1, Math.round(b.full / b.beat)) }, () => 0); lead.beat = beatSec * k; }
+  if (k !== 1) {
+    for (const n of tl.notes) { n.t *= k; n.dur *= k; if (n.env) n.env = n.env.map(([et, ev]) => [et * k, ev]); }
+    for (const mk of tl.marks) { mk.t *= k; mk.dur *= k; }
+    for (const c of clicks) c.t *= k;
+    tl.total *= k;
+  }
+  if (loop && loop.to >= loop.from) {
+    // the passage, from the first time its first bar is played to the first time after its last
+    const i0 = tl.order.indexOf(loop.from), i1 = tl.order.findIndex((m, i) => i > i0 && m > loop.to);
+    if (i0 >= 0) {
+      const a = tl.tAt ? tl.tAt(i0, 0) * k : 0, b = i1 >= 0 && tl.tAt ? tl.tAt(i1, 0) * k : tl.total, len = b - a;
+      if (len > 0.2) {
+        const N = Math.max(2, Math.min(60, Math.ceil(1800 / len)));
+        const rep = (list, keep) => { const one = list.filter(keep); const out = []; for (let r = 0; r < N; r++) for (const x of one) out.push({ ...x, t: x.t + r * len, env: x.env ? x.env.map(([et, ev]) => [et + r * len, ev]) : x.env }); return out; };
+        // (a note held past the end of the passage stops there)
+        for (const n of tl.notes) if (n.t >= a - 0.001 && n.t < b - 0.001 && n.t + n.dur > b) n.dur = Math.max(0.05, b - n.t);
+        tl.notes = rep(tl.notes, (n) => n.t >= a - 0.001 && n.t < b - 0.001);
+        tl.marks = rep(tl.marks, (q) => q.t >= a - 0.001 && q.t < b - 0.001);
+        clicks = rep(clicks, (c) => c.t >= a - 0.001 && c.t < b - 0.001);
+        tl.total = a + N * len; tl.loop = { a, b, N };
+      }
+    }
+  }
+  tl.clicks = clicks; tl.lead = lead;
+  return tl;
+}
 export function applyScoreSound(smp, score) {
   const snd = score.sound || {};
   smp.setRoom(snd.room || 'hall');

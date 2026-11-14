@@ -27,6 +27,9 @@ export function toMusicXML(score0) {
   if (score.subtitle) w(`<movement-title>${esc(score.subtitle)}</movement-title>`);
   w('<identification>');
   if (score.composer) w(`<creator type="composer">${esc(score.composer)}</creator>`);
+  if (score.lyricist) w(`<creator type="lyricist">${esc(score.lyricist)}</creator>`);
+  if (score.arranger) w(`<creator type="arranger">${esc(score.arranger)}</creator>`);
+  if (score.rights) w(`<rights>${esc(score.rights)}</rights>`);
   w(`<encoding><software>Stand</software><encoding-date>${new Date().toISOString().slice(0, 10)}</encoding-date></encoding></identification>`);
   w('<part-list>');
   score.parts.forEach((p, i) => {
@@ -491,6 +494,7 @@ export function fromMusicXML(xmlText) {
   const txt = (el, sel) => { const e = sel ? q(el, sel) : el; return e ? e.textContent.trim() : ''; };
   const title = txt(doc, 'work > work-title') || txt(doc, 'movement-title') || txt(doc, 'credit-words') || 'Imported score';
   const composer = txt(doc, 'creator[type="composer"]');
+  const lyricist = txt(doc, 'creator[type="lyricist"]') || txt(doc, 'creator[type="poet"]'), arranger = txt(doc, 'creator[type="arranger"]'), rights = txt(doc, 'identification > rights');
   const partEls = [...doc.querySelectorAll('score-partwise > part')].filter((p) => p.querySelector(':scope > measure'));
   if (!partEls.length) throw new Error('There is no music in this file.');
   const listEls = Object.fromEntries([...doc.querySelectorAll('part-list > score-part')].map((sp) => [sp.getAttribute('id'), sp]));
@@ -501,6 +505,7 @@ export function fromMusicXML(xmlText) {
       else if (e.tagName === 'score-part') { const names = [...open.values()].filter((x) => x && x.trim()); if (names.length) groupOf[e.getAttribute('id')] = names[names.length - 1].trim(); } } }
   const score = newScore({ title, composer, insts: ['piano'], bars: 1 });
   score.parts = []; score.measures = [];
+  if (lyricist) score.lyricist = lyricist; if (arranger) score.arranger = /^arr/i.test(arranger) ? arranger : 'arr. ' + arranger; if (rights) score.rights = rights;
   const nMeasures = Math.max(...partEls.map((p) => p.querySelectorAll(':scope > measure').length));
   for (let m = 0; m < nMeasures; m++) score.measures.push({});
   // (which part states the time and the key of each measure: the first that does)

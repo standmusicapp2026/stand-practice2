@@ -307,7 +307,8 @@ function titleHeight(score, spMm, opts) {
   let h = 0;
   if (score.title) h += 13 / spMm;
   if (score.subtitle) h += 6 / spMm;
-  if (score.composer || opts.partIndex !== undefined) h += 7 / spMm;
+  if (score.composer || score.lyricist || opts.partIndex !== undefined) h += 7 / spMm;
+  if (score.arranger) h += 5 / spMm;
   return h ? h + 4 / spMm : 0;
 }
 
@@ -394,7 +395,12 @@ function drawTitle(ctx, lay) {
   if (s.subtitle) { y += 6 / sp; text(ctx, s.subtitle, lay.W / 2, y, 4.4 / sp, TEXT_FONT, '', 'center'); }
   y += 7 / sp;
   if (s.composer) text(ctx, s.composer, lay.W - lay.margin.r, y, 3.9 / sp, TEXT_FONT, '', 'right');
+  // (the part's name on the left of a part; the writer of the words there on a score)
   if (lay.partIndex !== undefined) text(ctx, s.parts[lay.partIndex].name, lay.margin.l, y, 4.2 / sp, TEXT_FONT, '600', 'left');
+  else if (s.lyricist) text(ctx, s.lyricist, lay.margin.l, y, 3.6 / sp, TEXT_FONT, 'italic', 'left');
+  if (s.arranger) { y += 5 / sp; text(ctx, s.arranger, lay.W - lay.margin.r, y, 3.6 / sp, TEXT_FONT, '', 'right'); }
+  // the copyright, small, at the foot of the first page
+  if (s.rights) text(ctx, s.rights, lay.W / 2, lay.H - lay.margin.b * 0.45, 2.8 / sp, TEXT_FONT, '', 'center');
 }
 
 // while a marking (articulation, ornament, dynamic) is drawn, where it lands is kept, so it can be tapped

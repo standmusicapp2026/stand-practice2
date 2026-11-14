@@ -28,7 +28,14 @@ const C = {
   tool: { dur: 4, dots: 0, rest: false, tup: false, tupN: 3, head: null, acc: null, chord: false },
   mode: 'write', finger: false, sel: new Set(), selBars: null, undo: [], redo: [],
   tab: 'notes', placing: null, hover: null, clip: null, saveT: 0,
+  practice: { speed: 1, loop: false, click: false, countIn: false },
 };
+// the practice settings of playing (Sound panel): shown, and kept for next time
+function syncPractice() {
+  const P = C.practice; if (!$('#mxSpeed')) return;
+  $('#mxSpeed').value = Math.round(P.speed * 100); $('#mxSpeedVal').textContent = Math.round(P.speed * 100) + '%';
+  $('#mxLoop').checked = !!P.loop; $('#mxClick').checked = !!P.click; $('#mxCountIn').checked = !!P.countIn;
+}
 const player = new ScorePlayer();
 export const composeState = C;
 
@@ -46,6 +53,7 @@ export function initCompose(deps) {
   if (composeEl) composeEl.addEventListener('click', () => D.workStarted && D.workStarted('compose'), { capture: true, once: true });
   wireTop(); buildTabs(); wirePalette(); wireInput(); wirePanels(); wireKeys();
   getSetting('composeClip', null).then((c) => { if (c) C.clip = c; });
+  getSetting('composePractice', null).then((p) => { if (p) C.practice = { ...C.practice, ...p }; syncPractice(); });
   getSetting('composeUI', null).then((u) => { if (u) { C.zoom = u.zoom || 1; if (u.pal) { C.palAnchor = u.pal.anchor || null; placePalette(u.pal.x, u.pal.y, !u.pal.anchor); } if (u.folded) $('#cpPal').classList.add('folded'); } });
 }
 export async function openComposition(id) {
@@ -2046,6 +2054,10 @@ function wireTop() {
   $('#cpPalUndo').addEventListener('click', (e) => { e.stopPropagation(); undo(); });
   $('#cpPalRedo').addEventListener('click', (e) => { e.stopPropagation(); redo(); });
   $('#cpPlay').addEventListener('click', () => togglePlay());
+  { const keep = () => { setSetting('composePractice', C.practice); syncPractice(); };
+    $('#mxSpeed').addEventListener('input', (e) => { C.practice.speed = +e.target.value / 100; keep(); });
+    $('#mxSpeed').addEventListener('change', () => { if (player.playing) { togglePlay(); togglePlay(); } });
+    for (const [id, key] of [['#mxLoop', 'loop'], ['#mxClick', 'click'], ['#mxCountIn', 'countIn']]) $(id).addEventListener('change', (e) => { C.practice[key] = e.target.checked; keep(); }); }
   $('#cpZoomIn').addEventListener('click', () => setZoom(C.zoom * 1.2));
   $('#cpZoomOut').addEventListener('click', () => setZoom(C.zoom / 1.2));
   $('#cpTitle').addEventListener('click', () => D.showPanel('cplayout'));
@@ -2090,8 +2102,12 @@ async function togglePlay(from) {
     const f = selEvents().slice().sort((a, b) => a.m - b.m || a.pos - b.pos)[0];
     if (f) { start = f.m; pos = f.pos || 0; }
   }
+  const P = C.practice, loop = P.loop && C.selBars ? { from: C.selBars.from, to: C.selBars.to } : null;
+  if (loop) { start = loop.from; pos = 0; }
+  if (P.speed !== 1 || loop) hint((P.speed !== 1 ? `At ${Math.round(P.speed * 100)}% of the tempo. ` : '') + (loop ? (loop.from === loop.to ? `Bar ${M.barNumber(C.score, loop.from)} again and again.` : `Bars ${M.barNumber(C.score, loop.from)}–${M.barNumber(C.score, loop.to)} again and again.`) : ''), 2600);
+  else if (P.loop && !C.selBars) hint('To play a passage again and again, select its bars first.', 2600);
   $('#cpPlay').classList.add('on'); $('#cpPlay').querySelector('span').textContent = 'Loading';
-  await player.play(C.score, { from: start, pos });
+  await player.play(C.score, { from: start, pos, speed: P.speed, loop, click: P.click, countIn: P.countIn });
   syncPlay();
 }
 function syncPlay() {
@@ -2184,26 +2200,102 @@ function wireKeys() {
     if (k === 'ArrowUp') { e.preventDefault(); if (e.metaKey || e.ctrlKey) moveNotes(7); else if (e.shiftKey) moveNotes(1); else moveSemis(1); return; }
     if (k === 'ArrowDown') { e.preventDefault(); if (e.metaKey || e.ctrlKey) moveNotes(-7); else if (e.shiftKey) moveNotes(-1); else moveSemis(-1); return; }
     const durKey = { 1: 64, 2: 32, 3: 16, 4: 8, 5: 4, 6: 2, 7: 1 }[k];   // the Sibelius keypad
-    if (durKey && durKey <= 64) { setDuration(durKey); return; }
+    if (durKey && durKey <= 64 && !e.altKey) { setDuration(durKey); return; }
     if (k === '.') { C.tool.dots = C.tool.dots ? 0 : 1; setDuration(C.tool.dur); return; }
     if ((k === 'j' || k === 'J') && !e.metaKey && !e.ctrlKey && C.sel.size) { e.preventDefault(); respell(); return; }
+    // the keys of the professional programs (Sibelius, Dorico, MuseScore)
+    if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'a') { e.preventDefault(); const all = M.allStaves(C.score); selectBars(all[0], all[all.length - 1], 0, C.score.measures.length - 1); relayout(); syncSelBar(); renderTab(); hint('The whole score is selected.', 1800); return; }
+    // ⌘⌥1–4 (or Ctrl⌥): write in voice 1 to 4
+    if ((e.metaKey || e.ctrlKey) && e.altKey && /^Digit[1-4]$/.test(e.code)) { e.preventDefault(); C.tool.voice = +e.code.slice(5); renderTab(); hint(`Voice ${C.tool.voice}.`, 1400); return; }
+    if (e.metaKey || e.ctrlKey) return;
+    // ⌥2–9: a note that interval above the selected one, added to its chord (⇧⌥: below)
+    if (e.altKey && /^Digit[2-9]$/.test(e.code) && C.sel.size) { e.preventDefault(); addInterval(+e.code.slice(5), e.shiftKey ? -1 : 1); return; }
+    if (k === 't' || k === 'T' || k === '+') { if (C.sel.size) { e.preventDefault(); setTie(); } return; }
+    if (k === '0') { e.preventDefault(); writeAfter(null); return; }
+    if ((k === 'r' || k === 'R') && (C.sel.size || C.selBars)) { e.preventDefault(); repeatSel(); return; }
+    if ((k === 'q' || k === 'Q' || k === 'w' || k === 'W') && C.sel.size) { e.preventDefault(); scaleDur(k.toLowerCase() === 'q' ? 2 : 0.5); return; }
+    if ((k === 'x' || k === 'X') && C.sel.size) { e.preventDefault(); flipStems(); return; }
+    // ⇧ and a letter: that note added to the chord of the selected one (above it)
+    if (e.shiftKey && /^[A-Ga-g]$/.test(k) && C.sel.size) { e.preventDefault(); addLetterToChord('cdefgab'.indexOf(k.toLowerCase())); return; }
     // letters write after the selected note
     const L = 'cdefgab'.indexOf(k.toLowerCase());
-    if (L >= 0 && !e.metaKey && !e.ctrlKey) {
-      const f = selEvents().pop(); if (!f) return;
-      const time = M.timeAt(C.score, f.m);
-      let m = f.m, pos = f.pos + M.ticksOf(f.ev, time);
-      if (pos >= M.barTicks(time)) { m++; pos = 0; if (m >= C.score.measures.length) edit(() => M.addBars(C.score, 1)); }
-      const ref = f.ev.notes && f.ev.notes.length ? f.ev.notes[0].s : M.CLEFS[M.clefAt(f.st, f.m)].bottom + 4;
-      // the nearest letter to the previous note
-      let s = Math.floor(ref / 7) * 7 + L; if (s - ref > 3) s -= 7; if (ref - s > 3) s += 7;
-      const n = { s, a: M.keyAlter(M.keyAt(C.score, m), s) };
-      let id = null;
-      edit(() => { const ev = { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [n] }; M.writeEvent(C.score, f.st, m, pos, ev); id = ev.id; });
-      C.sel.clear(); C.sel.add(id); relayout(); syncSelBar();
-      unlock(); sampler.preview(soundOf(f.part), M.midiOf(n.s, n.a), 0.6, 0.4, f.part.mix || undefined);
-    }
+    if (L >= 0 && !e.altKey) writeAfter(L);
   });
+}
+// A note (a letter, 0–6 from C) or a rest (null) written after the selected one, with the value
+// chosen in the palette; it becomes the selection, so typing goes on.
+function writeAfter(L) {
+  const f = selEvents().pop(); if (!f) { hint('Select a note first: what you type goes after it.'); return; }
+  const time = M.timeAt(C.score, f.m);
+  let m = f.m, pos = f.pos + M.ticksOf(f.ev, time);
+  if (pos >= M.barTicks(time)) { m++; pos = 0; if (m >= C.score.measures.length) edit(() => M.addBars(C.score, 1)); }
+  // (the last note written, looking back past rests, decides the octave)
+  let ref = null; { let q = { m: f.m, i: f.i, ev: f.ev }, guard = 0; while (q && guard++ < 64) { if (q.ev.notes && q.ev.notes.length) { ref = q.ev.notes[0].s; break; } q = M.prevEvent(C.score, f.st, q.m, q.i); } }
+  if (ref === null) ref = M.CLEFS[M.clefAt(f.st, f.m)].bottom + 4;
+  let n = null;
+  if (L !== null) { let s = Math.floor(ref / 7) * 7 + L; if (s - ref > 3) s -= 7; if (ref - s > 3) s += 7; n = { s, a: M.keyAlter(M.keyAt(C.score, m), s) }; }
+  let id = null;
+  edit(() => { const ev = n ? { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [n] } : { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots }; if (tupN()) ev.tup = tupObj(C.tool.dur); M.writeEvent(C.score, f.st, m, pos, ev); id = ev.id; });
+  C.sel.clear(); if (id) C.sel.add(id); relayout(); syncSelBar();
+  if (n) { unlock(); sampler.preview(soundOf(f.part), M.midiOf(n.s, n.a), 0.6, 0.4, f.part.mix || undefined); }
+}
+// a note added to the chord of the selected one: by its letter (the nearest above), or by an
+// interval above or below (a third: 3)
+function addLetterToChord(L, dir = 1) {
+  const evs = selEvents().filter((f) => f.ev.notes && f.ev.notes.length); if (!evs.length) { hint('Select a note to add to its chord.'); return; }
+  edit(() => { for (const f of evs) {
+    const top = Math.max(...f.ev.notes.map((x) => x.s));
+    let s = Math.floor(top / 7) * 7 + L; while (s <= top) s += 7;
+    if (!f.ev.notes.some((x) => x.s === s)) f.ev.notes.push({ s, a: M.keyAlter(M.keyAt(C.score, f.m), s) });
+    f.ev.notes.sort((a, b) => a.s - b.s);
+  } }, { keepSel: true });
+  const f = evs[evs.length - 1]; const nn = f.ev.notes; unlock(); sampler.preview(soundOf(f.part), M.midiOf(nn[nn.length - 1].s, nn[nn.length - 1].a), 0.6, 0.4, f.part.mix || undefined);
+}
+function addInterval(iv, dir) {
+  const evs = selEvents().filter((f) => f.ev.notes && f.ev.notes.length); if (!evs.length) return;
+  edit(() => { for (const f of evs) {
+    const from = dir > 0 ? Math.max(...f.ev.notes.map((x) => x.s)) : Math.min(...f.ev.notes.map((x) => x.s));
+    const s = from + dir * (iv - 1);
+    if (!f.ev.notes.some((x) => x.s === s)) f.ev.notes.push({ s, a: M.keyAlter(M.keyAt(C.score, f.m), s) });
+    f.ev.notes.sort((a, b) => a.s - b.s);
+  } }, { keepSel: true });
+  hint(`A ${['', '', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'octave', 'ninth'][iv]} ${dir > 0 ? 'above' : 'below'} added.`, 1500);
+}
+// R: the selection again, right after it
+function repeatSel() {
+  const keep = C.clip;
+  if (C.selBars) {
+    const { st, from, to } = C.selBars, sts = C.selBars.sts;
+    copySel(); const clip = C.clip; C.clip = keep;
+    const n = to - from + 1;
+    edit(() => { if (to + n >= C.score.measures.length) M.addBars(C.score, to + n - C.score.measures.length + 1); });
+    selectBars(sts[0], sts[sts.length - 1], to + 1, to + 1);
+    pasteClip(clip);
+    selectBars(sts[0], sts[sts.length - 1], to + 1, to + n); relayout(); syncSelBar();
+    void st; return;
+  }
+  const evs = selEvents(); if (!evs.length) return;
+  const a = evs[0], b = evs[evs.length - 1]; if (a.st !== b.st) return;
+  const clip = { events: collect(a.st, a.m, a.pos, b.m, b.pos), from: 'notes' };
+  const time = M.timeAt(C.score, b.m); let m = b.m, pos = b.pos + M.ticksOf(b.ev, time);
+  if (pos >= M.barTicks(time)) { m++; pos = 0; }
+  pasteClip(clip, { st: a.st, m, pos, quiet: true });
+  // (the copy is selected, so R again goes on)
+  const len = clip.events.reduce((x, e) => x + M.evTicks(e), 0);
+  C.sel.clear(); { let mm = m, p = pos, left = len; while (left > 0 && mm < C.score.measures.length) { const t = M.timeAt(C.score, mm); const bar = a.st.bars[mm]; let q = 0; for (const e of bar) { if (q >= p && left > 0) { C.sel.add(e.id); left -= M.ticksOf(e, t); } q += M.ticksOf(e, t); } mm++; p = 0; } }
+  relayout(); syncSelBar();
+}
+// Q halves the value of the selected notes, W doubles it
+function scaleDur(k) {
+  const evs = selEvents().filter((f) => !f.ev.full); if (!evs.length) return;
+  edit(() => {
+    for (const f of evs.slice().sort((a, b) => a.m - b.m || a.pos - b.pos)) {
+      const bar = f.st.bars[f.m] || [], i = bar.findIndex((e) => e.id === f.ev.id); if (i < 0) continue;
+      const t = f.ev.t * k; if (t < 1 || t > 64) continue;
+      const time = M.timeAt(C.score, f.m); let pos = 0; for (let q = 0; q < i; q++) pos += M.ticksOf(bar[q], time);
+      M.writeEvent(C.score, f.st, f.m, pos, { ...M.clone(bar[i]), t });
+    }
+  }, { keepSel: true });
 }
 
 // =====================================================================
@@ -2274,6 +2366,7 @@ function wirePanels() {
   $('#lyTitle').addEventListener('change', (e) => edit(() => { C.score.title = e.target.value.trim() || 'Untitled'; $('#cpTitle').textContent = C.score.title; }, { keepSel: true }));
   $('#lySubtitle').addEventListener('change', (e) => edit(() => { C.score.subtitle = e.target.value.trim(); }, { keepSel: true }));
   $('#lyComposer').addEventListener('change', (e) => edit(() => { C.score.composer = e.target.value.trim(); }, { keepSel: true }));
+  for (const [id, key] of [['#lyArranger', 'arranger'], ['#lyLyricist', 'lyricist'], ['#lyRights', 'rights']]) $(id).addEventListener('change', (e) => edit(() => { const v = e.target.value.trim(); if (v) C.score[key] = v; else delete C.score[key]; }, { keepSel: true }));
   // (kept while you type too, and when Compose closes: on the iPad the fields are not always told they were left)
   { let t = 0; for (const id of ['#lyTitle', '#lySubtitle', '#lyComposer']) $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(flushLayoutNames, 700); }); }
   $('#lyPage').addEventListener('change', (e) => edit(() => { C.score.layout.page = e.target.value; }, { keepSel: true }));
@@ -2568,7 +2661,7 @@ function renderMixer() {
 }
 function renderLayout() {
   if (!C.score) return;
-  C.lyFor = C.id; $('#lyTitle').value = C.score.title || ''; $('#lySubtitle').value = C.score.subtitle || ''; $('#lyComposer').value = C.score.composer || '';
+  C.lyFor = C.id; $('#lyTitle').value = C.score.title || ''; $('#lySubtitle').value = C.score.subtitle || ''; $('#lyComposer').value = C.score.composer || ''; $('#lyArranger').value = C.score.arranger || ''; $('#lyLyricist').value = C.score.lyricist || ''; $('#lyRights').value = C.score.rights || '';
   $('#lyPage').value = C.score.layout.page || 'A4'; $('#lyOrient').value = C.score.layout.landscape ? '1' : '0';
   $('#lyConcert').checked = C.score.layout.concert !== false; $('#lyHide').checked = !!C.score.layout.hideEmpty;
   const box = $('#lyStaff'); box.textContent = '';
