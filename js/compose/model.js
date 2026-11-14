@@ -166,6 +166,30 @@ export const restBar = (time) => [{ id: newId(), rest: true, full: true, t: 1, d
 // A part's instrument; a part may be pitched in another key than the instrument usually is (a
 // trumpet in C, a clarinet in A written as one in B♭ file): its own transposition then counts.
 export function instOf(part) { const base = INST[part.inst] || INST.piano; return part.tr ? { ...base, tr: part.tr } : base; }
+// A change of instrument in the middle of a part (flute to piccolo, a clarinet in B♭ to one in A):
+// part.instCh = { bar: instrument id } — from that bar on the part is that instrument (its
+// transposition, its sound); null back to the part's own.
+export function instAt(part, m) {
+  const ch = part && part.instCh; if (!ch) return instOf(part);
+  let best = -1; for (const k of Object.keys(ch)) { const b = +k; if (b <= m && b > best) best = b; }
+  if (best < 0 || !ch[best] || !INST[ch[best]]) return instOf(part);
+  return INST[ch[best]];
+}
+// where the instrument changes (bar numbers, in order)
+export function instChanges(part) { return part && part.instCh ? Object.keys(part.instCh).map(Number).sort((a, b) => a - b) : []; }
+export function setInstChange(score, pi, m, id) {
+  const part = score.parts[pi]; if (!part || m <= 0) return;
+  const ch = { ...(part.instCh || {}) };
+  if (!id) delete ch[m]; else ch[m] = id;
+  // (two changes in a row to the same instrument: the second is no change)
+  let prev = part.inst; for (const k of Object.keys(ch).map(Number).sort((a, b) => a - b)) { if (ch[k] === prev) delete ch[k]; else prev = ch[k]; }
+  if (Object.keys(ch).length) part.instCh = ch; else delete part.instCh;
+  // (the new instrument's clef, when the staff is in another one)
+  if (part.staves.length === 1 && id && INST[id]) {
+    const st = part.staves[0], want = INST[id].clefs[0];
+    if (clefAt(st, m) !== want) { st.clefs = st.clefs || {}; st.clefs[m] = want; }
+  }
+}
 export const allStaves = (score) => score.parts.flatMap((p) => p.staves);
 export function staffInfo(score) {
   const out = [];

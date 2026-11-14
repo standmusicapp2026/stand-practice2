@@ -327,7 +327,7 @@ function targetAt(clientX, clientY) {
   return { page: pa.i, staff: h.staff, meas: h.meas, t, p: clamp(h.p, -16, 26), x: pa.x, y: pa.y };
 }
 function noteFromTarget(tg) {
-  const st = tg.staff.st, inst = tg.staff.inst, m = tg.meas.m;
+  const st = tg.staff.st, inst = tgInst(tg), m = tg.meas.m;
   const clef = M.clefAtPos(C.score, st, m, tg.t || 0);
   if (inst.unpitched) return { s: M.CLEFS[clef].bottom + tg.p, a: 0, perc: inst.unpitched };
   const step = M.CLEFS[clef].bottom + tg.p;
@@ -338,15 +338,17 @@ function noteFromTarget(tg) {
   return concert ? n : M.toConcert(n, inst);
 }
 function midiOfNote(n, inst) { return inst.unpitched ? (n.perc || inst.unpitched) : M.midiOf(n.s, n.a); }
-function soundOf(part) { return part.sound || (INST[part.inst] || INST.piano).sound; }
+function soundOf(part, m) { if (part.instCh && m !== undefined) { const i = M.instAt(part, m); if (i.id !== part.inst) return i.sound; } return part.sound || (INST[part.inst] || INST.piano).sound; }
+// the instrument where the pen is (a part may change instrument from a bar on)
+function tgInst(tg) { const p = tg.staff.part; return p && p.instCh ? M.instAt(p, tg.meas.m) : tg.staff.inst; }
 let lastPreview = 0;
 function preview(tg) {
   const n = noteFromTarget(tg); const part = tg.staff.part;
-  const midi = midiOfNote(n, tg.staff.inst);
+  const midi = midiOfNote(n, tgInst(tg));
   if (midi === C.lastPreviewMidi && performance.now() - lastPreview < 400) return;
   C.lastPreviewMidi = midi; lastPreview = performance.now();
   unlock();
-  sampler.preview(soundOf(part), midi, 0.62, Math.min(0.9, (DUR_TICKS() / 480) * 0.45), part.mix || undefined);
+  sampler.preview(soundOf(part, tg.meas.m), midi, 0.62, Math.min(0.9, (DUR_TICKS() / 480) * 0.45), part.mix || undefined);
 }
 function drawHover() {
   C.pages.forEach(clearOver);
@@ -370,11 +372,11 @@ function drawHover() {
   } else {
     const n = noteFromTarget(tg);
     const concert = C.score.layout.concert !== false;
-    const shown = concert ? n : M.toWritten(n, tg.staff.inst);
-    const key = concert ? M.keyAt(C.score, tg.meas.m) : M.writtenKey(M.keyAt(C.score, tg.meas.m), tg.staff.inst);
+    const shown = concert ? n : M.toWritten(n, tgInst(tg));
+    const key = concert ? M.keyAt(C.score, tg.meas.m) : M.writtenKey(M.keyAt(C.score, tg.meas.m), tgInst(tg));
     const acc = shown.a !== M.keyAlter(key, shown.s) || C.tool.acc !== null ? shown.a : null;
     // (a drum or a cymbal: its note is always on the middle line, where it will be drawn)
-    const un = tg.staff.inst && tg.staff.inst.unpitched;
+    const un = tgInst(tg) && tgInst(tg).unpitched;
     drawGhost(g, x, tg.staff.y, un ? 4 : tg.p, C.tool.dur, un ? null : acc, color);
     if (C.placing && !un) {
       // the name of the note, so a slide up or down is easy to follow
@@ -676,7 +678,7 @@ function tapSelect(cx, cy, add) {
     if (!add) { C.sel.clear(); C.selBars = null; }
     if (C.sel.has(best.id) && add) C.sel.delete(best.id); else C.sel.add(best.id);
     const f = M.findEvent(C.score, best.id);
-    if (f && f.ev.notes && !f.ev.rest) { unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part), midiOfNote(n, f.inst), 0.55, 0.5, f.part.mix || undefined); }
+    if (f && f.ev.notes && !f.ev.rest) { unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part, f.m), midiOfNote(n, f.inst), 0.55, 0.5, f.part.mix || undefined); }
     relayout(); syncSelBar(); renderTab();
     return;
   }
@@ -770,7 +772,7 @@ function commitWrite(tg) {
   if (C.tool.acc !== null && !C.tool.accSticky) { C.tool.acc = null; renderTab(); }
   relayout(); syncSelBar();
   // a gentle word when the note is out of the instrument's range (it shows in red)
-  const inst = tg.staff.inst;
+  const inst = tgInst(tg);
   if (!C.tool.rest && inst && inst.range && !inst.unpitched) {
     const f = M.findEvent(C.score, newId);
     const md = f && f.ev.notes ? Math.min(...f.ev.notes.map((q) => M.midiOf(q.s, q.a))) : null, mx = f && f.ev.notes ? Math.max(...f.ev.notes.map((q) => M.midiOf(q.s, q.a))) : null;
@@ -830,7 +832,7 @@ function semiNote(n, d, key) {
 function moveSemis(d) {
   const evs = selNoteEvents(); if (!evs.length) { hint('Select notes or bars first.'); return; }
   edit(() => { for (const f of evs) { const key = M.keyAt(C.score, f.m); f.ev.notes = f.ev.notes.map((n) => (n.perc ? n : semiNote(n, d, key))).sort((a, b) => a.s - b.s); } }, { keepSel: true });
-  const f = evs[0]; unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part), midiOfNote(n, f.inst), 0.55, 0.45, f.part.mix || undefined);
+  const f = evs[0]; unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part, f.m), midiOfNote(n, f.inst), 0.55, 0.45, f.part.mix || undefined);
 }
 function moveNotes(steps, chromatic) {
   const evs = selNoteEvents(); if (!evs.length) { hint('Select notes or bars first.'); return; }
@@ -847,7 +849,7 @@ function moveNotes(steps, chromatic) {
       }).sort((a, b) => a.s - b.s);
     }
   }, { keepSel: true });
-  const f = evs[0]; unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part), midiOfNote(n, f.inst), 0.55, 0.45, f.part.mix || undefined);
+  const f = evs[0]; unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part, f.m), midiOfNote(n, f.inst), 0.55, 0.45, f.part.mix || undefined);
 }
 function setAcc(a) {
   const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest);
@@ -1578,13 +1580,13 @@ function graceStep(d) {
   const evs = selEvents().filter((f) => f.ev.grace);
   if (!evs.length) { hint('Select a note that has a grace note.'); return; }
   edit(() => { for (const f of evs) { const g = f.ev.grace; g.s += d; g.a = M.keyAlter(M.keyAt(C.score, f.m), g.s); delete g.acc; g.dir = g.s >= Math.max(...f.ev.notes.map((n) => n.s)) ? 1 : -1; } }, { keepSel: true });
-  const f = evs[0]; unlock(); sampler.preview(soundOf(f.part), M.midiOf(f.ev.grace.s, f.ev.grace.a || 0), 0.55, 0.3, f.part.mix || undefined);
+  const f = evs[0]; unlock(); sampler.preview(soundOf(f.part, f.m), M.midiOf(f.ev.grace.s, f.ev.grace.a || 0), 0.55, 0.3, f.part.mix || undefined);
 }
 function graceAcc(a) {
   const evs = selEvents().filter((f) => f.ev.grace);
   if (!evs.length) { hint('Select a note that has a grace note.'); return; }
   edit(() => { for (const f of evs) { const g = f.ev.grace; if (g.acc === a) { delete g.acc; g.a = M.keyAlter(M.keyAt(C.score, f.m), g.s); } else { g.a = a; g.acc = a; } } }, { keepSel: true });
-  const f = evs[0]; unlock(); sampler.preview(soundOf(f.part), M.midiOf(f.ev.grace.s, f.ev.grace.a || 0), 0.55, 0.3, f.part.mix || undefined);
+  const f = evs[0]; unlock(); sampler.preview(soundOf(f.part, f.m), M.midiOf(f.ev.grace.s, f.ev.grace.a || 0), 0.55, 0.3, f.part.mix || undefined);
 }
 // Note heads: for the whole chord, or (harmonics) only its top note.
 // Cue notes (small, not played: another part's music to come in by) and small notes (played)
@@ -2040,6 +2042,28 @@ function renderTab() {
       sel.addEventListener('change', () => { const v = +sel.value; edit(() => M.setPickup(C.score, v)); hint(v ? 'The first bar is now a pickup bar; the bar after it is bar 1.' : 'The first bar is a whole bar again.', 2200); });
       const row = el('div', 'cp-row'); row.append(sel); body.append(row);
     }
+    // a change of instrument from this bar (one player: flute to piccolo, clarinet in B♭ to A)
+    {
+      const st0 = C.selBars ? C.selBars.st : (selEvents()[0] || {}).st;
+      const pi = st0 ? C.score.parts.findIndex((p) => p.staves.includes(st0.base || st0)) : -1;
+      const part = pi >= 0 ? C.score.parts[pi] : null;
+      if (part && part.staves.length === 1 && m !== null && m > 0) {
+        const base = INST[part.inst] || INST.piano, now = M.instAt(part, m), here = part.instCh && part.instCh[m] !== undefined;
+        lab('Instrument from bar ' + (m + 1));
+        const sel = el('select', 'cp-select'); sel.setAttribute('aria-label', 'Instrument from this bar');
+        const add = (v, l, on) => { const o = el('option', '', l); o.value = v; if (on) o.selected = true; sel.append(o); };
+        add('', 'No change here', !here);
+        const ok = INSTRUMENTS.filter((i) => !i.brace && (i.clefs || []).length === 1 && !!i.unpitched === !!base.unpitched);
+        const same = ok.filter((i) => i.fam === base.fam), other = ok.filter((i) => i.fam !== base.fam);
+        for (const i of [...same, ...other]) add(i.id, i.name, here && now.id === i.id);
+        sel.addEventListener('change', () => {
+          const v = sel.value || null;
+          edit(() => M.setInstChange(C.score, pi, m, v), { keepSel: true });
+          hint(v ? `From bar ${m + 1} the part is played on the ${INST[v].name.toLowerCase()}: its transposition and its sound.` : 'No change of instrument here.');
+        });
+        const row = el('div', 'cp-row'); row.append(sel); body.append(row);
+      }
+    }
     lab('Breaks after bar ' + (m === null ? '…' : m + 1));
     const bk = grid('three');
     const setBrk = (kind) => { if (m === null) { hint('Select a bar first.'); return; } edit(() => { const q = C.score.measures[m]; if (q.brk === kind) delete q.brk; else q.brk = kind; }, { keepSel: true }); hint(C.score.measures[m].brk ? (kind === 'page' ? 'The next page starts after this bar.' : 'The next line starts after this bar.') : 'Break taken away.', 1800); };
@@ -2224,7 +2248,7 @@ async function wireMidi() {
     const hook = () => { for (const inp of acc.inputs.values()) inp.onmidimessage = (e) => {
       const [st, note, vel] = e.data; const cmd = st & 0xf0;
       if (cmd === 0x90 && vel > 0) {
-        try { unlock(); const f = selEvents()[0]; sampler.preview(f ? soundOf(f.part) : 'piano', note, Math.min(1, vel / 110), 0.5); } catch {}
+        try { unlock(); const f = selEvents()[0]; sampler.preview(f ? soundOf(f.part, f.m) : 'piano', note, Math.min(1, vel / 110), 0.5); } catch {}
         MIDI_IN.chord.push(note); clearTimeout(MIDI_IN.timer);
         MIDI_IN.timer = setTimeout(() => { const ns = MIDI_IN.chord; MIDI_IN.chord = []; midiStep(ns); }, 70);
       }
@@ -2295,7 +2319,7 @@ function writeAfter(L) {
   let id = null;
   edit(() => { const ev = n ? { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [n] } : { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots }; M.writeEvent(C.score, f.st, m, pos, ev); id = ev.id; });
   C.sel.clear(); if (id) C.sel.add(id); relayout(); syncSelBar();
-  if (n) { unlock(); sampler.preview(soundOf(f.part), M.midiOf(n.s, n.a), 0.6, 0.4, f.part.mix || undefined); }
+  if (n) { unlock(); sampler.preview(soundOf(f.part, f.m), M.midiOf(n.s, n.a), 0.6, 0.4, f.part.mix || undefined); }
 }
 // a note added to the chord of the selected one: by its letter (the nearest above), or by an
 // interval above or below (a third: 3)
@@ -2307,7 +2331,7 @@ function addLetterToChord(L, dir = 1) {
     if (!f.ev.notes.some((x) => x.s === s)) f.ev.notes.push({ s, a: M.keyAlter(M.keyAt(C.score, f.m), s) });
     f.ev.notes.sort((a, b) => a.s - b.s);
   } }, { keepSel: true });
-  const f = evs[evs.length - 1]; const nn = f.ev.notes; unlock(); sampler.preview(soundOf(f.part), M.midiOf(nn[nn.length - 1].s, nn[nn.length - 1].a), 0.6, 0.4, f.part.mix || undefined);
+  const f = evs[evs.length - 1]; const nn = f.ev.notes; unlock(); sampler.preview(soundOf(f.part, f.m), M.midiOf(nn[nn.length - 1].s, nn[nn.length - 1].a), 0.6, 0.4, f.part.mix || undefined);
 }
 function addInterval(iv, dir) {
   const evs = selEvents().filter((f) => f.ev.notes && f.ev.notes.length); if (!evs.length) return;

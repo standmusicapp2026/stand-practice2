@@ -1,6 +1,6 @@
 // Playing a score with the sampled instruments: tempo changes, repeats, ties, dynamics and
 // hairpins, articulations, fermatas and a light human touch. Also renders the score to audio.
-import { WHOLE, barTicks, timeAt, tempoAt, ticksOf, midiOf, staffInfo, keyAlter, keyAt, voiceView } from './model.js';
+import { WHOLE, barTicks, timeAt, tempoAt, ticksOf, midiOf, staffInfo, keyAlter, keyAt, voiceView, instAt, instChanges } from './model.js';
 import { INST } from './instruments.js';
 import { sampler, Sampler, DEFAULT_MIX, realSet } from '../sampler.js';
 import { getCtx, wantAudio } from '../audio.js';
@@ -207,13 +207,22 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       AUTO_PED.set(part.id, segs);
     }
   }
-  for (const { st, part, inst, si } of info) {
-    const sid = part.sound || inst.sound;
+  // (a part that changes instrument plays each stretch with that instrument's sound)
+  const runs = [];
+  for (const x of info) {
+    const chs = instChanges(x.part);
+    if (!chs.length) { runs.push(x); continue; }
+    const bounds = [0, ...chs.filter((b) => b > 0)];
+    bounds.forEach((b, i) => { const e = i + 1 < bounds.length ? bounds[i + 1] : Infinity; const ia = instAt(x.part, b); runs.push({ ...x, inst: ia, only: [b, e], own: ia.id === x.part.inst }); });
+  }
+  for (const { st, part, inst, si, only, own } of runs) {
+    const sid = (own !== false && part.sound) || inst.sound;
     const sustained = SUSTAIN.test(sid);
     const keyed = !sustained;
     // ---- first pass: every event with its time, velocity and phrase context
     const flat = [];
     order.forEach((m, k) => {
+      if (only && (m < only[0] || m >= only[1])) return;
       const time = timeAt(score, m);
       let p = 0;
       for (const ev of st.bars[m] || []) {

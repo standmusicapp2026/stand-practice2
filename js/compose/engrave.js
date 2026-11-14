@@ -5,7 +5,7 @@
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
 import { voiceView, hasVoice2, hasVoice, VOICES, voiceKey,
-  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf,
+  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf, instAt,
 } from './model.js';
 
 const LYR_LINE = 2.6;   // from one verse to the next, in staff spaces
@@ -73,6 +73,8 @@ const space = (ticks) => 1.3 + 1.65 * Math.log2(1 + (ticks / (WHOLE / 4)) * 2.2)
 let HEAD_W = 1.18, STEM_LEN = 3.5, GSZ = 4, BEAM_K = 1; const STEM_T = 0.12;
 // cue notes and small notes: the same places, drawn smaller (a cue three quarters of the size, as printed parts have)
 const CUE_K = 0.72;
+// the instrument a staff is in a bar (a part may change instrument)
+function instOfS(s, m) { return s.part && s.part.instCh ? instAt(s.part, m) : s.inst; }
 // how many lines a staff has: one for a drum or a cymbal on its own (st.lines, chosen on the staff, wins)
 export function linesOf(s) { return (s.st && (s.st.base || s.st).lines) || (s.inst && s.inst.lines) || 5; }
 function sized(ev) { const k = ev && (ev.cue || ev.small) ? CUE_K : 1; HEAD_W = 1.18 * k; STEM_LEN = 3.5 * k; GSZ = 4 * k; BEAM_K = k; }
@@ -172,7 +174,9 @@ export function layoutScore(score, opts = {}) {
     const keyChange = m > 0 && ms.key !== undefined && ms.key !== null && ms.key !== prevKey;
     const timeChange = m > 0 && !!ms.time && !ms.timeHide;
     const clefChange = m > 0 && info.some((s) => clefAt(s.st, m) !== clefEnd(s.st, m - 1));
-    cols.push({ m, time, total, segs, ideal, allFull, keyChange, timeChange, clefChange, hasAcc, ms });
+    // (a new instrument that transposes otherwise shows its key in the bar)
+    const ikw = m > 0 && !keyChange && !concert ? Math.max(0, ...info.filter((s) => s.part.instCh && s.part.instCh[m] !== undefined).map((s) => { const k = keyAt(score, m), a = writtenKey(k, instOfS(s, m - 1)), b = writtenKey(k, instOfS(s, m)); return a === b ? 0 : keyWidth(b || a) + 1; })) : 0;
+    cols.push({ m, time, total, segs, ideal, allFull, keyChange, timeChange, clefChange, hasAcc, ms, ikw });
   }
   // ---- multi-bar rests (parts): runs of empty bars with nothing else going on
   const groups = [];
@@ -203,13 +207,13 @@ export function layoutScore(score, opts = {}) {
     const m0 = groups[gi].m;
     // the start of each line: clef, key, time
     const key0 = keyAt(score, m0);
-    const keyW = Math.max(...info.map((s) => keyWidth(concert ? key0 : writtenKey(key0, s.inst))), 0);
+    const keyW = Math.max(...info.map((s) => keyWidth(concert ? key0 : writtenKey(key0, instOfS(s, m0)))), 0);
     const head = 1 + 3.2 + keyW + ((first && !score.measures[0].timeHide) || cols[m0].timeChange ? timeWidth(cols[m0].time) : 0) + 0.6;
     let used = head, list = [];
     while (gi < groups.length) {
       const g = groups[gi];
       const c = cols[g.m];
-      const w = g.multi ? 14 : c.ideal + (c.ms.start === 'repeat' ? 2 : 0) + (c.clefChange && list.length ? 2.8 : 0) + (c.keyChange && list.length ? keyWidth(c.ms.key) + 1 : 0) + (c.timeChange && list.length ? timeWidth(c.time) : 0);
+      const w = g.multi ? 14 : c.ideal + (c.ms.start === 'repeat' ? 2 : 0) + (c.clefChange && list.length ? 2.8 : 0) + (c.keyChange && list.length ? keyWidth(c.ms.key) + 1 : 0) + (c.ikw && list.length ? c.ikw : 0) + (c.timeChange && list.length ? timeWidth(c.time) : 0);
       if (list.length && used + w * 0.86 > avail) break;
       list.push({ ...g, w });
       used += w;
@@ -354,7 +358,7 @@ function staffExtent(score, s, sy, concert) {
       if (ev.lyric || ev.lyricV) { hasLyr = true; nVerse = Math.max(nVerse, versesOf(ev)); }
       if (!ev.notes) continue;
       for (const n0 of ev.notes) {
-        const n = concert ? n0 : toWritten(n0, s.inst);
+        const n = concert ? n0 : toWritten(n0, instOfS(s, m));
         const p = n.s - ott - CLEFS[clef].bottom;
         if (p > 8) above = Math.max(above, (p - 8) / 2 + (p >= 6 ? 0.5 : STEM_LEN));
         if (p < 0) below = Math.max(below, -p / 2 + (p <= 2 ? 0.6 : STEM_LEN));
@@ -364,7 +368,7 @@ function staffExtent(score, s, sy, concert) {
       }
       // a tuplet's number sits beyond the stems (above for stems up, below for stems down)
       if (ev.tup) {
-        const ps = ev.notes.map((n0) => (concert ? n0 : toWritten(n0, s.inst)).s - ott - CLEFS[clef].bottom);
+        const ps = ev.notes.map((n0) => (concert ? n0 : toWritten(n0, instOfS(s, m))).s - ott - CLEFS[clef].bottom);
         const hi = Math.max(...ps), lo = Math.min(...ps);
         if ((hi + lo) / 2 < 4) above = Math.max(above, hi / 2 + STEM_LEN - 4 + 2.6);
         else below = Math.max(below, STEM_LEN - lo / 2 + 2.6);
@@ -384,6 +388,7 @@ function staffExtent(score, s, sy, concert) {
     if (sp.kind === 'slur') { above = Math.max(above + 1.0, 1.4); below = Math.max(below + 0.8, 1.2); }
   }
   for (let m = mA; m <= mB; m++) { const ms = score.measures[m]; if (ms && (ms.mark || ms.jump)) above = Math.max(above, 3.2); }
+  if (!s.si && s.part && s.part.instCh) for (let m = mA; m <= mB; m++) if (s.part.instCh[m] !== undefined) above = Math.max(above, 3.0);
   // lyrics run on one line for the whole system, under the lowest note (and the dynamics)
   let lyr = 0;
   if (hasLyr) { lyr = Math.max(4.2, notesBelow + 2.6, hasDyn ? Math.max(3.0, notesBelow + 2.9) + 2.6 : 0); below = Math.max(below, lyr + 1.2 + (Math.max(1, nVerse) - 1) * LYR_LINE); }
@@ -463,7 +468,8 @@ function drawSystem(ctx, lay, sys, hit, opts) {
       if (done.has(s.pi)) continue; done.add(s.pi);
       const ps = staves.filter((x) => x.pi === s.pi);
       const yy = (ps[0].y + ps[ps.length - 1].y + 4) / 2 + 0.55;
-      text(ctx, sys.first ? s.part.name : s.part.abbr, nx - (ps[0].inst.brace && ps.length > 1 ? 1.2 : 0), yy, 1.55, TEXT_FONT, '', 'right');
+      const ci = s.part.instCh ? instAt(s.part, sys.measures[0].m) : null, chg = ci && ci.id !== s.part.inst;
+      text(ctx, chg ? (sys.first ? ci.name : ci.abbr) : sys.first ? s.part.name : s.part.abbr, nx - (ps[0].inst.brace && ps.length > 1 ? 1.2 : 0), yy, 1.55, TEXT_FONT, '', 'right');
     }
   }
   // bar number at the start of each line (not the first)
@@ -475,12 +481,12 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   const key0 = keyAt(score, m0), time0 = timeAt(score, m0);
   // (a time signature kept out of sight: music written with none, or one the file hides)
   const showTime = (sys.first && !score.measures[0].timeHide) || (score.measures[m0].time && !score.measures[m0].timeHide);
-  const maxKW = Math.max(0, ...staves.map((q) => keyWidth(lay.concert ? key0 : writtenKey(key0, q.inst))));
+  const maxKW = Math.max(0, ...staves.map((q) => keyWidth(lay.concert ? key0 : writtenKey(key0, instOfS(q, m0)))));
   for (const s of staves) {
     const clef = clefAt(s.st, m0);
     CUR_MARK = { id: s.st.id + '@' + m0, kind: 'clef', name: clef, m: m0, st: s.st.id };
     drawClef(ctx, clef, x0 + 1, s.y); if (clef === 'perc') hitBox(CUR_MARK, x0 + 0.6, x0 + 2.2, s.y + 0.6, s.y + 3.4);
-    const k = lay.concert ? key0 : writtenKey(key0, s.inst);
+    const k = lay.concert ? key0 : writtenKey(key0, instOfS(s, m0));
     CUR_MARK = k ? { id: 'key' + m0, kind: 'key', name: String(key0), m: m0 } : null;
     drawKey(ctx, k, clef, x0 + 4.4, s.y);
     CUR_MARK = showTime ? { id: 'time' + m0, kind: 'time', name: time0.join('/'), m: m0 } : null;
@@ -860,11 +866,24 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
       for (const s of sys.staves) {
         const clef = clefAt(s.st, m);
         // cancel the old key with naturals when going to C
-        if (key === 0) keyPositions(lay.concert ? prevKey : writtenKey(prevKey, s.inst), clef).forEach((kp, i) => glyph(ctx, GL.acc[0], cx + 0.6 + i * 1.0, yOf(s.y, kp.p)));
-        else drawKey(ctx, lay.concert ? key : writtenKey(key, s.inst), clef, cx + 0.6, s.y);
+        if (key === 0) keyPositions(lay.concert ? prevKey : writtenKey(prevKey, instOfS(s, m - 1)), clef).forEach((kp, i) => glyph(ctx, GL.acc[0], cx + 0.6 + i * 1.0, yOf(s.y, kp.p)));
+        else drawKey(ctx, lay.concert ? key : writtenKey(key, instOfS(s, m)), clef, cx + 0.6, s.y);
       }
       CUR_MARK = null;
       cx += keyWidth(key || prevKey) + 1;
+    }
+    else if (m > 0 && !lay.concert && sys.staves.some((s) => s.part && s.part.instCh && s.part.instCh[m] !== undefined)) {
+      // a new instrument that transposes otherwise: its key, written, on its staff
+      let w = 0;
+      for (const s of sys.staves) {
+        if (!(s.part && s.part.instCh && s.part.instCh[m] !== undefined)) continue;
+        const a0 = writtenKey(key, instOfS(s, m - 1)), b0 = writtenKey(key, instOfS(s, m)); if (a0 === b0) continue;
+        const clef = clefAt(s.st, m);
+        if (b0 === 0) keyPositions(a0, clef).forEach((kp, i) => glyph(ctx, GL.acc[0], cx + 0.6 + i * 1.0, yOf(s.y, kp.p)));
+        else drawKey(ctx, b0, clef, cx + 0.6, s.y);
+        w = Math.max(w, keyWidth(b0 || a0) + 1);
+      }
+      cx += w;
     }
     if (ms.time && !ms.timeHide) { CUR_MARK = { id: 'time' + m, kind: 'time', name: ms.time.join('/'), m }; for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.y, ms.timeSym); CUR_MARK = null; cx += timeWidth(ms.time); }
   }
@@ -970,6 +989,12 @@ function drawTempo(ctx, tempo, x, y) {
 // One bar of one staff
 // ---------------------------------------------------------------------
 function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
+  const sI = instOfS(s, m);   // (the instrument in this bar: it may change in the part)
+  // (where the part changes instrument: its name over the staff, as "Piccolo")
+  if (!s.si && s.part && s.part.instCh && s.part.instCh[m] !== undefined && hm) {
+    const nm = s.part.instCh[m] && s.part.instCh[m] !== s.part.inst ? sI.name : s.part.name;
+    CUR_MARK = null; text(ctx, nm, hm.cx0, s.y - 2.0, 1.7, TEXT_FONT, 'italic');
+  }
   GRACE_K = Math.min(1, (mm && mm.k) || 1);
   const score = lay.score;
   const bar = s.st.bars[m] || [];
@@ -977,7 +1002,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   let bottom = CLEFS[clef].bottom;
   // (a clef change in the middle of the bar, before an event: from there on, in the voice that has it)
   let curClef = clef;
-  const key = lay.concert ? keyAt(score, m) : writtenKey(keyAt(score, m), s.inst);
+  const key = lay.concert ? keyAt(score, m) : writtenKey(keyAt(score, m), sI);
   const sel = opts.selection || new Set();
   const selBars = opts.selBars;
   // a captured bar to check
@@ -1004,7 +1029,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     const len = ticksOf(ev, time);
     const ott = ottavaAt(score, s.st.id, m, p);
     const x = ev.full ? (hm.cx0 + mm.x1) / 2 - 0.9 : xs.get(p) ?? hm.cx0;
-    const e = { ev, pos: p, len, x, notes: [], unpitched: !!(s.inst && s.inst.xhead) };
+    const e = { ev, pos: p, len, x, notes: [], unpitched: !!(sI && sI.xhead) };
     if (ev.clef && ev.clef !== curClef && CLEFS[ev.clef]) {
       curClef = ev.clef; bottom = CLEFS[ev.clef].bottom;
       const accW = ev.notes && ev.notes.some((n) => n.a) ? 1.1 : 0;
@@ -1012,8 +1037,8 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     }
     if (ev.notes) {
       const ns = ev.notes.map((n0) => {
-        const n = lay.concert ? n0 : toWritten(n0, s.inst);
-        return { ...n, p: s.inst.unpitched ? 4 : n.s - bottom - ott, src: n0 };
+        const n = lay.concert ? n0 : toWritten(n0, sI);
+        return { ...n, p: sI.unpitched ? 4 : n.s - bottom - ott, src: n0 };
       }).sort((a, b) => a.p - b.p);
       e.notes = ns;
     }
@@ -1033,7 +1058,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   // stems and beams
   const groups = beamGroups(evs, time);
   // (drums and cymbals: stems up, as percussion is written)
-  const percUp = !!(s.inst && s.inst.unpitched);
+  const percUp = !!(sI && sI.unpitched);
   for (const e of evs) if (e.notes.length) {
     const avg = (e.notes[0].p + e.notes[e.notes.length - 1].p) / 2;
     e.up = e.ev.stem ? e.ev.stem === 'up' : percUp || avg < 4;
@@ -1067,7 +1092,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     if (e.ev.rest) drawRest(ctx, e, s.y + (e.restDy || 0) / 2 + (linesOf(s) === 1 && (e.ev.full || e.ev.t === 1) ? 1 : 0), time);
     else {
       // notes the instrument cannot play are shown in red while writing (never in print)
-      if (opts.ranges && s.inst && s.inst.range && !s.inst.unpitched) { const [lo, hi] = s.inst.range; e.outOf = new Set(e.notes.filter((n) => { const md = midiOf(n.src.s, n.src.a); return md < lo || md > hi; }).map((n) => n)); }
+      if (opts.ranges && sI && sI.range && !sI.unpitched) { const [lo, hi] = sI.range; e.outOf = new Set(e.notes.filter((n) => { const md = midiOf(n.src.s, n.src.a); return md < lo || md > hi; }).map((n) => n)); }
       drawChord(ctx, e, s.y, accFor);
     }
     sized(null);

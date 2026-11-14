@@ -41,10 +41,14 @@ export function toMusicXML(score0) {
   });
   w('</part-list>');
   score.parts.forEach((p, pi) => {
-    const inst = M0.instOf(p);
+    const inst0 = M0.instOf(p);
     w(`<part id="P${pi + 1}">`);
     for (let m = 0; m < score.measures.length; m++) {
       const ms = score.measures[m];
+      // (the instrument in this bar: a part may change instrument; from there on its own transposition)
+      const inst = p.instCh ? M0.instAt(p, m) : inst0, chHere = !!(p.instCh && m > 0 && p.instCh[m] !== undefined);
+      const prevI = chHere ? M0.instAt(p, m - 1) : inst;
+      const trDiff = chHere && ((prevI.tr || {}).steps !== (inst.tr || {}).steps || (prevI.tr || {}).semis !== (inst.tr || {}).semis);
       const time = timeAt(score, m);
       const short = (m === 0 && M0.pickupOf(score)) || (ms.len > 0 && ms.len < (time[0] * WHOLE) / time[1]);
       w(`<measure number="${M0.barNumber(score, m)}"${short ? ' implicit="yes"' : ''}>`);
@@ -52,7 +56,7 @@ export function toMusicXML(score0) {
       // attributes: at the start and where things change
       const attrs = [];
       if (m === 0) attrs.push(`<divisions>${WHOLE / 4}</divisions>`);
-      if (m === 0 || (ms.key !== undefined && ms.key !== null)) attrs.push(`<key><fifths>${writtenKey(keyAt(score, m), inst)}</fifths></key>`);
+      if (m === 0 || (ms.key !== undefined && ms.key !== null) || (trDiff && writtenKey(keyAt(score, m), prevI) !== writtenKey(keyAt(score, m), inst))) attrs.push(`<key><fifths>${writtenKey(keyAt(score, m), inst)}</fifths></key>`);
       if (m === 0 || ms.time) attrs.push(`<time${ms.timeSym ? ` symbol="${ms.timeSym}"` : ''}${ms.timeHide ? ' print-object="no"' : ''}><beats>${time[0]}</beats><beat-type>${time[1]}</beat-type></time>`);
       if (m === 0 && p.staves.length > 1) attrs.push(`<staves>${p.staves.length}</staves>`);
       p.staves.forEach((st, si) => {
@@ -63,8 +67,10 @@ export function toMusicXML(score0) {
         }
       });
       if (m === 0) p.staves.forEach((st, si) => { const nl = st.lines || inst.lines || 5; if (nl !== 5) attrs.push(`<staff-details${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><staff-lines>${nl}</staff-lines></staff-details>`); });
+      if (trDiff) attrs.push(`<transpose><diatonic>${(inst.tr || {}).steps || 0}</diatonic><chromatic>${(inst.tr || {}).semis || 0}</chromatic></transpose>`);
       if (m === 0 && inst.tr && (inst.tr.semis || inst.tr.steps)) attrs.push(`<transpose><diatonic>${inst.tr.steps}</diatonic><chromatic>${inst.tr.semis}</chromatic></transpose>`);
       if (attrs.length) w(`<attributes>${attrs.join('')}</attributes>`);
+      if (chHere) w(`<direction placement="above"><direction-type><words font-style="italic">${esc(p.instCh[m] ? inst.name : p.name)}</words></direction-type><sound><midi-instrument id="P${pi + 1}-I1"><midi-program>${GM[inst.sound] || 1}</midi-program></midi-instrument></sound></direction>`);
       if (ms.tempo && pi === 0) {
         const unit = ms.tempo.beat === 2 ? 'half' : ms.tempo.beat === 8 ? 'eighth' : 'quarter';
         w(`<direction placement="above"><direction-type>${ms.tempo.text ? `<words font-weight="bold">${esc(ms.tempo.text)}</words></direction-type><direction-type>` : ''}<metronome><beat-unit>${unit}</beat-unit>${ms.tempo.dotted ? '<beat-unit-dot/>' : ''}<per-minute>${ms.tempo.bpm}</per-minute></metronome></direction-type><sound tempo="${Math.round(ms.tempo.bpm * (4 / (ms.tempo.beat || 4)) * (ms.tempo.dotted ? 1.5 : 1))}"/></direction>`);
