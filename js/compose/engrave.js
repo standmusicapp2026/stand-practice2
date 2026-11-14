@@ -1234,6 +1234,25 @@ function beamGroups(evs, time) {
   return groups;
 }
 
+// The beams of one bar as drawn, for MusicXML: for each beamed note, its state at each beam level
+// (1: eighths, 2: sixteenths…): begin, continue, end, or a hook on its own
+export function beamPlan(bar, time) {
+  let p = 0; const evs = bar.map((ev) => { const e = { ev, pos: p, notes: ev.notes && !ev.rest ? ev.notes : [] }; p += ticksOf(ev, time); return e; });
+  const out = new Map();
+  for (const g of beamGroups(evs, time)) {
+    const lv = (e) => Math.max(1, Math.round(Math.log2(Math.min(128, e.ev.t || 8) / 4)));
+    g.forEach((e, i) => {
+      const L = lv(e), st = [];
+      for (let l = 1; l <= L; l++) {
+        if (l === 1) { st.push(i === 0 ? 'begin' : i === g.length - 1 ? 'end' : 'continue'); continue; }
+        const pv = i > 0 && lv(g[i - 1]) >= l, nx = i < g.length - 1 && lv(g[i + 1]) >= l;
+        st.push(pv && nx ? 'continue' : pv ? 'end' : nx ? 'begin' : i === 0 ? 'forward hook' : 'backward hook');
+      }
+      out.set(e.ev, st);
+    });
+  }
+  return out;
+}
 function headGlyph(ev, unpitched, head) {
   const k = ev.t === 1 ? 0 : ev.t === 2 ? 1 : 2;
   if (head && GL.heads[head]) return GL.heads[head][k];

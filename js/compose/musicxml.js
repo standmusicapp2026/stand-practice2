@@ -5,6 +5,7 @@ import { hasVoice2, hasVoice, voiceView,
   WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval, lyricOf, versesOf, setLyric, MAX_VERSES,
 } from './model.js';
 import * as M0 from './model.js';
+import { beamPlan } from './engrave.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const TYPE = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th', 128: '128th' };
@@ -86,6 +87,8 @@ export function toMusicXML(score0) {
           while (j < bar.length && bar[j].tup && bar[j].tup.n === e0.tup.n) { acc += ticksOf(bar[j], time); j++; if (acc >= target - 1) break; }
           TUPM.set(bar[i], 'start'); if (j - 1 > i) TUPM.set(bar[j - 1], 'stop'); i = j;
         }
+        // (the beams as drawn, so other programs show the same: also those set by hand)
+        const BEAMM = beamPlan(bar, time);
         for (const ev of bar) {
           const dur = ticksOf(ev, time);
           if (ev.dyn) w(`<direction placement="below"><direction-type><dynamics><${ev.dyn}/></dynamics></direction-type>${staffTag}</direction>`);
@@ -136,7 +139,7 @@ export function toMusicXML(score0) {
             const pitch = inst.unpitched ? `<unpitched><display-step>${STEP_NAMES[sc]}</display-step><display-octave>${oct}</display-octave></unpitched>` : `<pitch><step>${STEP_NAMES[sc]}</step>${n.a ? `<alter>${n.a}</alter>` : ''}<octave>${oct}</octave></pitch>`;
             const tieIn = isTiedFrom(voice % 4 !== 1 ? voiceView(st, ((voice - 1) % 4) + 1, score) : st, m, ev, n0);
             const ties = ev.cue ? '' : (tieIn ? '<tie type="stop"/>' : '') + (n0.tie ? '<tie type="start"/>' : '');
-            w(`<note>${ev.cue ? '<cue/>' : ''}${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type${ev.cue || ev.small ? ' size="cue"' : ''}>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${n0.cau ? `<accidental parentheses="yes" cautionary="yes">${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[n.a || 0]}</accidental>` : ''}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && (ev.lyric || ev.lyricV) ? lyricsXml(ev, lyrState) : ''}</note>`);
+            w(`<note>${ev.cue ? '<cue/>' : ''}${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type${ev.cue || ev.small ? ' size="cue"' : ''}>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${n0.cau ? `<accidental parentheses="yes" cautionary="yes">${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[n.a || 0]}</accidental>` : ''}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${k === 0 && BEAMM.has(ev) ? BEAMM.get(ev).map((b, l) => `<beam number="${l + 1}">${b}</beam>`).join('') : ''}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && (ev.lyric || ev.lyricV) ? lyricsXml(ev, lyrState) : ''}</note>`);
           });
         }
         }
