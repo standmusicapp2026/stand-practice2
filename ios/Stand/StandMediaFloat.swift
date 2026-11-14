@@ -75,9 +75,9 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         grab.addSubview(corner)
         grab.accessibilityLabel = "Move the player"
         grab.isAccessibilityElement = true
-        grab.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(move(_:))))
-        corner.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(resize(_:))))
-        let dbl = UITapGestureRecognizer(target: self, action: #selector(toggleSize))
+        grab.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragPlayer(_:))))
+        corner.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(sizePlayer(_:))))
+        let dbl = UITapGestureRecognizer(target: self, action: #selector(togglePlayerSize))
         dbl.numberOfTapsRequired = 2
         grab.addGestureRecognizer(dbl)
 
@@ -164,7 +164,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
 
     // ---- moving, sizing, putting away
     private var start = CGRect.zero
-    @objc private func move(_ g: UIPanGestureRecognizer) {
+    @objc private func dragPlayer(_ g: UIPanGestureRecognizer) {
         guard let host = superview, tuckedSide == 0 else { return }
         if g.state == .began { start = frame }
         let t = g.translation(in: host)
@@ -177,7 +177,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
             keep()
         }
     }
-    @objc private func resize(_ g: UIPanGestureRecognizer) {
+    @objc private func sizePlayer(_ g: UIPanGestureRecognizer) {
         guard let host = superview, tuckedSide == 0 else { return }
         if g.state == .began { start = frame }
         let t = g.translation(in: host)
@@ -188,7 +188,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate {
         frame = fitted(f, in: host)
         if g.state == .ended || g.state == .cancelled { keep() }
     }
-    @objc private func toggleSize() {
+    @objc private func togglePlayerSize() {
         guard let host = superview, tuckedSide == 0 else { return }
         let big = frame.width > min(host.bounds.width * 0.6, 620)
         let w = big ? minW : min(host.bounds.width * 0.7, 760)
