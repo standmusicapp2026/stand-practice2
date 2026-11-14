@@ -9,6 +9,7 @@ import { toMidi } from './midi.js';
 import { INST, INSTRUMENTS, FAMILIES, ENSEMBLES, STAFF_SIZES, defaultStaffSize } from './instruments.js';
 import { layoutScore, drawPage, hitTest, timeAtX, xAtTime, drawGhost, HEAD_W, DYNAMICS, GL, clearMetrics, glyph, text, textWidth, gm, drawClef, drawKey, drawTime, drawBarline, drawRepeatStart, drawLine, TEXT_FONT } from './engrave.js';
 import { ScorePlayer, applyScoreSound, renderAudio } from './playback.js';
+import { ListenWrite } from './listenwrite.js';
 import { toMusicXML, toMXL, toPartsZip, readMusicFile } from './musicxml.js';
 import { sampler, SOUND_LABELS, ROOM_LABELS, DEFAULT_MIX } from '../sampler.js';
 import { db, uid, getSetting, setSetting } from '../db.js';
@@ -110,6 +111,7 @@ async function closeCompose() {
   try { flushLayoutNames(); } catch {}
   C.lyFor = null;
   player.stop(); syncPlay();
+  if (C.listen) { C.listen.stop(); C.listen = null; }
   try { D.hidePanel(); } catch {}   // (Layout, Capture, Sound… close with Compose)
   // (the library comes back at once; the composition, taken as it is now, is written behind it —
   // a big score on a slow iPad never keeps you waiting in Compose, and a save that fails never
@@ -1684,6 +1686,14 @@ function renderTab() {
       vs.append(b);
     }
     body.append(vs);
+    // write by playing: the microphone hears each note you play and writes it at the selection
+    {
+      const lw = el('button', 'btn small cp-listen' + (C.listen && C.listen.on ? ' on' : ''));
+      lw.innerHTML = '<svg aria-hidden="true"><use href="#i-mic"/></svg><span></span>'; lw.querySelector('span').textContent = C.listen && C.listen.on ? 'Listening: play one note at a time' : 'Write by playing';
+      lw.setAttribute('aria-label', 'Write by playing'); lw.setAttribute('aria-pressed', String(!!(C.listen && C.listen.on)));
+      lw.addEventListener('click', () => toggleListen());
+      body.append(lw);
+    }
     const g = grid();
     for (const [d, name] of [[1, 'Whole'], [2, 'Half'], [4, 'Quarter'], [8, 'Eighth'], [16, '16th'], [32, '32nd'], [64, '64th']]) {
       const on = T.dur === d;
@@ -2172,6 +2182,8 @@ async function openExample({ play = false } = {}) {
 }
 async function togglePlay(from) {
   if (player.playing || player.loading) { player.stop(); syncPlay(); C.pages.forEach(clearOver); return; }
+  // (the microphone would hear the score playing: writing by playing stops)
+  if (C.listen) toggleListen(false);
   unlock();
   // a note chosen: playing starts on that note (the earliest one, when several are chosen)
   let start = from ?? targetBar() ?? 0, pos = 0;
@@ -2236,10 +2248,22 @@ function midiStep(notes) {
     M.writeEvent(C.score, f.st, f.m, f.pos, ev);
     // the next place: right after what was just written
     const g = M.findEvent(C.score, ev.id); if (!g) return;
-    const nx = M.nextEvent(C.score, g.st, g.m, g.i);
+    let nx = M.nextEvent(C.score, g.st, g.m, g.i);
+    // (at the end of the music: a new bar, so the next note never writes over this one)
+    if (!nx && g.m === C.score.measures.length - 1) { M.addBars(C.score, 1); nx = M.nextEvent(C.score, g.st, g.m, g.i); }
     newId = nx ? nx.ev.id : ev.id;
   });
   if (newId) { C.sel.clear(); C.sel.add(newId); relayout(); syncSelBar(); }
+}
+async function toggleListen(force) {
+  const want = force !== undefined ? force : !(C.listen && C.listen.on);
+  if (!want) { if (C.listen) C.listen.stop(); C.listen = null; renderTab(); return; }
+  if (!selEvents().length) { hint('Select the note or rest to start from, then play.', 2600); return; }
+  player.stop(); syncPlay();
+  const lw = new ListenWrite((midi) => midiStep([midi]), { ref: (C.score.sound && C.score.sound.tuning) || 440 });
+  try { await lw.start(); } catch { hint('Stand could not use the microphone. Allow it in Settings › Stand.', 3600); return; }
+  C.listen = lw; renderTab();
+  hint('Play one note at a time: each note is written with the note value chosen, and the next place is ready.', 3600);
 }
 async function wireMidi() {
   if (!navigator.requestMIDIAccess) return;
