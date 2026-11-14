@@ -380,6 +380,12 @@ function pieceList(e, s, len, time) {
 export const clone = (o) => JSON.parse(JSON.stringify(o));
 // Lyrics: verse 1 on ev.lyric, the verses under it on ev.lyricV (verse 2 first). A syllable ending in
 // "-" joins the next one with a hyphen.
+// Figured bass: ev.fig, the figures from the top down, separated by spaces or slashes ("6 4", "7/♯").
+// # b n (and ♯ ♭ ♮) stand for sharp, flat and natural; a figure may have one before or after it.
+export function figRows(fig) {
+  if (!fig) return [];
+  return String(fig).trim().split(/[\s\/,]+/).filter(Boolean).map((x) => x.replace(/#/g, '♯').replace(/b/g, '♭').replace(/n/g, '♮'));
+}
 export const MAX_VERSES = 6;
 export function lyricOf(ev, v = 1) { return v <= 1 ? ev.lyric || '' : (ev.lyricV && ev.lyricV[v - 2]) || ''; }
 export function setLyric(ev, v, text) {

@@ -5,10 +5,10 @@
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
 import { voiceView, hasVoice2, hasVoice, VOICES, voiceKey,
-  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf, instAt,
+  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff, lyricOf, versesOf, instAt, figRows,
 } from './model.js';
 
-const LYR_LINE = 2.6;   // from one verse to the next, in staff spaces
+const LYR_LINE = 2.6, FIG_LINE = 1.75;   // from one verse to the next, in staff spaces
 // the width of a syllable (size 1.8) before anything is drawn
 let lyCtx = null;
 function lyricW(str) {
@@ -344,7 +344,7 @@ function titleHeight(score, spMm, opts) {
 
 // How far notes reach above and below the staff in a system (sp beyond the staff).
 function staffExtent(score, s, sy, concert) {
-  let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false; let nVerse = 0;
+  let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false; let nVerse = 0, figN = 0;
   for (const mm of sy.measures) for (let m = mm.m; m <= mm.end; m++) {
     const clef0 = clefAt(s.st, m);
     const time = timeAt(score, m), all = [];
@@ -355,6 +355,7 @@ function staffExtent(score, s, sy, concert) {
       if (ev.txt) above = Math.max(above, 2.8);
       if (ev.fing || ev.str) above = Math.max(above, 1.6 + (ev.fing ? 1.45 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0) + (ev.str ? 1.6 : 0));
       if (ev.chord) above = Math.max(above, ev.txt ? 5.2 : 3.4);
+      if (ev.fig) figN = Math.max(figN, figRows(ev.fig).length);
       if (ev.lyric || ev.lyricV) { hasLyr = true; nVerse = Math.max(nVerse, versesOf(ev)); }
       if (!ev.notes) continue;
       for (const n0 of ev.notes) {
@@ -389,6 +390,8 @@ function staffExtent(score, s, sy, concert) {
   }
   for (let m = mA; m <= mB; m++) { const ms = score.measures[m]; if (ms && (ms.mark || ms.jump)) above = Math.max(above, 3.2); }
   if (!s.si && s.part && s.part.instCh) for (let m = mA; m <= mB; m++) if (s.part.instCh[m] !== undefined) above = Math.max(above, 3.0);
+  // figured bass under the notes (dynamics and lyrics go under it)
+  if (figN) { const fb = Math.max(2.4, notesBelow + 1.6) + figN * FIG_LINE + 0.4; below = Math.max(below, fb); notesBelow = Math.max(notesBelow, fb - 0.6); }
   // lyrics run on one line for the whole system, under the lowest note (and the dynamics)
   let lyr = 0;
   if (hasLyr) { lyr = Math.max(4.2, notesBelow + 2.6, hasDyn ? Math.max(3.0, notesBelow + 2.9) + 2.6 : 0); below = Math.max(below, lyr + 1.2 + (Math.max(1, nVerse) - 1) * LYR_LINE); }
@@ -1131,10 +1134,23 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     if (last.notes) for (const n of evs[0] ? evs[0].notes : []) if (n.tieIn) drawTie(ctx, hm.cx0 - 1.5, evs[0].x - 0.15, yOf(s.y, n.p) + (evs[0].up ? 0.45 : -0.45), evs[0].up);
   }
   // articulations, dynamics, hairpins, text, slurs (dynamics and hairpins share one line per bar)
+  // figured bass: the figures stacked under each note, on one line in the bar
+  const figEvs = evs.filter((e) => e.ev.fig && figRows(e.ev.fig).length);
+  let figBottom = 0;
+  if (figEvs.length) {
+    const fy = s.y + 4 + Math.max(2.4, ...figEvs.map((e) => lowestBelow(e, s.y) + 1.6));
+    for (const e of figEvs) {
+      const rows = figRows(e.ev.fig);
+      rows.forEach((r, i) => { const y = fy + (i + 1) * FIG_LINE - 0.3; const w = textWidth(ctx, r, 1.75); text(ctx, r, e.x + HEAD_W / 2 - w / 2, y, 1.75); });
+      hitBox({ id: e.ev.id, kind: 'fig', name: e.ev.fig, m }, e.x - 0.4, e.x + HEAD_W + 0.4, fy, fy + rows.length * FIG_LINE + 0.3);
+      figBottom = Math.max(figBottom, fy - s.y - 4 + rows.length * FIG_LINE);
+    }
+  }
   let dynLine = 3.0;
   const hpSpans = (score.spans || []).filter((q) => q.kind === 'hairpin' && q.st === (s.st.base || s.st).id && (q.v || 1) === (opts.voice2 ? (opts.voiceNo || 2) : 1) && q.a.m <= m && q.b.m >= m);
   const underHp = (e) => hpSpans.some((q) => (q.a.m < m || q.a.pos <= e.pos) && (q.b.m > m || q.b.pos >= e.pos));
   for (const e of evs) if (e.ev.dyn || e.ev.hp || underHp(e) || (e.ev.txt && e.ev.txtBelow)) dynLine = Math.max(dynLine, lowestBelow(e, s.y) + 2.9);
+  if (figBottom) dynLine = Math.max(dynLine, figBottom + 2.4);
   for (const e of evs) if (e.ev.dyn || underHp(e)) hm.dynLow = Math.max(hm.dynLow || 0, lowestBelow(e, s.y));
   for (let i = 0; i < evs.length; i++) {
     const e = evs[i];

@@ -706,7 +706,7 @@ function tapSelect(cx, cy, add) {
 }
 function clearSel() { C.extend = false; if (C.markSel) { C.markSel = null; syncSelBar(); drawHover(); } if (!C.sel.size && !C.selBars) return; C.sel.clear(); C.selBars = null; relayout(); syncSelBar(); renderTab(); }
 
-const KEEP_MARKS = ['art', 'dyn', 'txt', 'txtStyle', 'fing', 'lyric', 'lyricV', 'chord', 'stem', 'cue', 'small'];
+const KEEP_MARKS = ['art', 'dyn', 'txt', 'txtStyle', 'fing', 'lyric', 'lyricV', 'chord', 'fig', 'stem', 'cue', 'small'];
 // Write the note (or rest) the pen just placed.
 function commitWrite(tg) {
   const st = M.voiceView(tg.staff.st, C.tool.voice || 1, C.score), m = tg.meas.m, pos = tg.t;
@@ -1289,7 +1289,7 @@ function syncSelBar() {
   if (C.markSel) {
     const mk = C.markSel, f = mk.kind === 'span' ? null : M.findEvent(C.score, mk.id);
     if (mk.kind !== 'span' && !f) { C.markSel = null; bar.hidden = true; return; }
-    const label = mk.kind === 'tie' ? 'Tie' : mk.kind === 'chord' ? 'Chord ' + mk.name : mk.kind === 'lyric' ? 'Lyric “' + mk.name + '”' : mk.kind === 'evclef' ? (M.CLEFS[mk.name] ? M.CLEFS[mk.name].name : 'Clef') + ' clef' : mk.kind === 'dyn' ? 'Dynamic ' + mk.name : mk.kind === 'txt' ? 'Words' : mk.kind === 'fing' ? 'Fingering ' + mk.name : mk.kind === 'span' ? (mk.name === 'hairpin' ? 'Hairpin' : MARK_NAME[mk.name] || mk.name) : (MARK_NAME[mk.name] || mk.name);
+    const label = mk.kind === 'tie' ? 'Tie' : mk.kind === 'chord' ? 'Chord ' + mk.name : mk.kind === 'fig' ? 'Figures ' + mk.name : mk.kind === 'lyric' ? 'Lyric “' + mk.name + '”' : mk.kind === 'evclef' ? (M.CLEFS[mk.name] ? M.CLEFS[mk.name].name : 'Clef') + ' clef' : mk.kind === 'dyn' ? 'Dynamic ' + mk.name : mk.kind === 'txt' ? 'Words' : mk.kind === 'fing' ? 'Fingering ' + mk.name : mk.kind === 'span' ? (mk.name === 'hairpin' ? 'Hairpin' : MARK_NAME[mk.name] || mk.name) : (MARK_NAME[mk.name] || mk.name);
     bar.append(el('span', 'what', f ? `${label} · bar ${f.m + 1}` : label));
     btn('Delete', () => deleteMark(mk), 'i-trash', 'danger');
     if (mk.kind === 'span' && ['slur', 'hairpin'].includes(mk.name)) btn('Reset shape', () => { edit(() => { const q = (C.score.spans || []).find((x) => x.id === mk.id); if (q) for (const k of ['off', 'ax', 'ay', 'bx', 'by', 'hd']) delete q[k]; }); drawHover(); });
@@ -1432,6 +1432,7 @@ function deleteMark(mk) {
     else if (mk.kind === 'fing') delete f.ev.fing;
     else if (mk.kind === 'tie') for (const n of f.ev.notes || []) n.tie = false;
     else if (mk.kind === 'chord') delete f.ev.chord;
+    else if (mk.kind === 'fig') delete f.ev.fig;
     else if (mk.kind === 'lyric') M.setLyric(f.ev, mk.verse || 1, '');
     else if (mk.kind === 'evclef') delete f.ev.clef;
   });
@@ -1870,6 +1871,8 @@ function renderTab() {
     entry('Lyrics', 'lyric', 'Syllable, then space or -');
     lab('Chord symbols');
     entry('Chord symbol', 'chord', 'C, Am7, F#m7b5, G/B…');
+    lab('Figured bass');
+    entry('Figured bass', 'fig', '6, 6 4, 7 #, b5… (top figure first)');
     const m = targetBar() ?? 0;
     const tempo = M.tempoAt(C.score, m);
     const cur = evs[0] && evs[0].ev;

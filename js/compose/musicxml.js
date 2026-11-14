@@ -2,7 +2,7 @@
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
 import { hasVoice2, hasVoice, voiceView,
-  WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval, lyricOf, versesOf, setLyric, MAX_VERSES,
+  WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval, lyricOf, versesOf, setLyric, MAX_VERSES, figRows,
 } from './model.js';
 import * as M0 from './model.js';
 import { beamPlan } from './engrave.js';
@@ -128,6 +128,7 @@ export function toMusicXML(score0) {
             continue;
           }
           if (ev.chord) w(harmonyXml(ev.chord, staffTag));
+          if (ev.fig) w(figXml(ev.fig));
           // a clef change in the middle of the bar, before this note
           if (ev.clef && voice % 4 === 1) { const [sign, line, oct] = CLEF_XML[ev.clef] || CLEF_XML.treble; w(`<attributes><clef${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><sign>${sign}</sign>${line ? `<line>${line}</line>` : ''}${oct ? `<clef-octave-change>${oct}</clef-octave-change>` : ''}</clef></attributes>`); }
           if (ev.grace && !inst.unpitched) {
@@ -186,6 +187,12 @@ function lyricXml(l, st, v = 1) {
 // every verse of the note's lyrics
 function lyricsXml(ev, st) { let x = ''; for (let v = 1, n = versesOf(ev); v <= n; v++) { const l = lyricOf(ev, v); if (l) x += lyricXml(l, st, v); } return x; }
 const KINDS = [['maj7', 'major-seventh'], ['m7b5', 'half-diminished'], ['m7', 'minor-seventh'], ['dim7', 'diminished-seventh'], ['dim', 'diminished'], ['°', 'diminished'], ['aug', 'augmented'], ['+', 'augmented'], ['sus4', 'suspended-fourth'], ['sus2', 'suspended-second'], ['m6', 'minor-sixth'], ['m', 'minor'], ['13', 'dominant-13th'], ['11', 'dominant-11th'], ['9', 'dominant-ninth'], ['7', 'dominant'], ['6', 'major-sixth'], ['', 'major']];
+function figXml(fig) {
+  const ACC = { '♯♯': 'double-sharp', '♭♭': 'flat-flat', '♯': 'sharp', '♭': 'flat', '♮': 'natural', '+': 'cross' };
+  const one = (r) => { const m = /^([♯♭♮]{0,2})(\d*)([♯♭♮+]{0,2})$/.exec(r); if (!m) return `<figure><figure-number>${esc(r)}</figure-number></figure>`;
+    return `<figure>${m[1] ? `<prefix>${ACC[m[1]] || 'sharp'}</prefix>` : ''}${m[2] ? `<figure-number>${m[2]}</figure-number>` : ''}${m[3] ? `<suffix>${ACC[m[3]] || 'sharp'}</suffix>` : ''}</figure>`; };
+  return `<figured-bass>${figRows(fig).map(one).join('')}</figured-bass>`;
+}
 function harmonyXml(c, staffTag) {
   const mm = /^([A-G])([#b]?)(.*?)(?:\/([A-G])([#b]?))?$/.exec(c.trim());
   if (!mm) return `<direction placement="above"><direction-type><words>${esc(c)}</words></direction-type>${staffTag}</direction>`;
@@ -663,6 +670,11 @@ export function fromMusicXML(xmlText) {
             if (type === 'start') openSpans.push({ id: newId(), kind: 'volta', n, a: { m, pos: 0 }, b: null });
             else { const v = openSpans.find((x) => x.kind === 'volta' && !x.b); if (v) { v.b = { m, pos: 0 }; if (type === 'discontinue') v.closed = false; score.spans.push(v); openSpans.splice(openSpans.indexOf(v), 1); } }
           }
+        } else if (tag === 'figured-bass') {
+          // (figures: for the next note of the lowest staff, from the top down)
+          const ACC = { sharp: '♯', flat: '♭', natural: '♮', 'double-sharp': '♯♯', 'flat-flat': '♭♭', 'sharp-sharp': '♯♯', cross: '+', backslash: '+', slash: '' };
+          const rows = [...el.children].filter((c) => c.tagName === 'figure').map((f) => (ACC[txt(f, 'prefix')] ?? '') + txt(f, 'figure-number') + (ACC[txt(f, 'suffix')] ?? '')).filter(Boolean);
+          if (rows.length) { const k = part.staves.length - 1; (pend[k] || pend[0]).fig = rows.join(' '); }
         } else if (tag === 'harmony') {
           const k = Math.max(0, (+txt(el, 'staff') || 1) - 1);
           const ra = +txt(el, 'root root-alter') || 0, ba = +txt(el, 'bass bass-alter') || 0;
@@ -790,7 +802,7 @@ export function fromMusicXML(xmlText) {
           // marks that were waiting for this note
           const P = pend[k];
           if (!isChord && !inV2) {
-            for (const key of ['dyn', 'hp', 'txt', 'txtStyle', 'chord', 'clef']) if (P[key]) { ev[key] = P[key]; delete P[key]; }
+            for (const key of ['dyn', 'hp', 'txt', 'txtStyle', 'chord', 'clef', 'fig']) if (P[key]) { if (key === 'fig' && ev.rest) continue; ev[key] = P[key]; delete P[key]; }
             if (P.grace) { if (!ev.rest && ev.notes) { ev.grace = { ...P.grace, dir: P.grace.s > ev.notes[0].s ? 1 : -1 }; if (P.graceMore) ev.graceMore = P.graceMore; } delete P.grace; delete P.graceMore; }
             if (!ev.rest) {
               // each verse (lyric number 1, 2…; a name instead of a number keeps the order of the file)
