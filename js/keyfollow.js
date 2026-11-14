@@ -503,7 +503,15 @@ export class KeyFollower {
   _tuningSlow() {
     const rc = this.recent || [], ra = this.recentAt || []; if (rc.length < 6 || ra.length !== rc.length) return false;
     const from = Math.max(1, rc.length - 12); let base = rc[from - 1], moves = 0, fifths = 0; const cnt = {};
-    for (let i = from; i < rc.length; i++) { const d = ((rc[i] - base) % 12 + 12) % 12; if (d === 0 || d === 1 || d === 11) continue; base = rc[i]; moves++; cnt[base % 12] = (cnt[base % 12] || 0) + 1; if (d >= 5 && d <= 7) fifths++; }
+    const H = G('__kfTuneH', 1);
+    for (let i = from; i < rc.length; i++) {
+      // (a blip, another note heard within half a second, is not a string played; nor is the string's
+      // own twelfth, its strongest harmonic, heard above it)
+      if (H && i < rc.length - 1 && ra[i + 1] - ra[i] < 500) continue;
+      const up = rc[i] - base, d = (up % 12 + 12) % 12; if (d === 0 || d === 1 || d === 11) continue;
+      if (H && (Math.abs(up - 19) <= 1 || Math.abs(up - 31) <= 1)) continue;
+      base = rc[i]; moves++; cnt[base % 12] = (cnt[base % 12] || 0) + 1; if ((d >= 5 && d <= 7) || (H && Math.abs(up) >= 6 && Math.abs(up) <= 8)) fifths++;
+    }
     if (moves < 4) return false;
     const top4 = Object.values(cnt).sort((a, b) => b - a).slice(0, 4).reduce((a, b) => a + b, 0);
     return fifths / moves >= 0.5 && top4 / moves >= 0.8 && (ra[ra.length - 1] - ra[from - 1]) / moves >= G('__kfTuneSlow', 1000);
