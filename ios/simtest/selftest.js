@@ -250,7 +250,10 @@ async function run() {
   await step('back home 3', async () => { await home(); return !$('#library').hidden; });
   await step('Compose example (Holst, orchestra)', async () => {
     $('[data-panel=compose]').click(); await sleep(800); $('.tour-skip') && $('.tour-skip').click();
-    $('#cnExample').click();
+    // (a slow simulator: wait until the button is really there before pressing it)
+    const ex = await waitFor(() => { const b = $('#cnExample'); return b && b.offsetParent ? b : null; }, 10000);
+    if (!ex) return false;
+    ex.click();
     return !!(await waitFor(() => !$('#compose').hidden && $$('#compose canvas').length > 0, 20000));
   });
   await shot('10b-jupiter');
@@ -413,15 +416,17 @@ async function mediaRun(pre) {
     const side = await waitFor(() => ev.find((m) => m.op === 'side' && m.edge), 5000);
     if (!side) throw new Error('no answer');
     await sleep(500);
-    const st = $('#stage').getBoundingClientRect();
-    const room = side.edge === 'r' ? innerWidth - st.right : side.edge === 'b' ? innerHeight - st.bottom : st.left;
-    const d = `${side.edge} ${side.inset}, the score ${Math.round(st.left)},${Math.round(st.top)} ${Math.round(st.width)}x${Math.round(st.height)} in ${innerWidth}x${innerHeight}`;
-    if (Math.abs(room - side.inset) > 1 || side.inset < 200) throw new Error(d);
+    const sg = $('#stage'), st = sg.getBoundingClientRect();
+    // (no score is open here, so the page keeps the room in its own settings: the stage is told to stop that far from the edge)
+    const pos = side.edge === 'r' ? sg.style.right : side.edge === 'b' ? sg.style.bottom : sg.style.left;
+    const d = `${side.edge} ${side.inset}, the stage ${sg.dataset.mside} ${pos} in ${innerWidth}x${innerHeight}`;
+    if (sg.dataset.mside !== side.edge + ':' + Math.round(side.inset) || Math.abs(parseFloat(pos) - side.inset) > 1 || side.inset < 200 || !document.body.classList.contains('media-beside')) throw new Error(d);
+    if (st.width > 0) { const room = side.edge === 'r' ? innerWidth - st.right : side.edge === 'b' ? innerHeight - st.bottom : st.left; if (Math.abs(room - side.inset) > 1) throw new Error(d + ' room ' + Math.round(room)); }
     ev.length = 0;
     window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: '' });
     const back = await waitFor(() => ev.find((m) => m.op === 'side'), 5000); await sleep(300);
-    const st2 = $('#stage').getBoundingClientRect();
-    if (!back || back.edge || st2.right < innerWidth - 1 || st2.bottom < innerHeight - 1) throw new Error('not back: ' + JSON.stringify(back) + ' ' + Math.round(st2.right) + ' ' + Math.round(st2.bottom));
+    const sg2 = $('#stage');
+    if (!back || back.edge || sg2.dataset.mside || sg2.style.right || sg2.style.bottom || sg2.style.left || document.body.classList.contains('media-beside')) throw new Error('not back: ' + JSON.stringify(back) + ' ' + sg2.style.cssText);
     return d;
   }, 15000);
   await step(pre + 'floating player closes', async () => { window.webkit.messageHandlers.standMedia && window.webkit.messageHandlers.standMedia.postMessage({ op: 'close' }); await sleep(800); return true; });
