@@ -10751,61 +10751,99 @@ function openMedia(url, name) {
   mediaFrame(o);
 }
 window.__mediaOf = mediaOf; window.__openMedia = openMedia;
-window.standMediaEvent = (m) => { if (m && m.op === 'closed') MEDIA.kind = ''; };
+// Beside the music: the player at the left, right or bottom edge, and the score makes room for it
+// (the page is fitted to what is left of the screen: nothing of the music is under the player).
+function mediaSide(edge, inset) {
+  const st = $('#stage'); if (!st) return;
+  const was = st.dataset.mside || '';
+  const now = edge ? edge + ':' + Math.round(inset) : '';
+  if (was === now) return;
+  st.dataset.mside = now;
+  st.style.left = edge === 'l' ? inset + 'px' : ''; st.style.right = edge === 'r' ? inset + 'px' : ''; st.style.bottom = edge === 'b' ? inset + 'px' : '';
+  document.body.classList.toggle('media-beside', !!edge);
+  // (the score fits itself to the room left, as when the iPad is turned)
+  MEDIA.siding = true; try { dispatchEvent(new Event('resize')); } finally { MEDIA.siding = false; }
+}
+window.standMediaEvent = (m) => { if (!m) return; if (m.op === 'closed') { MEDIA.kind = ''; mediaSide('', 0); } else if (m.op === 'side') mediaSide(m.edge || '', +m.inset || 0); };
 // In a browser: the same player in a frame that floats over the page, moved by its top bar, sized by
-// its corner; pushed off the side, made small at the edge (still playing), and pushed off again, put
-// away (a video pauses there).
-// (the least width of a YouTube player: its picture must have at least 200 × 200 points)
-const MEDIA_MIN_YT = 220;
+// its corner; pushed against the left, right or bottom edge, it settles there beside the music (the
+// score makes room); the − button puts it away (a video pauses there).
+// (the least size of a YouTube player: its picture must have at least 200 × 200 points; with the
+// top bar (24), the buttons under it (40) and a margin of 6 at each side)
+const MF = { head: 24, bar: 40, pad: 6 };
+const MEDIA_MIN_YT = 200 + 2 * MF.pad;
 function mediaFrame(o) {
   let box = MEDIA.box;
   const W = innerWidth, H = innerHeight, yt = o.kind === 'youtube';
-  const minW = yt ? Math.min(MEDIA_MIN_YT, W - 16) : 260, w = Math.max(minW, Math.min(W - 32, yt ? 480 : 380)), h = yt ? 26 + w * 9 / 16 + 44 : o.kind === 'spotify' ? 26 + 152 + 44 : 26 + 175 + 44;
+  const minW = () => (MEDIA.kind === 'youtube' ? Math.min(MEDIA_MIN_YT, innerWidth - 16) : 260);
+  const minH = () => MF.head + (MEDIA.kind === 'youtube' ? 200 : 80) + MF.bar;
+  const natH = (w) => (MEDIA.kind === 'youtube' ? Math.max(minH(), MF.head + (w - 2 * MF.pad) * 9 / 16 + MF.bar) : MEDIA.kind === 'spotify' ? MF.head + 152 + MF.bar : MF.head + 175 + MF.bar);
+  MEDIA.kind = o.kind;
+  // (a video as small as it may be without black bands: 356 × 200)
+  const w = Math.min(W - 32, yt ? 356 + 2 * MF.pad : 340), h = natH(w);
   if (!box) {
     box = MEDIA.box = el('div', 'media-float'); box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Player');
     const grab = el('div', 'mf-grab'); grab.setAttribute('aria-label', 'Move the player'); grab.append(el('span', 'mf-pill'));
-    const corner = el('button', 'mf-corner'); corner.setAttribute('aria-label', 'Resize the player'); corner.textContent = '⤡';
-    grab.append(corner);
+    const hide = el('button', 'mf-hide'); hide.setAttribute('aria-label', 'Put the player away'); hide.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>';
+    const corner = el('button', 'mf-corner'); corner.setAttribute('aria-label', 'Resize the player'); corner.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6"/></svg>';
+    grab.append(hide, corner);
     const fr = document.createElement('iframe'); fr.className = 'mf-frame'; fr.allow = 'autoplay; encrypted-media; fullscreen'; fr.referrerPolicy = 'strict-origin-when-cross-origin';
     const tab = el('button', 'mf-tab'); tab.setAttribute('aria-label', 'Bring the player back'); tab.hidden = true; tab.append(icon('i-play'));
-    box.append(grab, fr, tab); document.body.append(box);
-    const fit = () => { const r = box.getBoundingClientRect(); let x = Math.min(Math.max(r.left, 8), innerWidth - r.width - 8), y = Math.min(Math.max(r.top, 8), innerHeight - r.height - 8); box.style.left = x + 'px'; box.style.top = y + 'px'; };
+    const zone = el('div', 'mf-zone'); zone.hidden = true;
+    box.append(grab, fr, tab); document.body.append(zone, box);
+    const R = () => { const r = box.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; };
+    const put = (f) => Object.assign(box.style, { left: f.l + 'px', top: f.t + 'px', width: f.w + 'px', height: f.h + 'px' });
+    const fitted = (f) => { const w2 = Math.min(Math.max(f.w, minW()), innerWidth - 16), h2 = Math.min(Math.max(f.h, minH()), innerHeight - 16); return { w: w2, h: h2, l: Math.min(Math.max(f.l, 8), innerWidth - w2 - 8), t: Math.min(Math.max(f.t, 8), innerHeight - h2 - 8) }; };
+    const narrow = () => innerWidth < 600;
+    // (the edge it is pushed against: past the edge of the screen by a little; a phone has no room
+    // beside the music, so there it goes only under it, pushed down)
+    const edgeFor = (f) => { const over = [['l', narrow() ? 0 : -f.l], ['r', narrow() ? 0 : f.l + f.w - innerWidth], ['b', f.t + f.h - innerHeight]].sort((x, y) => y[1] - x[1])[0]; return over[1] > 14 ? over[0] : ''; };
+    const frameAt = (e, f0) => { const f = { ...(f0 || R()) }, m = 8;
+      if (e === 'l' || e === 'r') { f.w = Math.min(Math.max(f.w, minW()), Math.max(minW(), innerWidth * 0.42)); f.h = natH(f.w); f.l = e === 'l' ? m : innerWidth - f.w - m; }
+      else if (e === 'b') { f.h = Math.min(Math.max(f.h, minH()), Math.max(minH(), innerHeight * 0.45)); f.t = innerHeight - f.h - m; }
+      return fitted(f); };
+    const insetOf = (e, f) => (e === 'l' ? f.l + f.w + 8 : e === 'r' ? innerWidth - f.l + 8 : e === 'b' ? innerHeight - f.t + 8 : 0);
+    const settle = (e) => { if (narrow() && e) e = 'b'; const f = frameAt(e); put(f); MEDIA.edge = e; try { localStorage.setItem('standMediaEdge', e); } catch {} mediaSide(e, Math.round(insetOf(e, f))); };
+    const unsettle = () => { MEDIA.edge = ''; try { localStorage.setItem('standMediaEdge', ''); } catch {} mediaSide('', 0); };
+    const showZone = (e) => { if (!e) { zone.hidden = true; return; } const f = frameAt(narrow() ? 'b' : e); Object.assign(zone.style, { left: f.l - 4 + 'px', top: f.t - 4 + 'px', width: f.w + 8 + 'px', height: f.h + 8 + 'px' }); zone.hidden = false; };
     let st = null;
-    grab.addEventListener('pointerdown', (e) => { if (e.target === corner || box.classList.contains('tucked')) return; const r = box.getBoundingClientRect(); st = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, kind: 'move' }; try { grab.setPointerCapture(e.pointerId); } catch {} e.preventDefault(); });
-    corner.addEventListener('pointerdown', (e) => { const r = box.getBoundingClientRect(); st = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, w: r.width, h: r.height, kind: 'size' }; try { corner.setPointerCapture(e.pointerId); } catch {} e.preventDefault(); e.stopPropagation(); });
+    grab.addEventListener('pointerdown', (e) => { if (e.target.closest('.mf-corner, .mf-hide') || box.classList.contains('tucked')) return; const r = R(); st = { x: e.clientX, y: e.clientY, ...r, kind: 'move' }; try { grab.setPointerCapture(e.pointerId); } catch {} e.preventDefault(); });
+    corner.addEventListener('pointerdown', (e) => { const r = R(); st = { x: e.clientX, y: e.clientY, ...r, kind: 'size' }; try { corner.setPointerCapture(e.pointerId); } catch {} e.preventDefault(); e.stopPropagation(); });
+    // (already beside the music and only moved along that edge: it stays there)
+    const along = (f) => { if (!MEDIA.edge) return false; const a = frameAt(MEDIA.edge); return MEDIA.edge === 'b' ? Math.abs(f.t + f.h / 2 - (a.t + a.h / 2)) < 40 : Math.abs(f.l + f.w / 2 - (a.l + a.w / 2)) < 40; };
     const mv = (e) => {
       if (!st) return; const dx = e.clientX - st.x, dy = e.clientY - st.y;
-      if (st.kind === 'move') { box.style.left = st.l + dx + 'px'; box.style.top = st.t + dy + 'px'; }
-      else { MEDIA.docked = 0; const mw = MEDIA.kind === 'youtube' ? Math.min(MEDIA_MIN_YT, innerWidth - 16) : 260, mh = MEDIA.kind === 'youtube' ? 270 : 150; const nw = Math.max(mw, Math.min(innerWidth - 16, st.w + dx)), nh = Math.max(mh, Math.min(innerHeight - 16, st.h - dy)); box.style.width = nw + 'px'; box.style.height = nh + 'px'; box.style.top = st.t + st.h - nh + 'px'; }
+      if (st.kind === 'move') { const f = { l: st.l + dx, t: st.t + dy, w: st.w, h: st.h }; box.style.left = f.l + 'px'; box.style.top = f.t + 'px'; const k = edgeFor(f); showZone(k || (along(f) ? MEDIA.edge : '')); }
+      else { const d = MEDIA.edge === 'r' ? -dx : dx; const nw = Math.max(minW(), Math.min(innerWidth - 16, st.w + d)), nh = Math.max(minH(), Math.min(innerHeight - 16, st.h - dy)); box.style.width = nw + 'px'; box.style.height = nh + 'px'; box.style.top = st.t + st.h - nh + 'px'; if (MEDIA.edge === 'r') box.style.left = st.l + st.w - nw + 'px'; }
     };
-    const up = () => { if (!st || box.classList.contains('tucked')) { st = null; return; } const r = box.getBoundingClientRect(); const k = st.kind; st = null;
-      // pushed off the side: first made as small as it may be, at that edge, still playing; pushed off
-      // again from there, put away (a video pauses: YouTube lets nothing play where it is not seen)
-      if (k === 'move' && (r.left + r.width / 2 < 10 || r.left + r.width / 2 > innerWidth - 10)) { const side = r.left + r.width / 2 < 10 ? -1 : 1; if (MEDIA.docked === side) tuck(side); else dock(side); }
-      else { if (k === 'move') MEDIA.docked = 0; fit(); } };
-    const dock = (side) => {
-      const r = box.getBoundingClientRect(), yt = MEDIA.kind === 'youtube';
-      const w = yt ? Math.min(MEDIA_MIN_YT, innerWidth - 16) : 260, h = yt ? 270 : Math.min(r.height, 26 + 152 + 44);
-      Object.assign(box.style, { width: w + 'px', height: h + 'px', left: (side < 0 ? 8 : innerWidth - w - 8) + 'px', top: Math.min(Math.max(r.top, 8), innerHeight - h - 8) + 'px' });
-      MEDIA.docked = side;
-    };
+    const up = () => { if (!st || box.classList.contains('tucked')) { st = null; return; } const k = st.kind; st = null; zone.hidden = true; const f = R();
+      if (k === 'move') { const e = edgeFor(f); if (e || along(f)) settle(e || MEDIA.edge); else { if (MEDIA.edge) unsettle(); put(fitted(f)); } }
+      else if (MEDIA.edge) settle(MEDIA.edge); else put(fitted(f)); };
     grab.addEventListener('pointermove', mv); corner.addEventListener('pointermove', mv);
     grab.addEventListener('pointerup', up); corner.addEventListener('pointerup', up); grab.addEventListener('pointercancel', up); corner.addEventListener('pointercancel', up);
-    const tuck = (side) => {
+    const tuck = () => {
       if (box.classList.contains('tucked')) return;
-      const r = box.getBoundingClientRect(); MEDIA.shown = { l: Math.min(Math.max(r.left, 8), innerWidth - r.width - 8), t: r.top, w: r.width, h: r.height };
+      const r = R(), side = r.l + r.w / 2 < innerWidth / 2 ? -1 : 1; MEDIA.shown = fitted(r); MEDIA.shownEdge = MEDIA.edge || '';
+      // (put away, it leaves the music the whole screen)
+      if (MEDIA.edge) { const e0 = MEDIA.edge; unsettle(); try { localStorage.setItem('standMediaEdge', e0); } catch {} }
       try { fr.contentWindow.mediaCmd && fr.contentWindow.mediaCmd({ cmd: 'pause' }); } catch {}
       try { fr.contentWindow.postMessage({ standMediaCmd: { cmd: 'pause' } }, '*'); } catch {}
       if (MEDIA.kind !== 'youtube') { MEDIA.src = fr.src; fr.src = 'about:blank'; }
-      box.classList.add('tucked'); tab.hidden = false; box.style.left = side < 0 ? '0px' : innerWidth - 34 + 'px'; box.style.top = Math.min(Math.max(r.top + r.height / 2 - 45, 8), innerHeight - 98) + 'px'; box.style.width = '34px'; box.style.height = '90px';
+      box.classList.add('tucked'); tab.hidden = false; box.style.left = side < 0 ? '0px' : innerWidth - 34 + 'px'; box.style.top = Math.min(Math.max(r.t + r.h / 2 - 45, 8), innerHeight - 98) + 'px'; box.style.width = '34px'; box.style.height = '90px';
     };
-    tab.addEventListener('click', () => { const s0 = MEDIA.shown; MEDIA.docked = 0; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) Object.assign(box.style, { left: s0.l + 'px', top: s0.t + 'px', width: s0.w + 'px', height: s0.h + 'px' }); });
-    MEDIA.tuck = tuck;
-    window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || e.source !== fr.contentWindow) return; if (m.op === 'close') { box.remove(); MEDIA.box = null; MEDIA.kind = ''; } else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
+    hide.addEventListener('click', (e) => { e.stopPropagation(); tuck(); });
+    tab.addEventListener('click', () => { const s0 = MEDIA.shown; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) put(fitted(s0)); if (MEDIA.shownEdge) settle(MEDIA.shownEdge); });
+    MEDIA.tuck = tuck; MEDIA.settle = settle;
+    addEventListener('resize', () => { if (MEDIA.siding || !MEDIA.box || box.classList.contains('tucked')) return; if (MEDIA.edge) { const f = frameAt(narrow() ? 'b' : MEDIA.edge); put(f); const e = narrow() ? 'b' : MEDIA.edge; if (e !== MEDIA.edge || Math.round(insetOf(e, f)) !== +((($('#stage').dataset.mside || '').split(':')[1]) || 0)) settle(e); } else put(fitted(R())); });
+    const closeIt = () => { box.remove(); zone.remove(); MEDIA.box = null; MEDIA.kind = ''; MEDIA.edge = ''; mediaSide('', 0); };
+    window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || e.source !== fr.contentWindow) return; if (m.op === 'close') closeIt(); else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
   }
-  MEDIA.kind = o.kind; MEDIA.docked = 0;
+  MEDIA.kind = o.kind;
   box.classList.remove('tucked'); box.querySelector('.mf-tab').hidden = true;
   Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: H - h - 16 + 'px' });
+  // (beside the music again if it was there the last time)
+  let e0 = MEDIA.edge || ''; if (!e0) try { e0 = localStorage.getItem('standMediaEdge') || ''; } catch {}
+  if (e0) MEDIA.settle(e0);
   box.querySelector('.mf-frame').src = 'media.html#' + encodeURIComponent(JSON.stringify(o));
 }
 document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="listen"]')) openListen(); });

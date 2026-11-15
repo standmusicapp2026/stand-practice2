@@ -402,9 +402,28 @@ async function mediaRun(pre) {
     if (got.op === 'error' && got.code === 153) return false;
     // (the player is on the screen, at least as big as YouTube asks: 200 points of picture)
     const fr = ev.find((m) => m.op === 'frame');
-    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 70 < 199) return false; }
+    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 64 < 199 || fr.w - 12 < 199) return false; }
     return got.op === 'ready' ? 'ready' : 'error ' + got.code;
   }, 45000);
+  // beside the music: the score makes room for the player (on a phone: under the music)
+  await step(pre + 'floating player beside the music', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia)) return 'no native player';
+    ev.length = 0;
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: 'r' });
+    const side = await waitFor(() => ev.find((m) => m.op === 'side' && m.edge), 5000);
+    if (!side) throw new Error('no answer');
+    await sleep(500);
+    const st = $('#stage').getBoundingClientRect();
+    const room = side.edge === 'r' ? innerWidth - st.right : side.edge === 'b' ? innerHeight - st.bottom : st.left;
+    const d = `${side.edge} ${side.inset}, the score ${Math.round(st.left)},${Math.round(st.top)} ${Math.round(st.width)}x${Math.round(st.height)} in ${innerWidth}x${innerHeight}`;
+    if (Math.abs(room - side.inset) > 1 || side.inset < 200) throw new Error(d);
+    ev.length = 0;
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: '' });
+    const back = await waitFor(() => ev.find((m) => m.op === 'side'), 5000); await sleep(300);
+    const st2 = $('#stage').getBoundingClientRect();
+    if (!back || back.edge || st2.right < innerWidth - 1 || st2.bottom < innerHeight - 1) throw new Error('not back: ' + JSON.stringify(back) + ' ' + Math.round(st2.right) + ' ' + Math.round(st2.bottom));
+    return d;
+  }, 15000);
   await step(pre + 'floating player closes', async () => { window.webkit.messageHandlers.standMedia && window.webkit.messageHandlers.standMedia.postMessage({ op: 'close' }); await sleep(800); return true; });
   window.standMediaEvent = was;
 }

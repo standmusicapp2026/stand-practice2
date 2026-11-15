@@ -392,6 +392,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 f.open(body, in: view)
             case "close": media?.close()
             case "cmd": media?.command(body)
+            case "edge": media?.place(body["edge"] as? String ?? "")
             default: break
             }
         case "standDone":

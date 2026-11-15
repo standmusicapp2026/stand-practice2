@@ -2212,15 +2212,22 @@ body.ruler-away .ruler, body.ruler-away .ruler-kinds { display: none; }
 .mx-practice .check-row input { width: 22px; height: 22px; flex: none; accent-color: var(--accent, #1f3a8a); }
 .mx-practice input[type=range] { width: 100%; }
 /* the little player over the score (in a browser; the iPad app has its own, made the same way) */
-.media-float { position: fixed; z-index: 900; border-radius: 14px; background: #11151d; box-shadow: 0 6px 24px rgba(0,0,0,.32); overflow: hidden; display: flex; flex-direction: column; touch-action: none; }
-.media-float .mf-grab { flex: none; height: 26px; position: relative; cursor: grab; touch-action: none; }
-.media-float .mf-pill { position: absolute; left: 50%; top: 10px; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: rgba(255,255,255,.45); }
-.media-float .mf-corner { position: absolute; right: 0; top: 0; width: 34px; height: 26px; border: 0; background: transparent; color: rgba(255,255,255,.7); font-size: 16px; cursor: nesw-resize; touch-action: none; }
-.media-float .mf-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #000; }
+.media-float { position: fixed; z-index: 900; border-radius: 16px; background: #13161d; box-shadow: 0 0 0 1px rgba(255,255,255,.09), 0 10px 34px rgba(0,0,0,.30), 0 2px 6px rgba(0,0,0,.18); overflow: hidden; display: flex; flex-direction: column; touch-action: none; }
+.media-float .mf-grab { flex: none; height: 24px; position: relative; cursor: grab; touch-action: none; }
+.media-float .mf-pill { position: absolute; left: 50%; top: 9px; width: 32px; height: 4px; margin-left: -16px; border-radius: 2px; background: rgba(255,255,255,.32); }
+.media-float .mf-corner, .media-float .mf-hide { position: absolute; top: 0; width: 36px; height: 24px; border: 0; padding: 0; background: transparent; color: rgba(255,255,255,.6); display: flex; align-items: center; justify-content: center; touch-action: none; }
+.media-float .mf-corner { right: 0; cursor: nesw-resize; }
+.media-float .mf-hide { left: 0; cursor: pointer; }
+.media-float .mf-corner svg, .media-float .mf-hide svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.media-float .mf-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: transparent; }
 .media-float .mf-tab { display: none; }
 .media-float.tucked .mf-grab, .media-float.tucked .mf-frame { display: none; }
+.media-float.tucked { border-radius: 10px; }
 .media-float.tucked .mf-tab { display: flex; flex: 1; align-items: center; justify-content: center; border: 0; background: transparent; color: #fff; }
 .media-float.tucked .mf-tab svg { width: 20px; height: 20px; }
+/* where the player will settle beside the music, shown while it is dragged against an edge */
+.mf-zone { position: fixed; z-index: 899; border-radius: 18px; background: rgba(127,166,255,.14); border: 2px solid rgba(127,166,255,.7); pointer-events: none; }
+.mf-zone[hidden] { display: none; }
 #lsSaved a.plays::before { content: '▶︎ '; color: var(--accent, #1f3a8a); }
 
 /* the privacy policy and terms, at the foot of Settings */
