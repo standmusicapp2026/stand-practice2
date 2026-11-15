@@ -10,18 +10,20 @@
      its own small web view, loaded with an https address so YouTube knows where it is shown; in a
      browser it sits in a frame of the page. -->
 <style>
-  :root { --bg: #13161d; --fg: #f3f4f7; --mut: #9aa3b5; --acc: #7fa6ff; --btn: rgba(255,255,255,.08); --btn2: rgba(255,255,255,.14); }
+  :root { --bg: #15181f; --fg: #eef0f4; --mut: #8d96a8; --acc: #8fb0ff; --btn: transparent; --btn2: rgba(255,255,255,.12); }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px -apple-system, system-ui, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
   body { display: flex; flex-direction: column; }
   /* the picture, with a narrow margin and round corners, in the dark of the player */
   #stage { flex: 1; min-height: 0; position: relative; background: #000; margin: 0 6px; border-radius: 10px; overflow: hidden; }
   #stage iframe, #stage > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  #bar { flex: none; height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 6px; background: var(--bg); }
-  #bar button { flex: none; height: 30px; min-width: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--btn); color: var(--fg); font: 600 12.5px -apple-system, system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; transition: background .12s; }
+  #bar { flex: none; height: 40px; display: flex; align-items: center; gap: 2px; padding: 0 6px; background: var(--bg); cursor: grab; }
+  /* (the dark round the picture and between the buttons moves the player: it is dragged from there) */
+  body { cursor: grab; } #stage, #bar button { cursor: default; }
+  #bar button { flex: none; height: 32px; min-width: 34px; padding: 0 8px; border: 0; border-radius: 9px; background: var(--btn); color: var(--fg); font: 600 12.5px -apple-system, system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; transition: background .12s; }
   #bar button:active { background: var(--btn2); }
-  #bar button.on { background: var(--acc); color: #0b1020; }
-  #bar button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #bar button.on { background: rgba(143,176,255,.18); color: var(--acc); }
+  #bar button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   #bar .t { flex: 1; min-width: 0; color: var(--mut); font-variant-numeric: tabular-nums; font-size: 12px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #bar .x { background: transparent; color: var(--mut); }
   #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--mut); font-size: 13px; line-height: 1.4; }
@@ -181,6 +183,16 @@ $('#bOpen').onclick = () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVide
 // in the background)
 document.addEventListener('visibilitychange', () => { if (document.hidden && P.kind === 'youtube' && P.yt && P.yt.pauseVideo) try { P.yt.pauseVideo(); } catch {} });
 window.addEventListener('pagehide', () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVideo) try { P.yt.pauseVideo(); } catch {} });
+// In the iPad app: where a touch must stay the page's own (the picture and the buttons); anywhere
+// else on the dark of the player, a drag moves the player (the app moves it, as from its top bar).
+const keep = () => { const r = []; for (const e of [$('#stage'), ...document.querySelectorAll('#bar button')]) { const b = e.getBoundingClientRect(); if (b.width && b.height) r.push([b.left, b.top, b.width, b.height].map((v) => Math.round(v))); } return r; };
+let keepWas = '';
+const sendKeep = () => { const k = keep(), s2 = JSON.stringify(k); if (s2 === keepWas) return; keepWas = s2; try { window.webkit.messageHandlers.standMediaUI.postMessage({ op: 'keep', rects: k }); } catch {} };
+if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standMediaUI) {
+  try { const ro = new ResizeObserver(() => requestAnimationFrame(sendKeep)); ro.observe(document.body); ro.observe($('#bar')); for (const b of document.querySelectorAll('#bar button')) ro.observe(b); } catch {}
+  addEventListener('resize', () => requestAnimationFrame(sendKeep));
+  setInterval(sendKeep, 1000);
+}
 // (in a browser: what to play comes in the address)
 try { const h = decodeURIComponent(location.hash.slice(1)); if (h) window.mediaOpen(JSON.parse(h)); } catch {}
 host('loaded');

@@ -405,28 +405,25 @@ async function mediaRun(pre) {
     if (got.op === 'error' && got.code === 153) return false;
     // (the player is on the screen, at least as big as YouTube asks: 200 points of picture)
     const fr = ev.find((m) => m.op === 'frame');
-    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 64 < 199 || fr.w - 12 < 199) return false; }
+    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 66 < 199 || fr.w - 12 < 199) return false; }
     return got.op === 'ready' ? 'ready' : 'error ' + got.code;
   }, 45000);
-  // beside the music: the score makes room for the player (on a phone: under the music)
-  await step(pre + 'floating player beside the music', async () => {
+  // half out at the right edge, so more of the music is free: the player keeps its size, the score
+  // keeps its own (it is not made smaller), and at least half of the player stays on the screen
+  await step(pre + 'floating player half out at the edge', async () => {
     if (!(window.webkit && window.webkit.messageHandlers.standMedia)) return 'no native player';
+    const sg = $('#stage'), css0 = sg.style.cssText;
     ev.length = 0;
     window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: 'r' });
-    const side = await waitFor(() => ev.find((m) => m.op === 'side' && m.edge), 5000);
-    if (!side) throw new Error('no answer');
-    await sleep(500);
-    const sg = $('#stage'), st = sg.getBoundingClientRect();
-    // (no score is open here, so the page keeps the room in its own settings: the stage is told to stop that far from the edge)
-    const pos = side.edge === 'r' ? sg.style.right : side.edge === 'b' ? sg.style.bottom : sg.style.left;
-    const d = `${side.edge} ${side.inset}, the stage ${sg.dataset.mside} ${pos} in ${innerWidth}x${innerHeight}`;
-    if (sg.dataset.mside !== side.edge + ':' + Math.round(side.inset) || Math.abs(parseFloat(pos) - side.inset) > 1 || side.inset < 200 || !document.body.classList.contains('media-beside')) throw new Error(d);
-    if (st.width > 0) { const room = side.edge === 'r' ? innerWidth - st.right : side.edge === 'b' ? innerHeight - st.bottom : st.left; if (Math.abs(room - side.inset) > 1) throw new Error(d + ' room ' + Math.round(room)); }
+    const m = await waitFor(() => ev.find((x) => x.op === 'moved'), 5000);
+    if (!m) throw new Error('no answer');
+    await sleep(300);
+    const d = `${Math.round(m.x)},${Math.round(m.y)} ${Math.round(m.w)}x${Math.round(m.h)} in ${Math.round(m.hw)}x${Math.round(m.hh)}`;
+    if (!(m.x + m.w > m.hw + 20) || m.x + m.w / 2 > m.hw + 1 || m.w - 12 < 199 || m.h - 66 < 199 || sg.style.cssText !== css0) throw new Error(d + ' stage ' + sg.style.cssText);
     ev.length = 0;
     window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: '' });
-    const back = await waitFor(() => ev.find((m) => m.op === 'side'), 5000); await sleep(300);
-    const sg2 = $('#stage');
-    if (!back || back.edge || sg2.dataset.mside || sg2.style.right || sg2.style.bottom || sg2.style.left || document.body.classList.contains('media-beside')) throw new Error('not back: ' + JSON.stringify(back) + ' ' + sg2.style.cssText);
+    const n = await waitFor(() => ev.find((x) => x.op === 'moved'), 5000);
+    if (!n || n.x < 0 || n.x + n.w > n.hw + 1) throw new Error('not back: ' + JSON.stringify(n));
     return d;
   }, 15000);
   await step(pre + 'floating player closes', async () => { window.webkit.messageHandlers.standMedia && window.webkit.messageHandlers.standMedia.postMessage({ op: 'close' }); await sleep(800); return true; });
