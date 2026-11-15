@@ -45,6 +45,17 @@
   @media (max-width: 380px) { #bLoop .lt { display: none; } #bLoop.arm { animation: armp 1.2s ease-in-out infinite; } }
   @keyframes armp { 50% { box-shadow: inset 0 0 0 2px transparent; } }
   @media (prefers-reduced-motion: reduce) { #bLoop.arm { animation: none; } }
+  /* In the iPad app, a video: the picture alone, round, with nothing round it; Stand's buttons in a
+     bar of their own under it (above it, low on the screen), which comes when the video is touched
+     and goes a few seconds later. Nothing is ever drawn over the picture. */
+  html.clean, html.clean body { background: transparent; }
+  body.clean { display: block; position: relative; cursor: default; }
+  /* (where the app puts them: the picture, and the bar, which stays all on the screen) */
+  body.clean #stage { position: absolute; left: 0; top: 0; right: 0; bottom: 52px; margin: 0; border-radius: 14px; }
+  body.clean #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 44px; border-radius: 14px; padding: 0 6px; cursor: default; transition: opacity .22s ease; }
+  body.clean.barhide #bar { opacity: 0; pointer-events: none; }
+  body.clean #bOpen { display: none; }
+  @media (prefers-reduced-motion: reduce) { body.clean #bar { transition: none; } }
 </style>
 </head>
 <body>
@@ -143,6 +154,8 @@ function openApple(path) {
   $('#stage').append(f);
 }
 window.mediaOpen = (o) => {
+  document.documentElement.classList.toggle('clean', !!o.clean); document.body.classList.toggle('clean', !!o.clean);
+  if (o.clean) { window.mediaLayout(o); showBar(); }
   if (o.tr) { P.tr = o.tr; for (const b of document.querySelectorAll('#bar button[aria-label]')) b.setAttribute('aria-label', T(b.dataset.en || (b.dataset.en = b.getAttribute('aria-label')))); }
   clear(); P.kind = o.kind; P.url = o.url || ''; P.speed = 1; syncBar();
   if (o.kind === 'youtube') openYouTube(o.id, o.start);
@@ -150,6 +163,24 @@ window.mediaOpen = (o) => {
   else if (o.kind === 'apple') openApple(o.path);
   else say(T('This link cannot play here.'));
 };
+// A video in the iPad app: its buttons come when it is touched, and go again 3.5 s after the last
+// touch (not while a passage to repeat waits for its end); the app is told, so a touch where they
+// were goes through to the score.
+let barT = 0, barWas = null;
+function showBar() {
+  if (!document.body.classList.contains('clean')) return;
+  document.body.classList.remove('barhide'); barSaid(true);
+  clearTimeout(barT); barT = setTimeout(hideBar, 3500);
+}
+function hideBar() {
+  if (P.a !== null && P.b === null) { barT = setTimeout(hideBar, 3500); return; }
+  document.body.classList.add('barhide'); barSaid(false);
+}
+function barSaid(on) { if (barWas === on) return; barWas = on; host('bar', { shown: on }); requestAnimationFrame(() => { try { sendKeep(); } catch {} }); }
+window.mediaTouched = showBar;
+const placeAt = (e, r) => { if (!Array.isArray(r) || r.length !== 4) return; Object.assign(e.style, { left: r[0] + 'px', top: r[1] + 'px', width: r[2] + 'px', height: r[3] + 'px', right: 'auto', bottom: 'auto' }); };
+window.mediaLayout = (o) => { if (!o) return; placeAt($('#stage'), o.pic); placeAt($('#bar'), o.bar); requestAnimationFrame(() => { try { sendKeep(); } catch {} }); };
+document.getElementById('bar').addEventListener('pointerdown', () => { if (document.body.classList.contains('clean')) showBar(); }, true);
 // Stand asks: pause (when the player is put away at the side), play, the speed
 window.mediaCmd = (c) => {
   if (P.kind !== 'youtube' || !P.yt || !P.yt.pauseVideo) return;
@@ -185,7 +216,16 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && P.k
 window.addEventListener('pagehide', () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVideo) try { P.yt.pauseVideo(); } catch {} });
 // In the iPad app: where a touch must stay the page's own (the picture and the buttons); anywhere
 // else on the dark of the player, a drag moves the player (the app moves it, as from its top bar).
-const keep = () => { const r = []; for (const e of [$('#stage'), ...document.querySelectorAll('#bar button')]) { const b = e.getBoundingClientRect(); if (b.width && b.height) r.push([b.left, b.top, b.width, b.height].map((v) => Math.round(v))); } return r; };
+const keep = () => {
+  const r = [], add = (b) => { if (b.width && b.height) r.push([b.left, b.top, b.width, b.height].map((v) => Math.round(v))); };
+  const clean = document.body.classList.contains('clean');
+  // (a video: dragged by its picture, but for YouTube's own buttons along its bottom and a link in
+  // a message; a frame: the whole player is the player's own)
+  if (clean) { const s0 = $('#stage').getBoundingClientRect(); add({ left: s0.left, top: s0.bottom - 50, width: s0.width, height: 50 }); for (const a of document.querySelectorAll('#msg a')) add(a.getBoundingClientRect()); }
+  else add($('#stage').getBoundingClientRect());
+  if (!clean || !document.body.classList.contains('barhide')) for (const e of document.querySelectorAll('#bar button')) add(e.getBoundingClientRect());
+  return r;
+};
 let keepWas = '';
 const sendKeep = () => { const k = keep(), s2 = JSON.stringify(k); if (s2 === keepWas) return; keepWas = s2; try { window.webkit.messageHandlers.standMediaUI.postMessage({ op: 'keep', rects: k }); } catch {} };
 if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standMediaUI) {

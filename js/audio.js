@@ -302,12 +302,17 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(() => healAudio('visible'), 400); });
   window.addEventListener('pageshow', () => setTimeout(() => healAudio('visible'), 400));
 }
+// (a YouTube video floating over the score: see the floating player in main.js)
+export function videoFloats() { return typeof window !== 'undefined' && !!window.__standVideoFloats; }
 // The first touch anywhere wakes the sound (iOS only allows it inside a touch), and so does
 // coming back to the app.
 if (typeof document !== 'undefined') {
   const wake = () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); };
-  document.addEventListener('pointerdown', wake, true);
-  document.addEventListener('touchend', wake, true);
+  // (not while a YouTube video floats over the score: waking the sound there stops the video, so a
+  // tap to turn the page would pause it. A sound asked for still wakes it, as always.)
+  const touchWake = () => { if (!videoFloats()) wake(); };
+  document.addEventListener('pointerdown', touchWake, true);
+  document.addEventListener('touchend', touchWake, true);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 }
 
@@ -364,7 +369,7 @@ if (typeof window !== 'undefined' && window.AudioScheduledSourceNode && window.A
     restingCtx = ctx; alog('resting (nothing played for 30 s)');
     ctx.suspend().catch(() => {});
   }, 5000);
-  document.addEventListener('pointerdown', () => { if (restingCtx) rouse(); }, true);
+  document.addEventListener('pointerdown', () => { if (restingCtx && !videoFloats()) rouse(); }, true);
   // Stand left (home screen, another app, the screen locked) with nothing playing or listening:
   // the sound system rests at once and the app lets go of the iPad's sound, so iOS stops showing
   // Stand as playing. A metronome, drone or recording that is going keeps going; when it stops

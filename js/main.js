@@ -78,7 +78,9 @@ function toast(msg, ms = 2800) { if (document.body.classList.contains('performin
 
 // Any first tap wakes the audio engine (iOS requirement).
 let unlocked = false;
-document.addEventListener('pointerdown', () => { if (!unlocked) { unlocked = true; unlock(); } else getCtx(); }, { capture: true });
+// (not while a YouTube video floats over the score: waking the sound with a tap there stops the
+// video, so turning the page would pause it; a sound asked for wakes it all the same)
+document.addEventListener('pointerdown', () => { if (!unlocked) { unlocked = true; unlock(); } else if (!window.__standVideoFloats) getCtx(); }, { capture: true });
 
 // =====================================================================
 // Settings
@@ -10746,12 +10748,14 @@ function openMedia(url, name) {
   o.tr = {}; for (const x of MEDIA_WORDS) { const t = globalThis.__tr ? globalThis.__tr(x) : x; if (t && t !== x) o.tr[x] = t; }
   unlock();
   hidePanel();
+  // (a video floating: a tap on the score no longer wakes Stand's sound, which would stop it)
+  window.__standVideoFloats = o.kind === 'youtube';
   // (in the iPad app: a player of its own, which YouTube accepts)
   if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) { NATIVE.standMedia.postMessage({ op: 'open', ...o }); MEDIA.kind = o.kind; return; }
   mediaFrame(o);
 }
 window.__mediaOf = mediaOf; window.__openMedia = openMedia;
-window.standMediaEvent = (m) => { if (!m) return; if (m.op === 'closed') MEDIA.kind = ''; };
+window.standMediaEvent = (m) => { if (!m) return; if (m.op === 'closed') { MEDIA.kind = ''; window.__standVideoFloats = false; } };
 // In a browser: the same player in a frame that floats over the page. It is moved by any of its dark
 // edge (the top bar, the margin, the bar of buttons between the buttons) and sized by its corner. It
 // may be pushed half out of the screen at the left or right, to leave more of the music free (the
@@ -10817,7 +10821,7 @@ function mediaFrame(o) {
     tab.addEventListener('click', () => { const s0 = MEDIA.shown; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) put(fitted(s0)); });
     MEDIA.tuck = tuck;
     addEventListener('resize', () => { if (!MEDIA.box || box.classList.contains('tucked')) return; put(fitted(R())); });
-    const closeIt = () => { box.remove(); MEDIA.box = null; MEDIA.kind = ''; };
+    const closeIt = () => { box.remove(); MEDIA.box = null; MEDIA.kind = ''; window.__standVideoFloats = false; };
     window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || e.source !== fr.contentWindow) return; if (m.op === 'close') closeIt(); else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
   }
   MEDIA.kind = o.kind;

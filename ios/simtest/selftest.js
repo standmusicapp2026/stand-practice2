@@ -393,6 +393,8 @@ async function musicXmlRun(pre) {
 }
 // The little player over the score (its own web view, with an https address YouTube accepts):
 // a YouTube video gets ready (YouTube's error 153 would mean it was turned away), then it closes.
+// (the size of the picture: a video is the picture alone; a frame has a bar above and under it)
+const picW = (m) => (m.clean ? m.w : m.w - 12), picH = (m) => (m.clean ? m.h : m.h - 66);
 async function mediaRun(pre) {
   const ev = []; const was = window.standMediaEvent;
   window.standMediaEvent = (m) => { ev.push(m); try { was && was(m); } catch {} };
@@ -405,7 +407,7 @@ async function mediaRun(pre) {
     if (got.op === 'error' && got.code === 153) return false;
     // (the player is on the screen, at least as big as YouTube asks: 200 points of picture)
     const fr = ev.find((m) => m.op === 'frame');
-    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 66 < 199 || fr.w - 12 < 199) return false; }
+    if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || picH(fr) < 199 || picW(fr) < 199) return false; }
     return got.op === 'ready' ? 'ready' : 'error ' + got.code;
   }, 45000);
   // half out at the right edge, so more of the music is free: the player keeps its size, the score
@@ -419,11 +421,30 @@ async function mediaRun(pre) {
     if (!m) throw new Error('no answer');
     await sleep(300);
     const d = `${Math.round(m.x)},${Math.round(m.y)} ${Math.round(m.w)}x${Math.round(m.h)} in ${Math.round(m.hw)}x${Math.round(m.hh)}`;
-    if (!(m.x + m.w > m.hw + 20) || m.x + m.w / 2 > m.hw + 1 || m.w - 12 < 199 || m.h - 66 < 199 || sg.style.cssText !== css0) throw new Error(d + ' stage ' + sg.style.cssText);
+    if (!(m.x + m.w > m.hw + 20) || m.x + m.w / 2 > m.hw + 1 || picW(m) < 199 || picH(m) < 199 || sg.style.cssText !== css0) throw new Error(d + ' stage ' + sg.style.cssText);
     ev.length = 0;
     window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: '' });
     const n = await waitFor(() => ev.find((x) => x.op === 'moved'), 5000);
     if (!n || n.x < 0 || n.x + n.w > n.hw + 1) throw new Error('not back: ' + JSON.stringify(n));
+    return d;
+  }, 15000);
+  // a video half out at the bottom too, the same way
+  await step(pre + 'floating player half out at the bottom', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia)) return 'no native player';
+    const sg = $('#stage'), css0 = sg.style.cssText;
+    ev.length = 0;
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: 'b' });
+    const m = await waitFor(() => ev.find((x) => x.op === 'moved'), 5000);
+    if (!m) throw new Error('no answer');
+    await sleep(300);
+    const d = `${Math.round(m.x)},${Math.round(m.y)} ${Math.round(m.w)}x${Math.round(m.h)} in ${Math.round(m.hw)}x${Math.round(m.hh)}`;
+    if (!m.clean) return 'a frame: ' + d;
+    if (!(m.y + m.h > m.hh + 20) || m.y + m.h / 2 > m.hh + 1 || m.w < 199 || m.h < 199 || m.x < 0 || m.x + m.w > m.hw + 1 || sg.style.cssText !== css0) throw new Error(d + ' stage ' + sg.style.cssText);
+    await shot(pre ? 'p-media-low' : '10e-media-low');
+    ev.length = 0;
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'edge', edge: '' });
+    const n = await waitFor(() => ev.find((x) => x.op === 'moved'), 5000);
+    if (!n || n.y < 0 || n.y + n.h > n.hh + 1) throw new Error('not back: ' + JSON.stringify(n));
     return d;
   }, 15000);
   await step(pre + 'floating player closes', async () => { window.webkit.messageHandlers.standMedia && window.webkit.messageHandlers.standMedia.postMessage({ op: 'close' }); await sleep(800); return true; });
