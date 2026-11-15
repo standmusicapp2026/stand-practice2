@@ -408,6 +408,33 @@ async function mediaRun(pre) {
     if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || fr.h - 66 < 199 || fr.w - 12 < 199) return false; }
     return got.op === 'ready' ? 'ready' : 'error ' + got.code;
   }, 45000);
+  // A tap on the score (to turn the page) leaves the video playing: only a tap on the video or on
+  // its own play button plays or pauses it. (Stand's sound, resting after 30 s of quiet, used to
+  // wake on any tap, and that stopped the video.)
+  await step(pre + 'floating player: a tap on the page leaves the video playing', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia)) return 'no native player';
+    ev.length = 0;
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'cmd', cmd: 'play' });
+    const p = await waitFor(() => ev.find((m) => m.op === 'state' && m.st === 1), 20000);
+    if (!p) return 'the video did not start here (' + ev.filter((m) => m.op === 'state').map((m) => m.st).join(',') + ')';
+    // (Stand's sound resting, as after half a minute of quiet)
+    const c = window.__standMetro && window.__standMetro._ctx;
+    if (c && c.state === 'running') { try { await c.suspend(); } catch {} }
+    await sleep(1500);
+    ev.length = 0;
+    const x = Math.round(innerWidth * 0.8), y = Math.round(innerHeight * 0.5), t = document.elementFromPoint(x, y) || document.body;
+    const o = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, pointerType: 'touch', pointerId: 77, isPrimary: true };
+    t.dispatchEvent(new PointerEvent('pointerdown', o));
+    await sleep(60);
+    t.dispatchEvent(new PointerEvent('pointerup', o));
+    await sleep(3500);
+    const st = ev.filter((m) => m.op === 'state').map((m) => m.st);
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'cmd', cmd: 'pause' });
+    await sleep(500);
+    const d = 'states after the tap [' + st.join(',') + '] sound ' + (c ? c.state : '-');
+    if (st.includes(2)) throw new Error('the video paused: ' + d);
+    return d;
+  }, 40000);
   // half out at the right edge, so more of the music is free: the player keeps its size, the score
   // keeps its own (it is not made smaller), and at least half of the player stays on the screen
   await step(pre + 'floating player half out at the edge', async () => {

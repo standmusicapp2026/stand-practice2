@@ -114,7 +114,7 @@ async function openYouTube(id, start) {
       onReady: () => { const m = $('#msg'); if (m) m.hidden = true; P.rates = ratesOf(P.yt); try { P.yt.setPlaybackRate(P.speed); } catch {} host('ready'); },
       // (YouTube says which speed it really plays: that is what the button shows)
       onPlaybackRateChange: (e) => { if (typeof e.data === 'number' && e.data > 0) { P.speed = e.data; syncBar(); } },
-      onStateChange: (e) => { P.playing = e.data === 1; syncBar(); host('state', { playing: P.playing }); },
+      onStateChange: (e) => { P.playing = e.data === 1; syncBar(); host('state', { playing: P.playing, st: e.data }); },
       onError: (e) => { const why = T({ 2: 'This link is not a video YouTube knows.', 5: 'This video cannot play here.', 100: 'This video is no longer on YouTube, or it is private.', 101: 'Whoever put this video on YouTube does not let it play outside YouTube.', 150: 'Whoever put this video on YouTube does not let it play outside YouTube.', 153: 'YouTube did not accept where this player is shown.' }[e.data] || 'This video cannot play here.');
         say(why + ' <a href="#" id="goOut"></a>', true); const go0 = $('#goOut'); if (go0) go0.textContent = T('Open it in YouTube'); const g = $('#goOut'); if (g) g.onclick = (ev) => { ev.preventDefault(); host('openOut', { url: P.url }); }; host('error', { code: e.data }); },
     },
