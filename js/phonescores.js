@@ -657,9 +657,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const id = copy.id.slice(9);
     return (await db.get('files', pageKey(id, i, copy.stamp)).catch(() => null)) || db.get('files', oldPageKey(id, i)).catch(() => null);
   };
-  let zoomHeld = () => false, pzResetHook = () => {};
-  // The pages each side of the one shown are fetched and decoded ahead, and kept: a turn shows a
-  // picture that is ready, at once (the page before too, for turning back).
+  // The pages each side of what is on the screen are fetched and decoded ahead, and kept: what
+  // scrolls in shows a picture that is ready.
   const PRE = new Map();
   const preKey = (v, i) => v.copy.id + ':' + v.copy.stamp + ':' + i;
   const preDrop = (k) => { const e = PRE.get(k); if (!e) return; PRE.delete(k); if (e.u) URL.revokeObjectURL(e.u); if (e.ui) URL.revokeObjectURL(e.ui); };
@@ -667,7 +666,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   const prePage = (v, i) => {
     if (!(i >= 0 && i < countOf(v.copy))) return Promise.resolve(null);
     const k = preKey(v, i), had = PRE.get(k); if (had) return had.p;
-    const e = { u: null, ui: null };
+    const e = { u: null, ui: null, w: 0, h: 0 };
     e.p = (async () => {
       const p = await pageOf(v.copy, i);
       if (!p || !p.img) { if (PRE.get(k) === e) PRE.delete(k); return null; }
@@ -675,59 +674,154 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       e.page = p; e.u = URL.createObjectURL(p.img); e.ui = p.ink ? URL.createObjectURL(p.ink) : null;
       const im = new Image(); im.src = e.u;
       try { await im.decode(); } catch {}
+      e.w = im.naturalWidth || p.w || 0; e.h = im.naturalHeight || p.h || 0;
       return e;
     })();
     PRE.set(k, e);
     return e.p;
   };
-  const preKeep = (v) => { const keep = new Set([-1, 0, 1, 2].map((d) => preKey(v, v.i + d))); for (const k of [...PRE.keys()]) if (!keep.has(k)) preDrop(k); };
-  async function drawPage() {
-    const v = PS.view; if (!v) return;
-    pzResetHook();
-    $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`;
-    const i0 = v.i, e = await prePage(v, v.i);
-    if (PS.view !== v || v.i !== i0) return;
-    if (!e) { toast('This page is missing on this iPhone. It comes again next time your iPad is found.'); return; }
-    const img = $('#phvImg'), ink = $('#phvInkImg');
-    if (img.getAttribute('src') !== e.u) img.src = e.u;
+
+  // ---------- the reader: the pages one under the other, scrolled like a PDF ----------
+  // Fitted to the width of the iPhone, scrolled with the finger (and its momentum); two fingers
+  // make it bigger (then it is scrolled every way), a double tap goes in and out. A wink or a
+  // pedal brings the next page to the top. Only the pages near what is on the screen are kept as
+  // pictures; the rest are let go, and come again when scrolled to.
+  const stage = $('#phvStage'), list = $('#phvList');
+  const RD = { key: '', slots: [], z: 1, near: new Set(), aspect: 1.414, raf: 0, fillT: 0, io: null, mid: -1 };
+  const keyOf = (v) => v.copy.id + ':' + v.copy.stamp + ':' + countOf(v.copy);
+  const baseW = () => Math.max(100, stage.clientWidth - 16);
+  function applyZoom() { list.style.width = Math.round(baseW() * RD.z) + 'px'; list.style.setProperty('--z', RD.z); }
+  function build(v) {
+    if (RD.io) RD.io.disconnect();
+    list.textContent = ''; RD.slots = []; RD.near.clear(); RD.key = keyOf(v); RD.z = 1; RD.mid = -1;
+    list.style.transform = ''; stage.classList.remove('zoomed'); stage.scrollTop = 0; stage.scrollLeft = 0;
+    const n = countOf(v.copy);
+    for (let i = 0; i < n; i++) {
+      const s = el('div', 'phv-slot'); s.dataset.i = i; s.style.aspectRatio = `1 / ${RD.aspect}`;
+      const im = el('img', 'pg'); im.alt = ''; im.draggable = false;
+      const ink = el('img', 'ink'); ink.alt = ''; ink.hidden = true; ink.draggable = false;
+      s.append(im, ink); list.append(s); RD.slots.push(s);
+    }
+    applyZoom();
+    RD.io = new IntersectionObserver((es) => {
+      for (const e of es) { const i = +e.target.dataset.i; if (e.isIntersecting) RD.near.add(i); else RD.near.delete(i); }
+      fillSoon();
+    }, { root: stage, rootMargin: '120% 60% 120% 60%' });
+    for (const s of RD.slots) RD.io.observe(s);
+  }
+  const fillSoon = () => { clearTimeout(RD.fillT); RD.fillT = setTimeout(fill, 30); };
+  // the pages near the screen drawn, the ones far away let go
+  function fill() {
+    const v = PS.view; if (!v || viewer.hidden) return;
+    if (RD.key !== keyOf(v)) { const i = v.i; build(v); toPage(i, false); return; }
+    const keep = new Set(RD.near); for (const d of [-1, 0, 1, 2]) keep.add(v.i + d);
+    // (nearest first: the page on the screen, then the ones each side)
+    const order = [...keep].filter((i) => i >= 0 && i < RD.slots.length).sort((a, b) => Math.abs(a - v.i) - Math.abs(b - v.i));
+    for (const i of order) show(v, i);
+    RD.slots.forEach((s, i) => {
+      if (keep.has(i) || !s.dataset.k) return;
+      const im = s.querySelector('img.pg'), ink = s.querySelector('img.ink');
+      im.onload = null; im.removeAttribute('src'); ink.removeAttribute('src'); ink.hidden = true; s.dataset.k = '';
+      preDrop(preKey(v, i));
+    });
+    // (and what was fetched ahead for pages now far away, or of another score)
+    const mine = v.copy.id + ':' + v.copy.stamp + ':';
+    for (const k of [...PRE.keys()]) if (!k.startsWith(mine) || !keep.has(+k.slice(mine.length))) preDrop(k);
+  }
+  async function show(v, i) {
+    const s = RD.slots[i]; if (!s) return;
+    const k = preKey(v, i);
+    if (s.dataset.k === k) { inkOf(s, PRE.get(k)); return; }
+    if (s.dataset.want === k) return;
+    s.dataset.want = k;
+    const e = await prePage(v, i);
+    if (s.dataset.want === k) delete s.dataset.want;
+    if (PS.view !== v || RD.slots[i] !== s || s.dataset.k === k) return;
+    if (!e) { if (i === v.i) toast('This page is missing on this iPhone. It comes again next time your iPad is found.'); return; }
+    // (keep away from pages being let go meanwhile)
+    if (!PRE.has(k)) return;
+    const im = s.querySelector('img.pg');
+    // (its own shape; a page above the screen that changes height keeps what is read in place)
+    if (e.w && e.h) {
+      // (the first page's shape is the likely shape of all: the pages not yet drawn take it)
+      if (i === 0 && Math.abs(e.h / e.w - RD.aspect) > 0.002) {
+        RD.aspect = e.h / e.w;
+        for (const o of RD.slots) if (o !== s && !o.dataset.k && o.getBoundingClientRect().top >= stage.getBoundingClientRect().top) o.style.aspectRatio = `1 / ${RD.aspect}`;
+      }
+      const was = s.getBoundingClientRect(), top = stage.getBoundingClientRect().top;
+      s.style.aspectRatio = `${e.w} / ${e.h}`;
+      const now = s.getBoundingClientRect();
+      if (was.bottom <= top + 1 && Math.abs(now.height - was.height) > 0.5) stage.scrollTop += now.height - was.height;
+    }
+    im.src = e.u; s.dataset.k = k;
+    inkOf(s, e);
     // (a page that came white from the iPad, drawn when it was short of memory: thrown away, and the
     // score asked for again, those pages only, the next time the iPad is found)
     const blankCheck = async () => {
-      if (PS.view !== v || v.i !== i0 || !looksBlank(img)) return;
-      preDrop(preKey(v, i0));
+      if (PS.view !== v || s.dataset.k !== k || !looksBlank(im)) return;
+      preDrop(k);
       const id = v.copy.id.slice(9);
       // (drawn here from the PDF: drawn again the next time, nothing to ask the iPad for)
-      if (v.copy.mode === 'pdf') { await db.del('files', pageKey(id, i0, v.copy.stamp)).catch(() => {}); return; }
+      if (v.copy.mode === 'pdf') { await db.del('files', pageKey(id, i, v.copy.stamp)).catch(() => {}); return; }
       // (asked again once already: the page really is empty)
       const once = (() => { try { return JSON.parse(localStorage.getItem('standBlankOnce') || '[]'); } catch { return []; } })();
-      const bk = id + ':' + i0; if (once.includes(bk)) return;
+      const bk = id + ':' + i; if (once.includes(bk)) return;
       try { localStorage.setItem('standBlankOnce', JSON.stringify([...once, bk].slice(-300))); } catch {}
-      await db.del('files', pageKey(id, i0, v.copy.stamp)).catch(() => {});
+      await db.del('files', pageKey(id, i, v.copy.stamp)).catch(() => {});
       const c2 = await db.get('files', v.copy.id).catch(() => null);
       if (c2) { c2.stamp = 'again:' + c2.stamp; await db.put('files', c2).catch(() => {}); }
-      nlog('iPhone: a white page thrown away (' + (i0 + 1) + ')');
+      nlog('iPhone: a white page thrown away (' + (i + 1) + ')');
       toast('This page came white from your iPad. It comes again the next time your iPad is found.', 4500);
     };
-    if (img.complete && img.naturalWidth) blankCheck(); else img.onload = () => { img.onload = null; blankCheck(); };
-    if (e.ui && PS.ink) { if (ink.getAttribute('src') !== e.ui) ink.src = e.ui; ink.hidden = false; } else { ink.hidden = true; ink.removeAttribute('src'); }
+    if (im.complete && im.naturalWidth) blankCheck(); else im.onload = () => { im.onload = null; blankCheck(); };
+  }
+  function inkOf(s, e) {
+    const ink = s.querySelector('img.ink');
+    if (e && e.ui && PS.ink) { if (ink.getAttribute('src') !== e.ui) ink.src = e.ui; ink.hidden = false; } else { ink.hidden = true; ink.removeAttribute('src'); }
+  }
+  // which page is read now: the one across the middle of the screen
+  function current() {
+    const v = PS.view; if (!v || !RD.slots.length) return;
+    const r = stage.getBoundingClientRect(), y = r.top + r.height * 0.42;
+    let i = v.i;
+    // (looked for near the page it was, the pages being in order)
+    const at = (j) => RD.slots[j].getBoundingClientRect();
+    if (RD.slots[i]) {
+      while (i > 0 && at(i).top > y) i--;
+      while (i < RD.slots.length - 1 && at(i).bottom + 8 * RD.z < y) i++;
+    }
+    if (i !== v.i || RD.mid !== i) { v.i = i; RD.mid = i; label(); fillSoon(); }
+  }
+  const label = () => { const v = PS.view; if (v) $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`; };
+  stage.addEventListener('scroll', () => { if (RD.raf) return; RD.raf = requestAnimationFrame(() => { RD.raf = 0; current(); }); }, { passive: true });
+  // (where a page is in what scrolls)
+  const topOf = (s) => stage.scrollTop + s.getBoundingClientRect().top - stage.getBoundingClientRect().top;
+  // a page brought to the top of the screen (a wink, a pedal, back from Play)
+  function toPage(i, smooth) {
+    const s = RD.slots[i]; if (!s) return;
+    const y = topOf(s) - 8 * RD.z;
+    try { stage.scrollTo({ top: y, behavior: smooth ? 'smooth' : 'auto' }); } catch { stage.scrollTop = y; }
+    const v = PS.view; if (v) { v.i = i; RD.mid = i; label(); fillSoon(); }
+  }
+  async function drawPage() {
+    const v = PS.view; if (!v) return;
+    if (RD.key !== keyOf(v)) build(v);
+    // (where Play or a turn left off: that page on the screen)
+    if (RD.mid !== v.i) toPage(v.i, false);
+    label();
     $('#phvInk').classList.toggle('on', PS.ink);
     $('#phvInk span').textContent = PS.ink ? 'Markings on' : 'Markings off';
-    preKeep(v);
-    // the next pages ready ahead, and the one before
-    prePage(v, i0 + 1).then(() => { if (PS.view === v) prePage(v, i0 + 2); }); prePage(v, i0 - 1);
+    for (const s of RD.slots) if (s.dataset.k) inkOf(s, PRE.get(s.dataset.k));
+    fill();
   }
   window.__phoneViewer = { active: () => !viewer.hidden, wink: (eye) => { if (!PP.open) go(eye === 'right' ? 1 : -1); } };
-  const go = (d) => { const v = PS.view; if (!v) return; const i = Math.max(0, Math.min(countOf(v.copy) - 1, v.i + d)); if (i !== v.i) { v.i = i; drawPage(); } };
-  $('#phvClose').addEventListener('click', () => { if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; if (window.__sendFace) window.__sendFace(); for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; preAll(); const im = $('#phvImg'); im.onload = null; im.removeAttribute('src'); $('#phvInkImg').removeAttribute('src'); });
-  $('#phvInk').addEventListener('click', () => { PS.ink = !PS.ink; drawPage(); });
-  let sx = null, sy = 0;
-  const stage = $('#phvStage');
-  stage.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; });
-  stage.addEventListener('pointerup', (e) => {
-    if (sx === null || zoomHeld()) { sx = null; return; } const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
-    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { go(dx < 0 ? 1 : -1); return; }
-    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) { const r = stage.getBoundingClientRect(); go(e.clientX > r.left + r.width * 0.4 ? 1 : -1); }
+  const go = (d) => { const v = PS.view; if (!v) return; const i = Math.max(0, Math.min(countOf(v.copy) - 1, v.i + d)); if (i !== v.i) toPage(i, true); };
+  $('#phvClose').addEventListener('click', () => {
+    if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; if (window.__sendFace) window.__sendFace();
+    for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = [];
+    if (RD.io) RD.io.disconnect(); RD.io = null; list.textContent = ''; RD.slots = []; RD.key = ''; RD.near.clear(); preAll();
   });
+  $('#phvInk').addEventListener('click', () => { PS.ink = !PS.ink; drawPage(); });
   document.addEventListener('keydown', (e) => {
     if (viewer.hidden) return;
     // (a page-turning pedal sends these keys)
@@ -735,63 +829,67 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (PP.open) { if (fwd) { e.preventDefault(); ppStep(1); } else if (back) { e.preventDefault(); ppStep(-1); } else if (e.key === 'Escape') ppClose(); return; }
     if (fwd) { e.preventDefault(); go(1); } if (back) { e.preventDefault(); go(-1); } if (e.key === 'Escape') $('#phvClose').click();
   });
+  // (turned sideways: the same place of the same page stays at the top)
+  let rsT = 0;
+  addEventListener('resize', () => {
+    if (viewer.hidden || !RD.slots.length) return;
+    const v = PS.view, s = RD.slots[v.i]; if (!s) return;
+    const r = s.getBoundingClientRect(), top = stage.getBoundingClientRect().top, f = (top - r.top) / (r.height || 1);
+    clearTimeout(rsT); rsT = setTimeout(() => { applyZoom(); const s2 = RD.slots[v.i]; if (s2) { stage.scrollTop = topOf(s2) + f * s2.offsetHeight; RD.mid = v.i; label(); fillSoon(); } }, 60);
+  });
 
-  // ---------- zoom: pinch the page, drag it around; back to the whole page on turning ----------
-  const PZ = { s: 1, x: 0, y: 0, pts: new Map(), used: false, lastTap: 0 };
-  const box = $('#phvPageBox');
-  stage.classList.add('zoomable');
-  const pzApply = () => { box.style.transform = PZ.s > 1.001 ? `translate(${PZ.x}px, ${PZ.y}px) scale(${PZ.s})` : ''; };
-  const pzReset = () => { PZ.s = 1; PZ.x = 0; PZ.y = 0; pzApply(); };
-  const pzClamp = () => {
-    const r = box.getBoundingClientRect(), w = r.width / PZ.s, h = r.height / PZ.s, sr = stage.getBoundingClientRect();
-    // (the page never leaves the screen)
-    PZ.x = Math.min(sr.width * 0.4, Math.max(-(w * PZ.s - sr.width * 0.6), PZ.x));
-    PZ.y = Math.min(sr.height * 0.4, Math.max(-(h * PZ.s - sr.height * 0.6), PZ.y));
-    if (PZ.s <= 1.001) { PZ.x = 0; PZ.y = 0; }
-  };
-  // a point on the screen as a point of the page (before the zoom)
-  let base = null;
-  const zoomAt = (fx, fy, s1) => {
-    if (!base) { const t = box.style.transform; box.style.transform = ''; const r = box.getBoundingClientRect(); base = { x: r.left, y: r.top }; box.style.transform = t; }
-    const lx = (fx - base.x - PZ.x) / PZ.s, ly = (fy - base.y - PZ.y) / PZ.s;
-    PZ.s = Math.max(1, Math.min(4, s1));
-    PZ.x = fx - base.x - lx * PZ.s; PZ.y = fy - base.y - ly * PZ.s;
-    pzClamp(); pzApply();
-  };
-  let pinch = null, pan = null;
-  stage.addEventListener('pointerdown', (e) => {
-    PZ.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (PZ.pts.size === 1) { PZ.used = false; base = null; pan = { x: e.clientX, y: e.clientY, px: PZ.x, py: PZ.y }; }
-    if (PZ.pts.size === 2) {
-      const [a, b] = [...PZ.pts.values()];
-      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: PZ.s }; PZ.used = true; pan = null;
+  // ---------- zoom: two fingers, or a double tap; then the page is scrolled every way ----------
+  // While the fingers are on it, the pages are only drawn bigger (smooth); when they lift, they are
+  // laid out at that size and scrolled so that what was under the fingers stays there.
+  const ZMAX = 4;
+  let pz = null;
+  const listPt = (x, y) => { const r = list.getBoundingClientRect(); return { x: x - r.left, y: y - r.top }; };
+  // (k: how much bigger; o: about which point of the pages; d: how far the fingers moved meanwhile)
+  function commit(k, o, d) {
+    const sl = stage.scrollLeft, st = stage.scrollTop;
+    list.style.transition = ''; list.style.transform = '';
+    const z0 = RD.z;
+    RD.z = Math.max(1, Math.min(ZMAX, z0 * k));
+    const kk = RD.z / z0;
+    applyZoom();
+    stage.scrollLeft = sl + o.x * (kk - 1) - d.x;
+    stage.scrollTop = st + o.y * (kk - 1) - d.y;
+    stage.classList.toggle('zoomed', RD.z > 1.01);
+    current(); fillSoon();
+  }
+  const kOf = (k) => Math.max(1 / RD.z, Math.min(ZMAX / RD.z, k));
+  stage.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 2) return;
+    const [a, b] = e.touches, mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+    pz = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, m0: { x: mx, y: my }, o: listPt(mx, my), k: 1, d: { x: 0, y: 0 } };
+    list.style.transformOrigin = `${pz.o.x}px ${pz.o.y}px`;
+  }, { passive: true });
+  stage.addEventListener('touchmove', (e) => {
+    if (!pz || e.touches.length < 2) return;
+    e.preventDefault();
+    const [a, b] = e.touches, mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+    pz.k = kOf(Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pz.d0);
+    pz.d = { x: mx - pz.m0.x, y: my - pz.m0.y };
+    list.style.transform = `translate(${pz.d.x}px, ${pz.d.y}px) scale(${pz.k})`;
+  }, { passive: false });
+  const pzEnd = (e) => { if (!pz || e.touches.length >= 2) return; const p = pz; pz = null; commit(p.k, p.o, p.d); };
+  stage.addEventListener('touchend', pzEnd); stage.addEventListener('touchcancel', pzEnd);
+  // a double tap: in, about where it was tapped; tapped again, back to the whole width
+  let lastTap = null;
+  stage.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'mouse' && e.button > 0) return;
+    const now = Date.now(), t = { x: e.clientX, y: e.clientY, at: now };
+    if (lastTap && now - lastTap.at < 320 && Math.hypot(t.x - lastTap.x, t.y - lastTap.y) < 30) {
+      lastTap = null;
+      const k = RD.z > 1.3 ? 1 / RD.z : 2.2 / RD.z, o = listPt(t.x, t.y);
+      list.style.transformOrigin = `${o.x}px ${o.y}px`;
+      list.style.transition = 'transform .18s ease-out'; list.style.transform = `scale(${k})`;
+      setTimeout(() => commit(k, o, { x: 0, y: 0 }), 190);
+      return;
     }
+    lastTap = t;
   });
-  stage.addEventListener('pointermove', (e) => {
-    if (!PZ.pts.has(e.pointerId)) return;
-    PZ.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinch && PZ.pts.size >= 2) {
-      const [a, b] = [...PZ.pts.values()];
-      zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d);
-    } else if (pan && PZ.s > 1.001) {
-      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
-      if (Math.abs(dx) + Math.abs(dy) > 6) PZ.used = true;
-      PZ.x = pan.px + dx; PZ.y = pan.py + dy; pzClamp(); pzApply();
-    }
-  });
-  const pzUp = (e) => {
-    PZ.pts.delete(e.pointerId);
-    if (PZ.pts.size < 2) pinch = null;
-    if (PZ.pts.size === 0) {
-      if (PZ.s < 1.05) pzReset();
-      // (the gesture is over: the next one starts afresh; a tap still turns the page as before)
-      setTimeout(() => { if (PZ.pts.size === 0) PZ.used = false; }, 0);
-    }
-  };
-  stage.addEventListener('pointerup', pzUp); stage.addEventListener('pointercancel', pzUp);
-  // (zoomed in, a drag moves the page and a tap does not turn it)
-  zoomHeld = () => PZ.used || PZ.s > 1.05;
-  pzResetHook = pzReset;
+  stage.addEventListener('pointerdown', (e) => { if (lastTap && Date.now() - lastTap.at > 320) lastTap = null; });
 
   // ---------- Play: the music two lines at a time, as big as the iPhone held sideways allows ----------
   // Only the lines of music (no titles, no text), two at a time; a tap, a wink or the pedal brings

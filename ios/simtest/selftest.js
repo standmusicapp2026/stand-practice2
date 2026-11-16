@@ -410,6 +410,21 @@ async function mediaRun(pre) {
     if (fr) { say(`SELFTEST detail media frame ${Math.round(fr.x)},${Math.round(fr.y)} ${Math.round(fr.w)}x${Math.round(fr.h)} in ${Math.round(fr.hw)}x${Math.round(fr.hh)}`); if (fr.x < 0 || fr.y < 0 || fr.x + fr.w > fr.hw + 1 || fr.y + fr.h > fr.hh + 1 || picH(fr) < 199 || picW(fr) < 199) return false; }
     return got.op === 'ready' ? 'ready' : 'error ' + got.code;
   }, 45000);
+  // its buttons are in Stand's bar at the bottom of the page (the picture floats alone): there once
+  // the video is ready, and the speed changes from there
+  await step(pre + 'floating player: its buttons at the bottom', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia)) return 'no native player';
+    const p = $('#mediaPill');
+    if (!(await waitFor(() => p && !p.hidden && !p.classList.contains('wait'), 8000))) return false;
+    const r = p.getBoundingClientRect();
+    if (r.bottom > innerHeight || r.left < 0 || r.right > innerWidth) throw new Error('off the screen ' + JSON.stringify(r));
+    $('#mpSpeed').click();
+    const sp = await waitFor(() => $('#mpSpeedV').textContent !== '100' && $('#mpSpeedV').textContent, 5000);
+    await shot(pre ? 'p-media-bar' : '10f-media-bar');
+    if (!sp) throw new Error('speed not changed');
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'cmd', cmd: 'speed', value: 1 });
+    return `${Math.round(r.width)}x${Math.round(r.height)} at ${Math.round(r.left)},${Math.round(r.top)}; speed ${sp}%`;
+  }, 20000);
   // half out at the right edge, so more of the music is free: the player keeps its size, the score
   // keeps its own (it is not made smaller), and at least half of the player stays on the screen
   await step(pre + 'floating player half out at the edge', async () => {
@@ -451,6 +466,36 @@ async function mediaRun(pre) {
   window.standMediaEvent = was;
 }
 // the iPhone: its own home, the tools in the pocket, the linking screen, sideways and back
+// The iPhone's reader: a PDF added on the iPhone, its pages one under the other, scrolled like a
+// PDF (the page number follows; a wink brings the next page to the top)
+async function phoneReadRun() {
+  await step('iPhone: a score scrolled like a PDF', async () => {
+    window.__phoneAdded = null;
+    await window.standIncoming({ path: '/_selftest/vector8.pdf', name: 'vector8.pdf' });
+    const a = await waitFor(() => window.__phoneAdded, 60000);
+    if (!a || a.error) throw new Error('not added: ' + JSON.stringify(a));
+    await sleep(800);
+    const card = await waitFor(() => [...$$('#phsGrid .phs-card[data-score]')].find((c) => /vector8/i.test(c.textContent)) || $('#phsGrid .phs-card[data-score]'), 8000);
+    if (!card) throw new Error('no card');
+    card.click();
+    const ok = await waitFor(() => { const i = $('.phv-slot img.pg[src]'); return !$('#phView').hidden && i && i.complete && i.naturalWidth > 0; }, 40000);
+    if (!ok) throw new Error('not shown');
+    await sleep(600);
+    await shot('p-read-top');
+    const st = $('#phvStage'), sl = $$('.phv-slot'), n = sl.length;
+    const w = Math.round(sl[0].getBoundingClientRect().width), sw = Math.round(st.getBoundingClientRect().width);
+    st.scrollTop += sl[2].getBoundingClientRect().top - st.getBoundingClientRect().top + 20;
+    const l1 = await waitFor(() => /^3 \//.test($('#phvPage').textContent) && sl[2].querySelector('img.pg').getAttribute('src') && $('#phvPage').textContent, 6000);
+    window.__phoneViewer.wink('right');
+    const l2 = await waitFor(() => /^4 \//.test($('#phvPage').textContent) && $('#phvPage').textContent, 4000);
+    await sleep(800);
+    await shot('p-read-mid');
+    const top4 = Math.round(sl[3].getBoundingClientRect().top - st.getBoundingClientRect().top);
+    $('#phvClose').click(); await sleep(400); $('#phsClose') && $('#phsClose').click(); await sleep(400);
+    if (n !== 8 || Math.abs(w - (sw - 16)) > 2 || !l1 || !l2 || Math.abs(top4 - 8) > 4) throw new Error(`${n} pages, ${w} in ${sw}, scrolled: ${l1}, wink: ${l2}, top ${top4}`);
+    return `${n} pages, ${w} wide in ${sw}; scrolled to ${l1}, a wink to ${l2}`;
+  }, 120000);
+}
 async function phoneRun() {
   // (a new iPhone first asks about linking an iPad: answered "Not now", as most would at first)
   await step('iPhone: link question answered', async () => { const nb = await waitFor(() => [...$$('.ask-back button')].find((b) => /Not now/.test(b.textContent)), 5000); if (!nb) return 'not asked'; nb.click(); await sleep(500); return ![...$$('.ask-back')].length; });
@@ -465,6 +510,7 @@ async function phoneRun() {
   await shot('p-end');
   await musicXmlRun('iPhone: ');
   await mediaRun('iPhone: ');
+  await phoneReadRun();
   await videoRun();
   await bgRun();
   for (const e of (window.__standErrors || [])) say('SELFTEST error ' + e.line);

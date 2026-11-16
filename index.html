@@ -90,6 +90,8 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor"/></symbol>
     <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 13.5V9.5 M9.5 2.8h5 M12 2.8v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-back5" viewBox="0 0 24 24"><path d="M5.6 8.2A8 8 0 1 1 4 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M5.3 3.9v4.5h4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12.2" y="16.3" text-anchor="middle" font-size="8.6" font-weight="700" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">5</text></symbol>
+    <symbol id="i-fwd5" viewBox="0 0 24 24"><path d="M18.4 8.2A8 8 0 1 0 20 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18.7 3.9v4.5h-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="11.8" y="16.3" text-anchor="middle" font-size="8.6" font-weight="700" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">5</text></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
     <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 3l3 3-3 3 M4 11V9a3 3 0 0 1 3-3h13 M7 21l-3-3 3-3 M20 13v2a3 3 0 0 1-3 3H4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12 M7.5 7.5L12 3l4.5 4.5 M6 11H5v10h14V11h-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -581,6 +583,17 @@
     <svg class="pill-ico"><use href="#i-timer"/></svg>
     <button class="pill-main" data-panel="pomodoro"><span class="num" id="pomoPillTime">45:00</span><span class="muted" id="pomoPillPhase">Play</span></button>
     <button class="icon-btn small" id="pomoPillToggle" aria-label="Pause"><svg><use href="#i-pause"/></svg></button>
+  </div>
+  <!-- a YouTube video over the score: the picture alone floats; its buttons stay here -->
+  <div class="pill media-pill wait" id="mediaPill" hidden>
+    <button class="mp-play" id="mpPlay" type="button" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+    <button class="icon-btn small" id="mpBack" type="button" aria-label="Back 5 seconds"><svg><use href="#i-back5"/></svg></button>
+    <button class="icon-btn small" id="mpFwd" type="button" aria-label="On 5 seconds"><svg><use href="#i-fwd5"/></svg></button>
+    <span class="num mp-time" id="mpTime"><span id="mpNow">0:00</span><span class="mp-dur" id="mpDur"></span></span>
+    <span class="mp-sep"></span>
+    <button class="mp-speed" id="mpSpeed" type="button" aria-label="Speed"><span class="num" id="mpSpeedV">100</span><span class="mp-pc">%</span></button>
+    <button class="icon-btn small" id="mpLoop" type="button" aria-label="Repeat a passage: tap where it starts"><svg><use href="#i-loop"/></svg></button>
+    <button class="icon-btn small mp-x" id="mpClose" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
   </div>
   <div class="pill" id="scalePill" hidden>
     <svg class="pill-ico"><use href="#i-scales"/></svg>
@@ -1217,7 +1230,7 @@
 </div>
 <div class="phv" id="phView" hidden>
   <div class="phv-bar"><button class="icon-btn" id="phvClose" aria-label="Back to my scores"><svg><use href="#i-back"/></svg></button><div class="phv-t"><b id="phvTitle"></b><small id="phvPage"></small></div><button class="phv-ink on" id="phvInk"><svg><use href="#i-pen"/></svg><span>Markings on</span></button><button class="phv-ink phv-play" id="phvPlay" aria-label="Play: two lines at a time, big"><svg><use href="#i-play"/></svg><span>Play</span></button></div>
-  <div class="phv-stage" id="phvStage"><div class="phv-page" id="phvPageBox"><img id="phvImg" alt=""><img id="phvInkImg" alt="" hidden></div></div>
+  <div class="phv-stage" id="phvStage"><div class="phv-list" id="phvList"></div></div>
   <div class="php" id="phPlay" hidden>
     <div class="php-lines" id="phpLines"><canvas id="phpC"></canvas></div>
     <div class="php-turn" id="phpTurn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2.5" transform="rotate(90 12 12)"/><path d="M4 7a8 8 0 0 1 6-4M20 17a8 8 0 0 1-6 4"/></svg><b>Turn your iPhone sideways</b><span>Two or three lines at a time, as big as they go</span></div>

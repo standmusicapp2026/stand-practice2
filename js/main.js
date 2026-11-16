@@ -10750,12 +10750,63 @@ function openMedia(url, name) {
   hidePanel();
   // (a video floating: a tap on the score no longer wakes Stand's sound, which would stop it)
   window.__standVideoFloats = o.kind === 'youtube';
+  // (a video: the picture alone floats; its buttons stay at the bottom, with the metronome)
+  o.dock = o.kind === 'youtube'; mediaPillShow(false); if (o.dock) mediaPillShow(true);
   // (in the iPad app: a player of its own, which YouTube accepts)
   if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) { NATIVE.standMedia.postMessage({ op: 'open', ...o }); MEDIA.kind = o.kind; return; }
   mediaFrame(o);
 }
 window.__mediaOf = mediaOf; window.__openMedia = openMedia;
-window.standMediaEvent = (m) => { if (!m) return; if (m.op === 'closed') { MEDIA.kind = ''; window.__standVideoFloats = false; } };
+// A YouTube video's buttons, at the bottom with the metronome and the drone: play, 5 seconds back
+// and on, where it is, the speed, a passage repeated, close. The picture itself floats alone.
+const MP = { on: false };
+const mpFmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function mediaPillShow(on) {
+  MP.on = on; const p = $('#mediaPill'); if (!p) return;
+  p.hidden = !on;
+  if (!on) { p.classList.add('wait'); p.classList.remove('playing'); $('#mpNow').textContent = '0:00'; $('#mpDur').textContent = ''; $('#mpSpeedV').textContent = '100'; $('#mpSpeed').classList.remove('on'); $('#mpLoop').classList.remove('on', 'arm'); }
+}
+function mediaStatus(s) {
+  if (!s || s.kind !== 'youtube') return;
+  if (!MP.on) mediaPillShow(true);
+  const p = $('#mediaPill');
+  p.classList.toggle('wait', !s.ready);
+  p.classList.toggle('playing', !!s.playing);
+  const pb = $('#mpPlay'), want = s.playing ? '#i-pause' : '#i-play';
+  if (pb.dataset.ico !== want) { pb.dataset.ico = want; pb.innerHTML = `<svg><use href="${want}"/></svg>`; pb.setAttribute('aria-label', s.playing ? 'Pause' : 'Play'); }
+  const arm = s.a != null && s.b == null, loop = s.a != null && s.b != null;
+  $('#mpNow').textContent = mpFmt(s.t);
+  $('#mpDur').textContent = s.d ? mpFmt(s.d) : '';
+  const sp = Math.round((s.speed || 1) * 100);
+  $('#mpSpeedV').textContent = String(sp); $('#mpSpeed').classList.toggle('on', sp !== 100);
+  const lb = $('#mpLoop'); lb.classList.toggle('on', loop); lb.classList.toggle('arm', arm);
+  const ll = loop ? 'Stop repeating' : arm ? 'Tap where the passage ends' : 'Repeat a passage: tap where it starts';
+  if (lb.dataset.en !== ll) { lb.dataset.en = ll; lb.setAttribute('aria-label', ll); }
+}
+// (to the player: in the iPad app its own web view; in a browser the frame over the page)
+function mediaCmd(c) {
+  if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) { NATIVE.standMedia.postMessage({ op: 'cmd', ...c }); return; }
+  const box = MEDIA.box; if (!box) return;
+  // (put away at the edge: it comes back to play, as a video plays only where it is seen)
+  if ((c.cmd === 'toggle' || c.cmd === 'play') && box.classList.contains('tucked')) box.querySelector('.mf-tab').click();
+  try { box.querySelector('.mf-frame').contentWindow.mediaCmd(c); } catch {}
+}
+function mediaClose() {
+  if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) NATIVE.standMedia.postMessage({ op: 'close' });
+  else if (MEDIA.closeIt) MEDIA.closeIt();
+  mediaPillShow(false);
+}
+$('#mpPlay').addEventListener('click', () => mediaCmd({ cmd: 'toggle' }));
+$('#mpBack').addEventListener('click', () => mediaCmd({ cmd: 'back' }));
+$('#mpFwd').addEventListener('click', () => mediaCmd({ cmd: 'fwd' }));
+$('#mpSpeed').addEventListener('click', () => mediaCmd({ cmd: 'speed' }));
+$('#mpLoop').addEventListener('click', () => mediaCmd({ cmd: 'loop' }));
+$('#mpClose').addEventListener('click', mediaClose);
+window.standMediaEvent = (m) => {
+  if (!m) return;
+  if (m.op === 'closed') { MEDIA.kind = ''; window.__standVideoFloats = false; mediaPillShow(false); }
+  else if (m.op === 'status') mediaStatus(m);
+};
 // In a browser: the same player in a frame that floats over the page. It is moved by any of its dark
 // edge (the top bar, the margin, the bar of buttons between the buttons) and sized by its corner. It
 // may be pushed half out of the screen at the left or right, to leave more of the music free (the
@@ -10769,8 +10820,10 @@ function mediaFrame(o) {
   let box = MEDIA.box;
   const W = innerWidth, H = innerHeight, yt = o.kind === 'youtube';
   const minW = () => (MEDIA.kind === 'youtube' ? Math.min(MEDIA_MIN_YT, innerWidth - 16) : 260);
-  const minH = () => MF.head + (MEDIA.kind === 'youtube' ? 200 : 80) + MF.bar;
-  const natH = (w) => (MEDIA.kind === 'youtube' ? Math.max(minH(), MF.head + (w - 2 * MF.pad) * 9 / 16 + MF.bar) : MEDIA.kind === 'spotify' ? MF.head + 152 + MF.bar : MF.head + 175 + MF.bar);
+  // (a video's buttons are at the bottom of the page, with the metronome: under the picture, only the margin)
+  const barH = () => (MEDIA.kind === 'youtube' ? MF.pad : MF.bar);
+  const minH = () => MF.head + (MEDIA.kind === 'youtube' ? 200 : 80) + barH();
+  const natH = (w) => (MEDIA.kind === 'youtube' ? Math.max(minH(), MF.head + (w - 2 * MF.pad) * 9 / 16 + barH()) : MEDIA.kind === 'spotify' ? MF.head + 152 + barH() : MF.head + 175 + barH());
   MEDIA.kind = o.kind;
   // (a video as small as it may be without black bands: 356 × 200)
   const w = Math.min(W - 32, yt ? 356 + 2 * MF.pad : 340), h = natH(w);
@@ -10821,12 +10874,14 @@ function mediaFrame(o) {
     tab.addEventListener('click', () => { const s0 = MEDIA.shown; box.classList.remove('tucked'); tab.hidden = true; if (MEDIA.src) { fr.src = MEDIA.src; MEDIA.src = null; } if (s0) put(fitted(s0)); });
     MEDIA.tuck = tuck;
     addEventListener('resize', () => { if (!MEDIA.box || box.classList.contains('tucked')) return; put(fitted(R())); });
-    const closeIt = () => { box.remove(); MEDIA.box = null; MEDIA.kind = ''; window.__standVideoFloats = false; };
-    window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || e.source !== fr.contentWindow) return; if (m.op === 'close') closeIt(); else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
+    const closeIt = () => { box.remove(); MEDIA.box = null; MEDIA.kind = ''; MEDIA.closeIt = null; window.__standVideoFloats = false; mediaPillShow(false); };
+    MEDIA.closeIt = closeIt;
+    window.addEventListener('message', (e) => { const m = e.data && e.data.standMedia; if (!m || !MEDIA.box || e.source !== fr.contentWindow) return; if (m.op === 'close') closeIt(); else if (m.op === 'status') mediaStatus(m); else if (m.op === 'openOut' && m.url) window.open(m.url, '_blank', 'noopener'); });
   }
   MEDIA.kind = o.kind;
   box.classList.remove('tucked'); box.querySelector('.mf-tab').hidden = true;
-  Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: H - h - 16 + 'px' });
+  // (a video above its buttons at the bottom of the page)
+  Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: Math.max(8, H - h - (yt ? 116 : 16)) + 'px' });
   box.querySelector('.mf-frame').src = 'media.html#' + encodeURIComponent(JSON.stringify(o));
 }
 document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="listen"]')) openListen(); });

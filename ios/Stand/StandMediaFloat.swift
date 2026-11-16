@@ -7,9 +7,9 @@ import WebKit
 // own address would be turned away).
 //
 // A video is the picture alone, with round corners: drag the picture to move it, pinch it with two
-// fingers to make it bigger or smaller. Stand's buttons (play, −5, +5, speed, repeat, close) come
-// under it when it is touched (above it when it is low on the screen) and go again a few seconds
-// later; nothing is ever drawn over the picture. It may be pushed half out of the screen at the left,
+// fingers to make it bigger or smaller. Its buttons (play, −5, +5, speed, repeat, close) are not
+// here: they stay in Stand's own bar at the bottom of the page, with the metronome and the drone
+// (index.html, #mediaPill); nothing is ever drawn over the picture. It may be pushed half out of the screen at the left,
 // the right or the bottom, so more of the music is free (the picture itself stays as big as YouTube
 // asks; only the edge of the screen cuts it). Pushed further, it is put away: a small tab stays at the
 // edge (tap it to bring the video back), and the video pauses: YouTube does not let a video play
@@ -40,13 +40,11 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     // (a video: Stand's buttons, and the space between them and the picture)
     static let barH: CGFloat = 44, gap: CGFloat = 8, radius: CGFloat = 14
     // (how much of it may be out of the screen, and how much further pushed puts it away)
-    static let barW: CGFloat = 330
     static let out: CGFloat = 0.5, away: CGFloat = 56
 
     // a video: the picture alone (the rest is the frame of the audio players)
     private var clean: Bool { kind == "youtube" }
     private var pic = CGRect.zero           // a video: where its picture is, in the host
-    private var barUp = false               // its buttons above the picture (it is low on the screen)
     private var barShown = true             // its buttons showing (they go a few seconds after a touch)
 
     private final class Relay: NSObject, WKScriptMessageHandler {
@@ -175,7 +173,6 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     private func shade() {
         if clean && tuckedSide == 0 {
             let p = UIBezierPath(roundedRect: picLocal, cornerRadius: StandMediaFloat.radius)
-            if barShown { p.append(UIBezierPath(roundedRect: barLocal, cornerRadius: StandMediaFloat.radius)) }
             layer.shadowPath = p.cgPath
             layer.shadowOpacity = 0.3
         } else {
@@ -203,7 +200,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     // through to the score under it.
     override func point(inside p: CGPoint, with e: UIEvent?) -> Bool {
         guard clean, tuckedSide == 0 else { return super.point(inside: p, with: e) }
-        return picLocal.contains(p) || (barShown && barLocal.contains(p))
+        return picLocal.contains(p)
     }
 
     // ---- from Stand's page
@@ -255,7 +252,12 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         keep()
         report("moved", host)
     }
-    func command(_ c: [String: Any]) { js("window.mediaCmd && window.mediaCmd(\(json(c)))") }
+    func command(_ c: [String: Any]) {
+        // (put away at the edge and asked to play: it comes back, as a video plays only where it is seen)
+        let cmd = c["cmd"] as? String ?? ""
+        if tuckedSide != 0 && (cmd == "toggle" || cmd == "play") { untuck() }
+        js("window.mediaCmd && window.mediaCmd(\(json(c)))")
+    }
     @objc private func leaving() { if kind == "youtube", superview != nil { command(["cmd": "pause"]) } }
     func close() {
         js("document.body.textContent = ''")
@@ -266,6 +268,8 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     private func run(_ o: [String: Any]) {
         var m = o
         m["clean"] = clean
+        // (a video: its buttons are in Stand's bar at the bottom of the page)
+        m["dock"] = clean
         if clean {
             let r = { (c: CGRect) -> [Int] in [Int(c.minX.rounded()), Int(c.minY.rounded()), Int(c.width.rounded()), Int(c.height.rounded())] }
             m["pic"] = r(picLocal); m["bar"] = r(barLocal)
@@ -304,9 +308,10 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     private func picHeight(_ w: CGFloat) -> CGFloat { max(200, (w * 9 / 16).rounded()) }
     private func defaultPic(in host: UIView) -> CGRect {
         let b = host.bounds.inset(by: host.safeAreaInsets)
-        // (a video as small as it may be without black bands: 356 × 200)
+        // (a video as small as it may be without black bands: 356 × 200; above Stand's bar of
+        // buttons at the bottom of the page)
         let w = min(b.width - 32, 356), h = picHeight(w)
-        return CGRect(x: b.maxX - w - 16, y: b.maxY - h - StandMediaFloat.gap - StandMediaFloat.barH - 12, width: w, height: h)
+        return CGRect(x: b.maxX - w - 16, y: b.maxY - h - 116, width: w, height: h)
     }
     // (on the screen, but for as much as half of it beyond the left, the right or the bottom edge)
     private func fitPic(_ r: CGRect, in host: UIView) -> CGRect {
@@ -327,23 +332,13 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         if d > max(l, r, 0) { return (d, 2) }
         return l > r ? (max(l, 0), -1) : (max(r, 0), 1)
     }
-    // The view holds the picture and the bar of buttons: under the picture (above it when there is
-    // no room under it), as wide as the picture but never narrower than its buttons need, and always
-    // all on the screen, even with the picture half out.
+    // The view is the picture alone (its buttons are in Stand's bar at the bottom of the page).
     private func setPic(_ p: CGRect) {
-        guard let host = superview else { pic = p; return }
+        guard superview != nil else { pic = p; return }
         pic = p
-        let b = host.bounds.inset(by: host.safeAreaInsets), bh = StandMediaFloat.barH, g = StandMediaFloat.gap
-        let up = p.maxY + g + bh > b.maxY && p.minY - g - bh >= b.minY
-        // (one size always, whatever the size of the video)
-        let bw = min(StandMediaFloat.barW, b.width - 16)
-        let bx = min(max(p.midX - bw / 2, b.minX + 8), b.maxX - 8 - bw)
-        let bar = CGRect(x: bx, y: up ? p.minY - g - bh : p.maxY + g, width: bw, height: bh)
-        let u = p.union(bar)
-        barUp = up
-        frame = u
-        picLocal = p.offsetBy(dx: -u.minX, dy: -u.minY)
-        barLocal = bar.offsetBy(dx: -u.minX, dy: -u.minY)
+        frame = p
+        picLocal = CGRect(origin: .zero, size: p.size)
+        barLocal = .zero
         let geo = "{ pic: \(rectJS(picLocal)), bar: \(rectJS(barLocal)) }"
         if geo != geoSaid { geoSaid = geo; js("window.mediaLayout && window.mediaLayout(\(geo))") }
         shade()
@@ -392,9 +387,10 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         if g === pinch || g === touchSeen { return clean }
         // (a touch in the web view moves it only where nothing there is touched for itself: a
         // video's own buttons along its bottom, Stand's buttons; a frame: the player, the buttons)
-        guard g === darkDrag, !keepRects.isEmpty else { return g !== darkDrag }
+        guard g === darkDrag else { return true }
+        // (a video: the whole picture drags it, but for a link in a message)
+        if keepRects.isEmpty { return clean }
         let p = t.location(in: web)
-        if clean && barShown == false && barLocal.contains(p) { return false }
         return !keepRects.contains { $0.insetBy(dx: -4, dy: -4).contains(p) }
     }
     // (beside the web view's own handling of touches: a tap on the video still plays or pauses it)
