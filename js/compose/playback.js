@@ -273,7 +273,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         const up = sp.dir === '<';
         // the level it arrives at: a dynamic on its last note, or on the note just after it
         const endDyn = j > i && flat[j].ev.dyn && DYN_VEL[flat[j].ev.dyn] !== undefined ? DYN_VEL[flat[j].ev.dyn] : null;
-        let target = endDyn ?? (after && after.ev.dyn && DYN_VEL[after.ev.dyn] !== undefined ? DYN_VEL[after.ev.dyn] : Math.max(0.1, Math.min(1, start + (up ? 1 : -1) * (globalThis.__hpStep ?? 0.14))));
+        let target = endDyn ?? (after && after.ev.dyn && DYN_VEL[after.ev.dyn] !== undefined ? DYN_VEL[after.ev.dyn] : Math.max(0.1, Math.min(1, start + (up ? 1 : -1) * (globalThis.__hpStep ?? 0.22))));
         if (up && target <= start) target = Math.min(1, start + 0.14); if (!up && target >= start) target = Math.max(0.08, start - 0.14);
         // over several notes it arrives on the last one (as Sibelius plays it); over one note it swells through it
         const single = j === i;
@@ -296,7 +296,11 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     // text cresc./dim. lines
     for (const sp of spans.filter((q) => (q.kind === 'cresc' || q.kind === 'dim') && q.st === st.id)) {
       const inSpan = flat.filter((f) => (f.m > sp.a.m || (f.m === sp.a.m && f.pos >= sp.a.pos)) && (f.m < sp.b.m || (f.m === sp.b.m && f.pos <= sp.b.pos)));
-      inSpan.forEach((f, i) => { f.vel = Math.max(0.08, Math.min(1, f.vel + (sp.kind === 'cresc' ? 0.24 : -0.24) * (i / Math.max(1, inSpan.length - 1)))); });
+      if (!inSpan.length) continue;
+      // from the level it starts at, two steps louder (or softer) by its last note, and on at that level after it
+      const start = inSpan[0].vel, target = Math.max(0.08, Math.min(1, start + (sp.kind === 'cresc' ? 0.26 : -0.26)));
+      inSpan.forEach((f, i) => { if (i === 0 || !f.ev.dyn) f.vel = start + (target - start) * (i / Math.max(1, inSpan.length - 1)); });
+      for (let k2 = flat.indexOf(inSpan[inSpan.length - 1]) + 1; k2 > 0 && k2 < flat.length && !flat[k2].ev.dyn; k2++) flat[k2].vel = target;
     }
     // slurs: which notes connect to the next
     let inSlur = false;

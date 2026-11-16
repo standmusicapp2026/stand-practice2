@@ -19,7 +19,9 @@
   box-shadow: var(--shadow); border: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; user-select: none; -webkit-user-select: none;
 }
 .cp-pal-head { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; cursor: grab; touch-action: none; border-bottom: 1px solid var(--line); }
-.cp-pal-head strong { flex: 1; font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* (the name of what the palette shows is written in full at the top of it; the bar is the handle) */
+.cp-pal-head strong { flex: 1; min-width: 0; visibility: hidden; font-size: 0; }
+.cp-ttl { margin: 0 0 2px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; color: var(--ink); }
 .cp-pal-ur { display: flex; gap: 2px; }
 .cp-pal-ur .icon-btn { width: 34px; height: 32px; }
 .cp-pal-ur .icon-btn svg { width: 18px; height: 18px; }
@@ -31,7 +33,9 @@
 .cp-fold { transform: rotate(90deg); transition: transform .2s; width: 16px !important; height: 16px !important; }
 .cp-pal.folded .cp-fold { transform: rotate(-90deg); }
 .cp-pal.folded .cp-pal-body { display: none; }
-.cp-pal-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; max-height: min(52vh, 430px); overflow-y: auto; }
+/* one size for every kind of mark, so the icons along the bottom never move */
+.cp-pal-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; height: min(52vh, 430px); overflow-y: auto; overscroll-behavior: contain; }
+.cp-pal-body > * { flex: none; }
 .cp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
 .cp-grid.five { grid-template-columns: repeat(5, 1fr); }
 .cp-grid.seven { grid-template-columns: repeat(7, 1fr); }
@@ -145,6 +149,7 @@
 
 @media (max-width: 700px) {
   .cp-pal { width: calc(100vw - 24px); left: 12px !important; top: auto !important; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); }
+  .cp-pal-body { height: min(36vh, 300px); }
   .cp-zoom { bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 70px); }
 }
 .pk-file-tile { display: grid; place-items: center; background: var(--accent-soft) !important; box-shadow: none !important; }

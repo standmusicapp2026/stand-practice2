@@ -37,12 +37,12 @@
   #bLoop.arm { box-shadow: inset 0 0 0 2px var(--acc); color: var(--acc); }
   #bLoop.on .lt, #bLoop.arm .lt { font-variant-numeric: tabular-nums; font-size: 12px; }
   /* a small player: the buttons closer, the time left out; smaller still, no 5-second jumps */
-  @media (max-width: 340px) { #bar { gap: 3px; padding: 0 4px; } #bar button { min-width: 30px; padding: 0 6px; } #bar .t { display: none; } #bar .x { margin-left: auto; } #bar .x ~ .x { margin-left: 0; } }
-  @media (max-width: 270px) { #bBack, #bFwd { display: none !important; } }
+  @media (max-width: 340px) { body:not(.clean) #bar { gap: 3px; padding: 0 4px; } body:not(.clean) #bar button { min-width: 30px; padding: 0 6px; } body:not(.clean) #bar .t { display: none; } body:not(.clean) #bar .x { margin-left: auto; } body:not(.clean) #bar .x ~ .x { margin-left: 0; } }
+  @media (max-width: 270px) { body:not(.clean) #bBack, body:not(.clean) #bFwd { display: none !important; } }
   /* (the smallest: YouTube's own logo in the picture still opens it in YouTube) */
   @media (max-width: 232px) { body:not(.nobar) #bOpen { display: none; } }
   /* (small: the repeat button shows its state by its colour alone; waiting for the end, it pulses) */
-  @media (max-width: 380px) { #bLoop .lt { display: none; } #bLoop.arm { animation: armp 1.2s ease-in-out infinite; } }
+  @media (max-width: 380px) { body:not(.clean) #bLoop .lt { display: none; } body:not(.clean) #bLoop.arm { animation: armp 1.2s ease-in-out infinite; } }
   @keyframes armp { 50% { box-shadow: inset 0 0 0 2px transparent; } }
   @media (prefers-reduced-motion: reduce) { #bLoop.arm { animation: none; } }
   /* In the iPad app, a video: the picture alone, round, with nothing round it; Stand's buttons in a
@@ -54,6 +54,10 @@
   body.clean #stage { position: absolute; left: 0; top: 0; right: 0; bottom: 52px; margin: 0; border-radius: 14px; }
   body.clean #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 44px; border-radius: 14px; padding: 0 6px; cursor: default; transition: opacity .22s ease; }
   body.clean.barhide #bar { opacity: 0; pointer-events: none; }
+  /* (the bar is the same size whatever the size of the video: its buttons never move or go) */
+  body.clean #bar .t { font-size: 11.5px; }
+  body.clean #bLoop .lt { display: none; }
+  body.clean #bLoop.on, body.clean #bLoop.arm { min-width: 34px; }
   body.clean #bOpen { display: none; }
   @media (prefers-reduced-motion: reduce) { body.clean #bar { transition: none; } }
 </style>
@@ -178,6 +182,8 @@ function hideBar() {
 }
 function barSaid(on) { if (barWas === on) return; barWas = on; host('bar', { shown: on }); requestAnimationFrame(() => { try { sendKeep(); } catch {} }); }
 window.mediaTouched = showBar;
+// (while the video is pinched to size, the bar keeps out of the way; it comes back when the fingers lift)
+window.mediaHush = () => { if (!document.body.classList.contains('clean')) return; clearTimeout(barT); document.body.classList.add('barhide'); barSaid(false); };
 const placeAt = (e, r) => { if (!Array.isArray(r) || r.length !== 4) return; Object.assign(e.style, { left: r[0] + 'px', top: r[1] + 'px', width: r[2] + 'px', height: r[3] + 'px', right: 'auto', bottom: 'auto' }); };
 window.mediaLayout = (o) => { if (!o) return; placeAt($('#stage'), o.pic); placeAt($('#bar'), o.bar); requestAnimationFrame(() => { try { sendKeep(); } catch {} }); };
 document.getElementById('bar').addEventListener('pointerdown', () => { if (document.body.classList.contains('clean')) showBar(); }, true);

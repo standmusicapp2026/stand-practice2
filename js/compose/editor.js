@@ -1028,10 +1028,19 @@ function lineOver(kind, dir) {
     }
     if (existing) { existing.dir = dir; msg = dir === '<' ? 'Now a crescendo.' : 'Now a diminuendo.'; return; }
     let B = A;
+    // a hairpin from one note: to the end of its bar (or, from the last note of a bar, to the next note),
+    // so it is seen and heard at once; each tap again stretches it one note further
+    if (kind === 'hairpin') {
+      const vw = M.voiceView(st, v, C.score);
+      let nx = nextNoteAt(vw, A, true), end = null;
+      while (nx && nx.m === A.m) { end = nx; nx = nextNoteAt(vw, { m: nx.m, pos: nx.pos }, true); }
+      if (!end && nx) end = nx;
+      if (end) { B = { m: end.m, pos: end.pos }; for (let w = nextNoteAt(vw, A, true); w; w = nextNoteAt(vw, { m: w.m, pos: w.pos }, true)) { C.sel.add(w.ev.id); if (w.m === end.m && w.pos === end.pos) break; } }
+    }
     if (kind === 'slur') { const nx = nextNoteAt(M.voiceView(st, v, C.score), A, false); if (!nx) { msg = 'A slur needs a note after this one.'; return false; } B = { m: nx.m, pos: nx.pos }; C.sel.add(nx.ev.id); }
     for (let i = spans.length - 1; i >= 0; i--) { const q = spans[i]; if (same(q) && kind === 'hairpin' && !(before(q.b, A) || before(B, q.a))) spans.splice(i, 1); }
     spans.push({ id: M.newId(), kind, st: st.id, v, a: A, b: B, ...(dir ? { dir } : {}) });
-    msg = 'Tap again to stretch it over the next note too.';
+    msg = kind === 'hairpin' && (B.m !== A.m || B.pos !== A.pos) ? `${dir === '<' ? 'Crescendo' : 'Diminuendo'} to the end of the bar. Tap again to stretch it one note further.` : 'Tap again to stretch it over the next note too.';
   }, { keepSel: true });
   if (msg) hint(msg, 2600);
   relayout(); syncSelBar();
@@ -1667,12 +1676,20 @@ function setTextStyled(txt, style) {
   const evs = selEvents(); if (!evs.length) { hint('Select a note, then add the words.'); return; }
   edit(() => { const ev = evs[0].ev; if (ev.txt === txt && (ev.txtStyle || 'expr') === style) { ev.txt = null; ev.txtStyle = null; } else { ev.txt = txt; ev.txtStyle = style; } }, { keepSel: true });
 }
+// The palette keeps its size and its place whatever it shows, and a tap in it (a dynamic, a mark)
+// leaves it scrolled where it was: nothing moves under the finger.
 function renderTab() {
+  const box = $('#cpPalBody'), same = box && box.dataset.tab === C.tab, y = same ? box.scrollTop : 0;
+  renderTabBody();
+  if (box) { box.dataset.tab = C.tab; box.scrollTop = y; }
+}
+function renderTabBody() {
   $$('#cpPalTabs .cp-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === C.tab));
   if (!TABS.some((x) => x.k === C.tab)) C.tab = 'notes';
   const t = TABS.find((x) => x.k === C.tab) || TABS[0];
   $('#cpPalTitle').textContent = t.title;
   const body = $('#cpPalBody'); body.textContent = '';
+  body.append(el('h3', 'cp-ttl', t.title));
   const grid = (cls) => { const g = el('div', 'cp-grid' + (cls ? ' ' + cls : '')); body.append(g); return g; };
   const cards = (cls) => { const g = el('div', 'cp-cards' + (cls ? ' ' + cls : '')); body.append(g); return g; };
   const lab = (s) => body.append(el('div', 'cp-lab', s));
@@ -1696,7 +1713,8 @@ function renderTab() {
       lw.addEventListener('click', () => toggleListen());
       body.append(lw);
     }
-    const g = grid();
+    // (the seven note values in one row)
+    const g = grid('seven');
     for (const [d, name] of [[1, 'Whole'], [2, 'Half'], [4, 'Quarter'], [8, 'Eighth'], [16, '16th'], [32, '32nd'], [64, '64th']]) {
       const on = T.dur === d;
       g.append(mbtn('', name + ' note', on, () => setDuration(d), { draw: (gg, W, H) => gC(gg, T.rest ? GL.rest[d] : NOTE_GLYPH[d], W, H, 3.6), w: 40, h: 34 }));
@@ -1773,13 +1791,17 @@ function renderTab() {
     const cur = evs[0];
     const g = grid('five');
     for (const d of ['pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'ffff', 'sf', 'sfz', 'sffz', 'fz', 'rfz', 'fp', 'sfp']) g.append(mbtn('', d, cur && cur.ev.dyn === d, () => setDyn(d), { glyph: d.split('').map((c) => GL.dyn[c]).join(''), size: d.length > 2 ? 3.2 : 3.8 }));
-    lab('Hairpins');
+    lab('Crescendo and diminuendo');
     const cg = cards('three');
     const pin = (gg, W, H, open) => { gg.lineWidth = 0.14; gg.beginPath(); const x0 = W * 0.18, x1 = W * 0.82, y = H / 2; if (open) { gg.moveTo(x1, y - 1); gg.lineTo(x0, y); gg.lineTo(x1, y + 1); } else { gg.moveTo(x0, y - 1); gg.lineTo(x1, y); gg.lineTo(x0, y + 1); } gg.stroke(); };
     const hpHere = cur ? M.spanStartingAt(C.score, 'hairpin', (cur.st.base || cur.st).id, cur.voice || 1, { m: cur.m, pos: cur.pos }) : null;
     cg.append(card('Crescendo', !!hpHere && hpHere.dir === '<', () => setHairpin('<'), (gg, W, H) => pin(gg, W, H, true)));
     cg.append(card('Diminuendo', !!hpHere && hpHere.dir === '>', () => setHairpin('>'), (gg, W, H) => pin(gg, W, H, false)));
     cg.append(card('End here', false, endHairpinHere, (gg, W, H) => { gg.lineWidth = 0.14; gg.beginPath(); gg.moveTo(W * 0.15, H / 2 - 0.9); gg.lineTo(W * 0.6, H / 2); gg.lineTo(W * 0.15, H / 2 + 0.9); gg.stroke(); drawLine(gg, W * 0.72, H / 2 - 1.3, W * 0.72, H / 2 + 1.3, 0.14); }));
+    { // (the words, with a dashed line after them, over the selected notes)
+      const r = selRange(), has = (kind) => !!r && (C.score.spans || []).some((q) => q.kind === kind && q.st === r.st.id && q.a.m === r.a.m);
+      for (const [k, word, name] of [['cresc', 'cresc.', 'cresc. (words)'], ['dim', 'dim.', 'dim. (words)']]) cg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { text(gg, word, W * 0.06, H / 2 + 0.6, 1.9, TEXT_FONT, 'italic'); gg.save(); gg.lineWidth = 0.12; gg.setLineDash([0.5, 0.45]); gg.beginPath(); gg.moveTo(W * 0.06 + textWidth(gg, word, 1.9, TEXT_FONT, 'italic') + 0.4, H / 2 + 0.1); gg.lineTo(W * 0.94, H / 2 + 0.1); gg.stroke(); gg.restore(); }, { k: 6.6 }));
+    }
     body.append(el('p', 'hint', 'Drag across notes in Select mode (or use Select more) and the hairpin goes under all of them, across bars and lines. With one note selected, each tap stretches it one note further.'));
   } else if (C.tab === 'lines') {
     const has = (kind) => { const r = selRange(); return !!r && (C.score.spans || []).some((q) => q.kind === kind && (q.st === r.st.id || kind === 'volta') && q.a.m === r.a.m); };
@@ -1793,7 +1815,8 @@ function renderTab() {
     cg.append(card('1st ending', false, () => addEnding(1), (gg, W, H) => { gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.1, H * 0.85); gg.lineTo(W * 0.1, H * 0.25); gg.lineTo(W * 0.9, H * 0.25); gg.lineTo(W * 0.9, H * 0.85); gg.stroke(); text(gg, '1.', W * 0.1 + 0.4, H * 0.25 + 1.6, 1.6); }, LK));
     cg.append(card('2nd ending', false, () => addEnding(2), (gg, W, H) => { gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.1, H * 0.85); gg.lineTo(W * 0.1, H * 0.25); gg.lineTo(W * 0.9, H * 0.25); gg.stroke(); text(gg, '2.', W * 0.1 + 0.4, H * 0.25 + 1.6, 1.6); }, LK));
     cg.append(card('Glissando', has('gliss'), () => addSpan('gliss'), (gg, W, H) => { glyph(gg, GL.noteBlack, W * 0.1, H * 0.75, 3.0); glyph(gg, GL.noteBlack, W * 0.78, H * 0.35, 3.0); drawLine(gg, W * 0.1 + 1.2, H * 0.72, W * 0.78 - 0.2, H * 0.36, 0.12); }, LK));
-    for (const [k, word] of [['rit', 'rit.'], ['accel', 'accel.'], ['cresc', 'cresc.'], ['dim', 'dim.']]) cg.append(card(word.replace('.', '.') + ' – –', has(k), () => addSpan(k), (gg, W, H) => { text(gg, word, W * 0.06, H / 2 + 0.6, 1.9, TEXT_FONT, 'italic'); dash(gg, W * 0.06 + textWidth(gg, word, 1.9, TEXT_FONT, 'italic') + 0.4, W * 0.94, H / 2 + 0.1); }, LK));
+    // (cresc. and dim. are with the hairpins, under Dynamics)
+    for (const [k, word, name] of [['rit', 'rit.', 'rit. (slower)'], ['accel', 'accel.', 'accel. (faster)']]) cg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { text(gg, word, W * 0.06, H / 2 + 0.6, 1.9, TEXT_FONT, 'italic'); dash(gg, W * 0.06 + textWidth(gg, word, 1.9, TEXT_FONT, 'italic') + 0.4, W * 0.94, H / 2 + 0.1); }, LK));
     const g2 = grid('three');
     g2.append(mbtn('Remove', 'Remove the lines on the selection', false, removeSpans, { textCls: '', small: 'lines here' }, LK));
     body.append(el('p', 'hint', 'Select the notes (or bars) first; the line goes from the first to the last. Endings go over the selected bars.'));

@@ -658,20 +658,43 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     return (await db.get('files', pageKey(id, i, copy.stamp)).catch(() => null)) || db.get('files', oldPageKey(id, i)).catch(() => null);
   };
   let zoomHeld = () => false, pzResetHook = () => {};
+  // The pages each side of the one shown are fetched and decoded ahead, and kept: a turn shows a
+  // picture that is ready, at once (the page before too, for turning back).
+  const PRE = new Map();
+  const preKey = (v, i) => v.copy.id + ':' + v.copy.stamp + ':' + i;
+  const preDrop = (k) => { const e = PRE.get(k); if (!e) return; PRE.delete(k); if (e.u) URL.revokeObjectURL(e.u); if (e.ui) URL.revokeObjectURL(e.ui); };
+  const preAll = () => { for (const k of [...PRE.keys()]) preDrop(k); };
+  const prePage = (v, i) => {
+    if (!(i >= 0 && i < countOf(v.copy))) return Promise.resolve(null);
+    const k = preKey(v, i), had = PRE.get(k); if (had) return had.p;
+    const e = { u: null, ui: null };
+    e.p = (async () => {
+      const p = await pageOf(v.copy, i);
+      if (!p || !p.img) { if (PRE.get(k) === e) PRE.delete(k); return null; }
+      if (PRE.get(k) !== e) return null;
+      e.page = p; e.u = URL.createObjectURL(p.img); e.ui = p.ink ? URL.createObjectURL(p.ink) : null;
+      const im = new Image(); im.src = e.u;
+      try { await im.decode(); } catch {}
+      return e;
+    })();
+    PRE.set(k, e);
+    return e.p;
+  };
+  const preKeep = (v) => { const keep = new Set([-1, 0, 1, 2].map((d) => preKey(v, v.i + d))); for (const k of [...PRE.keys()]) if (!keep.has(k)) preDrop(k); };
   async function drawPage() {
     const v = PS.view; if (!v) return;
     pzResetHook();
-    const i0 = v.i, p = await pageOf(v.copy, v.i);
+    $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`;
+    const i0 = v.i, e = await prePage(v, v.i);
     if (PS.view !== v || v.i !== i0) return;
-    if (!p) { $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`; toast('This page is missing on this iPhone. It comes again next time your iPad is found.'); return; }
-    for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = [];
+    if (!e) { toast('This page is missing on this iPhone. It comes again next time your iPad is found.'); return; }
     const img = $('#phvImg'), ink = $('#phvInkImg');
-    const u = URL.createObjectURL(p.img); PS.urls.push(u); img.src = u;
+    if (img.getAttribute('src') !== e.u) img.src = e.u;
     // (a page that came white from the iPad, drawn when it was short of memory: thrown away, and the
     // score asked for again, those pages only, the next time the iPad is found)
-    img.onload = async () => {
-      img.onload = null;
+    const blankCheck = async () => {
       if (PS.view !== v || v.i !== i0 || !looksBlank(img)) return;
+      preDrop(preKey(v, i0));
       const id = v.copy.id.slice(9);
       // (drawn here from the PDF: drawn again the next time, nothing to ask the iPad for)
       if (v.copy.mode === 'pdf') { await db.del('files', pageKey(id, i0, v.copy.stamp)).catch(() => {}); return; }
@@ -685,16 +708,17 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       nlog('iPhone: a white page thrown away (' + (i0 + 1) + ')');
       toast('This page came white from your iPad. It comes again the next time your iPad is found.', 4500);
     };
-    if (p.ink && PS.ink) { const ui = URL.createObjectURL(p.ink); PS.urls.push(ui); ink.src = ui; ink.hidden = false; } else { ink.hidden = true; ink.removeAttribute('src'); }
-    $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`;
+    if (img.complete && img.naturalWidth) blankCheck(); else img.onload = () => { img.onload = null; blankCheck(); };
+    if (e.ui && PS.ink) { if (ink.getAttribute('src') !== e.ui) ink.src = e.ui; ink.hidden = false; } else { ink.hidden = true; ink.removeAttribute('src'); }
     $('#phvInk').classList.toggle('on', PS.ink);
     $('#phvInk span').textContent = PS.ink ? 'Markings on' : 'Markings off';
-    // the next page ready ahead
-    const n = v.i + 1 < countOf(v.copy) ? await pageOf(v.copy, v.i + 1) : null; if (n && PS.view === v) { const pre = new Image(); const un = URL.createObjectURL(n.img); PS.urls.push(un); pre.src = un; }
+    preKeep(v);
+    // the next pages ready ahead, and the one before
+    prePage(v, i0 + 1).then(() => { if (PS.view === v) prePage(v, i0 + 2); }); prePage(v, i0 - 1);
   }
   window.__phoneViewer = { active: () => !viewer.hidden, wink: (eye) => { if (!PP.open) go(eye === 'right' ? 1 : -1); } };
   const go = (d) => { const v = PS.view; if (!v) return; const i = Math.max(0, Math.min(countOf(v.copy) - 1, v.i + d)); if (i !== v.i) { v.i = i; drawPage(); } };
-  $('#phvClose').addEventListener('click', () => { if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; if (window.__sendFace) window.__sendFace(); for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; });
+  $('#phvClose').addEventListener('click', () => { if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; if (window.__sendFace) window.__sendFace(); for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; preAll(); const im = $('#phvImg'); im.onload = null; im.removeAttribute('src'); $('#phvInkImg').removeAttribute('src'); });
   $('#phvInk').addEventListener('click', () => { PS.ink = !PS.ink; drawPage(); });
   let sx = null, sy = 0;
   const stage = $('#phvStage');

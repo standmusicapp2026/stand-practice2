@@ -40,6 +40,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     // (a video: Stand's buttons, and the space between them and the picture)
     static let barH: CGFloat = 44, gap: CGFloat = 8, radius: CGFloat = 14
     // (how much of it may be out of the screen, and how much further pushed puts it away)
+    static let barW: CGFloat = 330
     static let out: CGFloat = 0.5, away: CGFloat = 56
 
     // a video: the picture alone (the rest is the frame of the audio players)
@@ -334,7 +335,8 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         pic = p
         let b = host.bounds.inset(by: host.safeAreaInsets), bh = StandMediaFloat.barH, g = StandMediaFloat.gap
         let up = p.maxY + g + bh > b.maxY && p.minY - g - bh >= b.minY
-        let bw = min(max(p.width, 320), b.width - 16)
+        // (one size always, whatever the size of the video)
+        let bw = min(StandMediaFloat.barW, b.width - 16)
         let bx = min(max(p.midX - bw / 2, b.minX + 8), b.maxX - 8 - bw)
         let bar = CGRect(x: bx, y: up ? p.minY - g - bh : p.maxY + g, width: bw, height: bh)
         let u = p.union(bar)
@@ -424,11 +426,13 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         switch g.state {
         case .began:
             pinching = true; start = pic
+            js("window.mediaHush && window.mediaHush()")
         case .changed:
             let w = max(200, start.width * g.scale), h = picHeight(w)
             setPic(fitPic(CGRect(x: start.midX - w / 2, y: start.midY - h / 2, width: w, height: h), in: host))
         default:
             pinching = false
+            js("window.mediaTouched && window.mediaTouched()")
             // (a finger still down moves it on from where it is now)
             start = pic
             darkDrag.setTranslation(.zero, in: host)
