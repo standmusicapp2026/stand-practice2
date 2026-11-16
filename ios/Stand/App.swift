@@ -161,7 +161,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut", "standMedia"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -393,6 +393,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             case "close": media?.close()
             case "cmd": media?.command(body)
             case "edge": media?.place(body["edge"] as? String ?? "")
+            case "find":
+                // Listen → YouTube: the performances found, to choose one here (StandYouTubeFind.swift)
+                let rid = body["rid"] as? Int ?? 0
+                StandYouTubeFind.search(body["q"] as? String ?? "") { [weak self] items in
+                    self?.send("standMediaEvent", ["op": "found", "rid": rid, "ok": items != nil, "items": items ?? []])
+                }
             default: break
             }
         case "standDone":

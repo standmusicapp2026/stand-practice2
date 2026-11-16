@@ -10682,15 +10682,79 @@ function renderServices(box, q, small) {
   for (const [cls, name, url] of serviceLinks(q)) {
     const a = el('a', 'service ' + cls + (small ? ' small' : '')); a.href = url; a.target = '_blank'; a.rel = 'noopener';
     a.append(icon('i-svc-' + cls), el('span', '', name));
+    // (YouTube, in the app: the performances found are shown here, one is chosen, it plays over the score)
+    if (cls === 'yt' && !small && ytCanFind()) a.addEventListener('click', (e) => { e.preventDefault(); ytFind(listenQuery()); });
     box.append(a);
   }
+}
+
+// ---- Listen → YouTube: choose the performance here ----
+// The videos YouTube finds for the piece and the performer, as a short list: a picture, the title,
+// who put it up, how long. The ones with the performer's name come first; if none has it, that is
+// said, plainly. A tap plays it over the score. "More on YouTube" is always there.
+const YF = { rid: 0, q: '', items: null };
+function ytCanFind() { return !!((NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.ytFind) || window.__ytFindTest); }
+function ytAsk(q, rid) {
+  if (window.__ytFindTest) { Promise.resolve(window.__ytFindTest(q)).then((items) => ytFound({ rid, ok: !!items, items: items || [] })); return; }
+  NATIVE.standMedia.postMessage({ op: 'find', q, rid });
+}
+function ytFind(q) {
+  q = (q || '').trim(); if (!q) { toast('Write the piece first.'); $('#lsQuery').focus(); return; }
+  const rid = ++YF.rid; YF.q = q; YF.items = null;
+  ytPicks('loading');
+  ytAsk(q, rid);
+  // (no answer: the search is left, YouTube itself is offered)
+  setTimeout(() => { if (YF.rid === rid && !YF.items) ytFound({ rid, ok: false, items: [] }); }, 15000);
+}
+function ytFound(m) {
+  if (m.rid !== YF.rid || YF.items) return;
+  YF.items = m.ok ? m.items || [] : [];
+  ytPicks(m.ok ? 'list' : 'failed');
+}
+const ytWords = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+function ytPicks(state) {
+  const box = $('#lsPicks'); box.textContent = ''; box.hidden = false;
+  const who = ($('#lsCustom').value.trim() || LS.who || '').trim();
+  const head = el('div', 'yp-head');
+  head.append(el('h3', '', state === 'loading' ? 'Looking on YouTube…' : 'Choose a performance'));
+  const x = el('button', 'icon-btn small'); x.append(icon('i-close')); x.setAttribute('aria-label', 'Close');
+  x.addEventListener('click', () => { YF.rid++; box.hidden = true; box.textContent = ''; });
+  head.append(x); box.append(head);
+  const more = () => { const a = el('a', 'yp-more'); a.href = serviceLinks(YF.q)[0][2]; a.target = '_blank'; a.rel = 'noopener'; a.append(icon('i-svc-yt'), el('span', '', 'More on YouTube')); return a; };
+  if (state === 'loading') {
+    const ul = el('ul', 'yp-list'); for (let i = 0; i < 3; i++) { const li = el('li', 'yp-row yp-ghost'); li.append(el('span', 'yp-pic'), el('span', 'yp-txt')); ul.append(li); } box.append(ul);
+    return;
+  }
+  if (state === 'failed' || !YF.items.length) {
+    box.append(el('p', 'yp-note', state === 'failed' ? 'YouTube could not be searched just now.' : 'Nothing found on YouTube for this.'), more());
+    return;
+  }
+  // (the performer's name, or its last word, in the title or the channel: those first)
+  const ww = ytWords(who), last = ww[ww.length - 1];
+  const hasWho = (it) => !!last && ytWords(it.title + ' ' + it.by).includes(last);
+  const qw = ytWords($('#lsQuery').value);
+  const fit = (it) => { const t = new Set(ytWords(it.title + ' ' + it.by)); return qw.length ? qw.filter((w) => t.has(w)).length / qw.length : 0; };
+  const list = YF.items.map((it, i) => ({ it, i, w: hasWho(it) ? 1 : 0, f: fit(it) }))
+    .sort((a, b) => b.w - a.w || (b.f >= 0.5) - (a.f >= 0.5) || a.i - b.i).slice(0, 6);
+  if (who && !list.some((x) => x.w)) box.append(el('p', 'yp-note', `No video with ${who} found. These are the closest:`));
+  const ul = el('ul', 'yp-list');
+  for (const { it } of list) {
+    const li = el('li');
+    const b = el('button', 'yp-row'); b.type = 'button';
+    const pic = el('span', 'yp-pic'); const im = el('img'); im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); if (it.pic) im.src = it.pic; pic.append(im, el('span', 'yp-len num', it.len));
+    const t = el('span', 'yp-txt'); t.append(el('span', 'yp-title', it.title), el('span', 'yp-by', [it.by, it.views].filter(Boolean).join(' · ')));
+    b.append(pic, t);
+    b.addEventListener('click', () => { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title); });
+    li.append(b); ul.append(li);
+  }
+  box.append(ul, more());
 }
 function renderListen() {
   const box = $('#lsWho'); box.textContent = '';
   const list = ['Any', ...(PERFORMERS[S.instrument] || [])];
   for (const n of list) {
     const b = el('button', n === (LS.who || 'Any') ? 'on' : '', n);
-    b.addEventListener('click', () => { LS.who = n === 'Any' ? '' : n; $('#lsCustom').value = ''; $('#lsCustom')._syncClear?.(); renderListen(); });
+    b.addEventListener('click', () => { LS.who = n === 'Any' ? '' : n; $('#lsCustom').value = ''; $('#lsCustom')._syncClear?.(); renderListen(); ytClear(); });
     box.append(b);
   }
   renderServices($('#lsServices'), listenQuery());
@@ -10709,12 +10773,15 @@ function renderListen() {
   syncRef();
 }
 function openListen() {
+  ytClear();
   const q = V.score ? `${(V.score.composer || '').split(' ').pop()} ${V.score.title.replace(/[·,].*$/, '')}`.trim() : '';
   if (!$('#lsQuery').dataset.for || $('#lsQuery').dataset.for !== (V.score && V.score.id)) { $('#lsQuery').value = q; $('#lsQuery').dataset.for = V.score ? V.score.id : ''; $('#lsQuery')._syncClear?.(); }
   renderListen();
 }
-$('#lsQuery').addEventListener('input', () => renderServices($('#lsServices'), listenQuery()));
-$('#lsCustom').addEventListener('input', () => { if ($('#lsCustom').value.trim()) LS.who = ''; renderListen(); $('#lsCustom').focus(); });
+$('#lsQuery').addEventListener('input', () => { renderServices($('#lsServices'), listenQuery()); ytClear(); });
+// (the list found belongs to what was searched: other words, it goes)
+function ytClear() { YF.rid++; const b = $('#lsPicks'); if (b) { b.hidden = true; b.textContent = ''; } }
+$('#lsCustom').addEventListener('input', () => { if ($('#lsCustom').value.trim()) LS.who = ''; renderListen(); ytClear(); $('#lsCustom').focus(); });
 $('#lsSave').addEventListener('click', () => {
   const url = $('#lsUrl').value.trim();
   if (!/^https?:\/\//i.test(url)) { toast('Paste a full link that starts with https://'); return; }
@@ -10806,6 +10873,7 @@ window.standMediaEvent = (m) => {
   if (!m) return;
   if (m.op === 'closed') { MEDIA.kind = ''; window.__standVideoFloats = false; mediaPillShow(false); }
   else if (m.op === 'status') mediaStatus(m);
+  else if (m.op === 'found') ytFound(m);
 };
 // In a browser: the same player in a frame that floats over the page. It is moved by any of its dark
 // edge (the top bar, the margin, the bar of buttons between the buttons) and sized by its corner. It

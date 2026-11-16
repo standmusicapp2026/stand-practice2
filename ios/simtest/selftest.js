@@ -260,6 +260,7 @@ async function run() {
   await step('back home 4', async () => { await home(); return !$('#library').hidden; });
   await musicXmlRun('');
   await mediaRun('');
+  await ytFindRun('');
   await step('settings', async () => { $('[data-panel=app]').click(); await sleep(800); return !$('#panel-app').hidden; });
   await shot('11-settings');
   // linking a device: the card in Settings, and the linking screen (looking; nothing nearby here)
@@ -496,6 +497,22 @@ async function phoneReadRun() {
     return `${n} pages, ${w} wide in ${sw}; scrolled to ${l1}, a wink to ${l2}`;
   }, 120000);
 }
+// Listen → YouTube: the app's own search (YouTube's page read natively), for real
+async function ytFindRun(pre) {
+  await step(pre + 'Listen: YouTube performances found', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia && window.standCaps.ytFind)) return 'no native search';
+    const was = window.standMediaEvent; let got = null;
+    window.standMediaEvent = (m) => { if (m && m.op === 'found' && m.rid === 4242) got = m; else if (was) was(m); };
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'find', q: 'Bach cello suite 1 prelude Yo-Yo Ma', rid: 4242 });
+    await waitFor(() => got, 20000);
+    window.standMediaEvent = was;
+    if (!got) throw new Error('no answer');
+    const it = got.items || [];
+    const good = it.filter((x) => /^[\w-]{11}$/.test(x.id) && x.title && x.len);
+    if (!got.ok || good.length < 3) throw new Error('ok ' + got.ok + ', ' + it.length + ' items: ' + JSON.stringify(it.slice(0, 2)).slice(0, 300));
+    return `${it.length} found; first: ${good[0].title.slice(0, 60)} (${good[0].by}, ${good[0].len})`;
+  }, 30000);
+}
 async function phoneRun() {
   // (a new iPhone first asks about linking an iPad: answered "Not now", as most would at first)
   await step('iPhone: link question answered', async () => { const nb = await waitFor(() => [...$$('.ask-back button')].find((b) => /Not now/.test(b.textContent)), 5000); if (!nb) return 'not asked'; nb.click(); await sleep(500); return ![...$$('.ask-back')].length; });
@@ -510,6 +527,7 @@ async function phoneRun() {
   await shot('p-end');
   await musicXmlRun('iPhone: ');
   await mediaRun('iPhone: ');
+  await ytFindRun('iPhone: ');
   await phoneReadRun();
   await videoRun();
   await bgRun();
