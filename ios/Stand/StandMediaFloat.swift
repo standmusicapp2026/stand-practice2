@@ -260,7 +260,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
     }
     @objc private func leaving() { if kind == "youtube", superview != nil { command(["cmd": "pause"]) } }
     func close() {
-        js("document.body.textContent = ''")
+        js("window.mediaStop ? window.mediaStop() : (document.body.textContent = '')")
         removeFromSuperview()
         closed?()
     }

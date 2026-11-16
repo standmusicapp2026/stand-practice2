@@ -102,7 +102,7 @@ function say(t, html) { const m = $('#msg') || Object.assign(document.createElem
 function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = null; P.sp = null; P.a = P.b = null; P.rates = null; P.playing = false; P.ready = false; syncBar(); }
 // (to Stand: how the video is, for its buttons at the bottom of the page; said again only when it changes)
 function status() {
-  if (P.kind !== 'youtube') return;
+  if (P.kind !== 'youtube' || P.gone) return;
   let t = 0, d = 0; try { if (P.yt && P.yt.getCurrentTime) { t = P.yt.getCurrentTime() || 0; d = P.yt.getDuration ? P.yt.getDuration() || 0 : 0; } } catch {}
   const m = { kind: 'youtube', ready: P.ready, playing: P.playing, speed: P.speed, t: Math.floor(t), d: Math.floor(d), a: P.a, b: P.b };
   const k = JSON.stringify(m); if (k === P.said) return; P.said = k;
@@ -175,7 +175,7 @@ window.mediaOpen = (o) => {
   document.documentElement.classList.toggle('clean', !!o.clean); document.body.classList.toggle('clean', !!o.clean);
   if (o.clean) { window.mediaLayout(o); showBar(); }
   if (o.tr) { P.tr = o.tr; for (const b of document.querySelectorAll('#bar button[aria-label]')) b.setAttribute('aria-label', T(b.dataset.en || (b.dataset.en = b.getAttribute('aria-label')))); }
-  P.dock = !!o.dock; document.body.classList.toggle('dock', P.dock);
+  P.gone = false; P.dock = !!o.dock; document.body.classList.toggle('dock', P.dock);
   clear(); P.kind = o.kind; P.url = o.url || ''; P.speed = 1; P.said = ''; syncBar();
   if (o.kind === 'youtube') openYouTube(o.id, o.start);
   else if (o.kind === 'spotify') openSpotify(o.type, o.id);
@@ -238,6 +238,8 @@ $('#bFwd').onclick = doFwd;
 $('#bSpeed').onclick = doSpeed;
 $('#bLoop').onclick = doLoop;
 $('#bClose').onclick = () => { clear(); host('close'); };
+// (closed by Stand: nothing more said, nothing left playing)
+window.mediaStop = () => { P.gone = true; clear(); document.body.textContent = ''; };
 $('#bOpen').onclick = () => { if (P.kind === 'youtube' && P.yt && P.yt.pauseVideo) P.yt.pauseVideo(); host('openOut', { url: P.url }); };
 // Stand out of sight (another app, the screen locked): a video pauses, as YouTube asks (no playing
 // in the background)
