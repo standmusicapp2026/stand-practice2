@@ -53,7 +53,10 @@ export async function zipEntries(blob) {
       }
       x += 4 + len;
     }
-    if (!name.endsWith('/')) out.push({ name, size, packed, method, at });
+    // (when it was last changed: the newest of several copies is the one kept)
+    const tm = u16(cd, p + 12), dt = u16(cd, p + 14);
+    const mt = dt ? new Date(1980 + (dt >> 9), ((dt >> 5) & 15) - 1, dt & 31, tm >> 11, (tm >> 5) & 63, (tm & 31) * 2).getTime() : 0;
+    if (!name.endsWith('/')) out.push({ name, size, packed, method, at, mt });
     p += 46 + nl + xl + cl;
   }
   return out;

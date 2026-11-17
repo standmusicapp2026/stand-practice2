@@ -289,6 +289,18 @@ async function run() {
     return `3 scores in ${names.join(', ')}: ${titles}`;
   }, 120000);
   await shot('12b-brought');
+  // forScore's own files in a folder: a shared score (.4sc) comes in; two copies of one score, once
+  await step('bring forScore files (a .4sc, copies left out)', async () => {
+    const { db } = await import('/js/db.js');
+    const before = (await db.all('scores')).length;
+    window.webkit.messageHandlers.standPickFolder.postMessage({ testPath: 'ForScoreTest' });
+    let n = before; for (let i = 0; i < 60 && n < before + 2; i++) { await sleep(1000); n = (await db.all('scores')).length; }
+    await sleep(3000);
+    n = (await db.all('scores')).length;
+    const got = (await db.all('scores')).filter((x) => /Haydn|Shared Song/.test(x.title)).map((x) => x.title + ' (' + x.pages + ')');
+    if (n - before !== 2 || !got.some((t) => /Shared Song/.test(t)) || got.filter((t) => /Haydn/.test(t)).length !== 1) throw new Error(`${n - before} scores: ${got.join(' / ')}`);
+    return got.join(' / ');
+  }, 90000);
   await step('bring two folders chosen together', async () => {
     const { db, getSetting } = await import('/js/db.js');
     const before = (await db.all('scores')).length;

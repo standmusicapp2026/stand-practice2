@@ -162,7 +162,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut", "standMedia"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, amFind: 1, openApp: 1, music: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, amFind: 1, openApp: 1, music: 1, pickFiles: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -471,6 +471,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             files.diag(body)
         case "standPickFolder":
             if let t = body["testPath"] as? String { StandFolderImport.shared.pickForTest(t) { [weak self] list in self?.send("standFolder", list) }; return }
+            // (files: any kind can be chosen — PDFs, pictures, forScore's .4sc and .4sb, .zip —
+            // nothing shown greyed out; they come in as if they were a folder)
+            if body["files"] as? Bool == true { StandFolderImport.shared.pickFiles(from: self) { [weak self] list in self?.send("standFolder", list) }; return }
             StandFolderImport.shared.pick(from: self) { [weak self] list in self?.send("standFolder", list) }
         case "standAwake":
             // (battery: the page says when nothing is going on, and the screen may then lock as iOS is set)

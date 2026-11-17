@@ -59,6 +59,10 @@ targets:
           - CFBundleTypeName: MusicXML score
             LSHandlerRank: Alternate
             LSItemContentTypes: [org.w3c.music-notation.musicxml, org.w3c.music-notation.musicxml.uncompressed, org.musicxml.musicxml, org.musicxml.compressed, com.recordare.musicxml, com.recordare.musicxml.compressed, com.recordare.musicxml.uncompressed, com.makemusic.musicxml, public.xml]
+          # (forScore's own files: a score shared from forScore, a setlist, an archive)
+          - CFBundleTypeName: forScore score
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.forScore.4sc, com.forScore.4ss, com.forScore.4sb]
           - CFBundleTypeName: MIDI file
             LSHandlerRank: Alternate
             LSItemContentTypes: [public.midi-audio]
@@ -75,6 +79,21 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [musicxml]
               public.mime-type: [application/vnd.recordare.musicxml+xml]
+          - UTTypeConformsTo: [public.data, public.content]
+            UTTypeDescription: forScore score
+            UTTypeIdentifier: com.forScore.4sc
+            UTTypeTagSpecification:
+              public.filename-extension: [4sc]
+          - UTTypeConformsTo: [public.data, public.content]
+            UTTypeDescription: forScore setlist
+            UTTypeIdentifier: com.forScore.4ss
+            UTTypeTagSpecification:
+              public.filename-extension: [4ss]
+          - UTTypeConformsTo: [public.data, public.archive]
+            UTTypeDescription: forScore backup
+            UTTypeIdentifier: com.forScore.4sb
+            UTTypeTagSpecification:
+              public.filename-extension: [4sb]
         UTExportedTypeDeclarations:
           - UTTypeConformsTo: [public.data]
             UTTypeDescription: Stand backup

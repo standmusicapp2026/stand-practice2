@@ -21,6 +21,7 @@ import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
 import { ask, choose } from './dialog.js';
+import { forScorePdfs } from './forscore.js';
 import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js';
 import { DuoFollower, shiftOfName } from './duofollow.js';
 import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
@@ -876,6 +877,8 @@ async function nameMeta(name) {
 async function addPdf(data, name, meta, opt = {}) {
   const file = { id: uid(), kind: 'pdf', data };
   const doc = await openDocument(file);
+  // (bringing scores in: an older copy of one already brought is left out)
+  if (opt.dupCheck && (await opt.dupCheck(doc))) { doc.destroy(); return null; }
   const thumb = await makeThumb(doc);
   meta = meta || await imslpMetaFor(name);
   const info = await readScoreInfo(doc, name, await loadComposers(), meta && meta.title ? {} : { ocr: readTopOfPage });
@@ -986,7 +989,11 @@ $('#importInput').addEventListener('change', async (e) => {
   if (!files.length) return;
   const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
   const imgs = files.filter((f) => !pdfs.includes(f) && (f.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp|tiff?)$/i.test(f.name)));
-  const other = files.filter((f) => !pdfs.includes(f) && !imgs.includes(f));
+  // (forScore's own files and archives: brought in as from forScore)
+  const fs = files.filter((f) => !pdfs.includes(f) && !imgs.includes(f) && /\.(4sc|4ss|4sb|zip)$/i.test(f.name));
+  const other = files.filter((f) => !pdfs.includes(f) && !imgs.includes(f) && !fs.includes(f));
+  for (const f of fs.filter((x) => /\.(4sb|zip)$/i.test(x.name))) await bringArchive(f);
+  { const sc = fs.filter((x) => /\.(4sc|4ss)$/i.test(x.name)); if (sc.length) await bringItems(sc.map((f) => ({ rel: f.name, size: f.size, mt: f.lastModified || 0, read: async () => f })), 'forScore'); }
   if (pdfs.length) await importPdfs(pdfs.map((f) => ({ name: f.name, data: () => f.arrayBuffer() })));
   if (other.length) setTimeout(() => toast(`${other.length === 1 ? other[0].name + ' is' : other.length + ' files are'} not a PDF or a picture, so ${other.length === 1 ? 'it was' : 'they were'} left out.`, 4000), pdfs.length ? 3500 : 0);
   if (imgs.length) openReview(imgs, imgs[0].name);
@@ -1022,12 +1029,39 @@ function brFolderId(name) {
 }
 // pictures named as pages ("01.jpg", "Page 2.png", "p3.jpg") in one folder are the pages of one score
 const PAGE_NAME = /^(?:(?:page|p[áa]gina|seite|pagina|p\.?|pg\.?)[\s_-]*)?\d{1,3}$/i;
-const isPdfRel = (r) => /\.pdf$/i.test(r), isImgRel = (r) => /\.(jpe?g|png|heic|heif|tiff?)$/i.test(r);
+const isPdfRel = (r) => /\.(pdf|4sc|4ss)$/i.test(r), isImgRel = (r) => /\.(jpe?g|png|heic|heif|tiff?)$/i.test(r);
+// ---- copies of one score (forScore keeps a new copy each time a score is changed or updated) ----
+// Exactly the same file: left out. The same name but for a copy's number ("Elgar 2", "Elgar (1)",
+// "Elgar copy") with the same pages, whose first page looks the same: an older copy, left out
+// (the newest is kept). "Étude 1" and "Étude 2" differ on their first page, so both come in.
+const dupKey = (rel) => {
+  let b = String(rel).split('/').pop().replace(/\.[^.]+$/, '');
+  for (let k = 0; k < 2; k++) b = b.replace(/(\s*[-_ ]\s*(copy|kopie|copia|cópia|copie)(\s*\d+)?|\s+\d{1,2}|\s*\(\d{1,2}\)|-\d{1,2})$/i, '');
+  return b.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+};
+const copyNo = (rel) => { const m = String(rel).split('/').pop().replace(/\.[^.]+$/, '').match(/(?:\s|\(|-)(\d{1,2})\)?$/); return m ? +m[1] : 0; };
+async function sha(ab) { try { const d = await crypto.subtle.digest('SHA-256', ab); return [...new Uint8Array(d)].slice(0, 12).map((x) => x.toString(16).padStart(2, '0')).join(''); } catch { return ''; } }
+// the first page drawn very small, in grey: to know two copies of one score apart from two pieces
+async function firstLook(doc) {
+  try {
+    const c = document.createElement('canvas');
+    await doc.render(0, c, 48, 64);
+    const g = c.getContext('2d', { willReadFrequently: true }), d = g.getImageData(0, 0, c.width, c.height).data;
+    const out = new Uint8Array(c.width * c.height);
+    for (let i = 0; i < out.length; i++) out[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
+    c.width = c.height = 0;
+    return out;
+  } catch { return null; }
+}
+const looksSame = (a, b) => { if (!a || !b || a.length !== b.length) return false; let s2 = 0; for (let i = 0; i < a.length; i++) s2 += Math.abs(a[i] - b[i]); return s2 / a.length < 5; };
 // items: [{ rel, size, read: () => Promise<Blob> }]
 async function bringItems(items, app, opts = {}) {
   if (BR.busy) { toast('Still bringing the last ones in…', 2500); return; }
   BR.busy = true; hidePanel(); setHomeTab('mine');
   const have = new Set((await db.all('scores')).map((x) => x.importedFrom).filter(Boolean));
+  // (the copies left out before are left out again: never brought in by choosing it a second time)
+  const leftOut = new Set(await getSetting('brCopies', []).catch(() => []));
+  for (const x of leftOut) have.add(x);
   let todo = items.filter((it) => (isPdfRel(it.rel) || isImgRel(it.rel)) && !/(^|\/)(__MACOSX|\.)/.test(it.rel));
   // the pages of one score, kept together, in order
   const groups = new Map();
@@ -1045,10 +1079,22 @@ async function bringItems(items, app, opts = {}) {
   }
   const inGroup = new Set([...groups.values()].flat());
   todo = [...todo.filter((it) => !inGroup.has(it)), ...[...groups.entries()].map(([dir, list]) => ({ rel: dir.replace(/\/$/, ''), size: list.reduce((n, x) => n + (x.size || 0), 0), pages: list }))];
+  // (copies of one score one after the other, the newest first: it is the one kept)
   todo.sort((x, y) => x.rel.localeCompare(y.rel, undefined, { numeric: true }));
+  {
+    // (stable: the copies of one name kept together, newest first)
+    const byKey = new Map(); for (const it of todo) { const k = isPdfRel(it.rel) ? dupKey(it.rel) : '\u0000' + it.rel; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(it); }
+    todo = [...byKey.values()].flatMap((g) => g.sort((x, y) => (y.mt || 0) - (x.mt || 0) || copyNo(y.rel) - copyNo(x.rel)));
+  }
   // a copy of a score already here (Stand's own copies of its scores next to its backup)
   const skip = opts.skip || (() => false);
-  let added = 0, same = 0, failed = [], full = false, done = 0;
+  let added = 0, same = 0, failed = [], full = false, done = 0, copies = 0;
+  const hashes = new Set(), looks = new Map();
+  const dupCheck = (rel) => async (doc) => {
+    const k = dupKey(rel), fp = await firstLook(doc), list = looks.get(k) || [];
+    if (list.some((x) => x.pages === doc.pages && looksSame(x.fp, fp))) return true;
+    list.push({ pages: doc.pages, fp }); looks.set(k, list); return false;
+  };
   const prevFolder = FOLD.current;
   try {
     for (const it of todo) {
@@ -1066,7 +1112,23 @@ async function bringItems(items, app, opts = {}) {
         } else {
           const blob = await it.read();
           const folder = brFolderId(brFolderName(it.rel));
-          if (isPdfRel(it.rel)) await addPdf(await blob.arrayBuffer(), name, null, { folder, from: sig, app, nameTitle: true });
+          if (isPdfRel(it.rel)) {
+            // (forScore's own file: the PDF in it; a setlist: each of its scores)
+            const pdfs = /\.(4sc|4ss)$/i.test(it.rel) ? await forScorePdfs(blob, name) : [{ name, data: await blob.arrayBuffer() }];
+            if (!pdfs.length) throw new Error('no score in it');
+            let any = false;
+            for (const p of /\.4sc$/i.test(it.rel) ? pdfs.slice(0, 1) : pdfs) {
+              // (the same file again under the same name, but for a copy's number: left out — the same
+              // file under another name is a score of its own, kept as it was given)
+              const h0 = await sha(p.data), h = h0 && dupKey(it.rel) + '|' + h0;
+              if (h && hashes.has(h)) { copies++; leftOut.add(sig); continue; }
+              if (h) hashes.add(h);
+              const nm = /\.4ss$/i.test(it.rel) ? p.name : name.replace(/\.4sc$/i, '.pdf');
+              const sc = await addPdf(p.data, nm, null, { folder, from: sig + (pdfs.length > 1 ? ':' + p.name : ''), app: app || (/\.4s[cs]$/i.test(it.rel) ? 'forScore' : ''), nameTitle: true, dupCheck: dupCheck(it.rel) });
+              if (sc) any = true; else { copies++; leftOut.add(sig); }
+            }
+            if (!any) { have.add(sig); continue; }
+          }
           else await addImages([blob.type ? blob : new Blob([blob], { type: 'image/jpeg' })], name, { folder, from: sig, nameTitle: true });
         }
         added++; have.add(sig);
@@ -1077,15 +1139,17 @@ async function bringItems(items, app, opts = {}) {
       }
       await new Promise((r) => setTimeout(r, 60));
     }
-  } finally { BR.busy = false; FOLD.current = prevFolder; await refreshLibrary(); }
+  } finally { BR.busy = false; FOLD.current = prevFolder; await refreshLibrary(); await setSetting('brCopies', [...leftOut].slice(-5000)).catch(() => {}); }
   const parts = [];
   parts.push(added ? `${added} score${added === 1 ? '' : 's'} brought in` : 'Nothing new to bring in');
   if (same) parts.push(`${same} already here`);
+  if (copies) parts.push(`${copies} older or repeated copies left out`);
   if (full) parts.push('the iPad is full: free some space and choose it again to bring the rest');
   else if (failed.length) parts.push(`${failed.length} could not be opened (${failed.slice(0, 2).join(', ')}${failed.length > 2 ? '…' : ''})`);
   if (!todo.length) parts.splice(0, parts.length, 'There are no PDFs or pictures of scores in there.');
-  if (!opts.quiet) toast(parts.join(' · ') + '.', 7000);
-  return { added, same, failed: failed.length, full, none: !todo.length };
+  // (each piece in the app's language, then put together)
+  if (!opts.quiet) toast(parts.map((x) => (globalThis.__tr ? globalThis.__tr(x) : x)).join(' · ') + '.', 7000);
+  return { added, same, copies, failed: failed.length, full, none: !todo.length };
 }
 // ---- Stand's own backups, wherever they turn up ----
 // The Stand folder of another Stand (Files › Stand, or a copy of it), a backup .zip, or a backup
@@ -1165,7 +1229,12 @@ async function bringArchive(file, opt = {}) {
       if (/\.zip$/i.test(e.name) && e.size < 2e9) {
         const inner = await zipRead(file, e);
         for (const e2 of await zipEntries(inner).catch(() => [])) items.push({ rel: e.name.replace(/\.zip$/i, '') + '/' + e2.name, size: e2.size, read: () => zipRead(inner, e2) });
-      } else items.push({ rel: e.name, size: e.size, read: () => zipRead(file, e) });
+      } else items.push({ rel: e.name, size: e.size, mt: e.mt || 0, read: () => zipRead(file, e) });
+    }
+    // (a forScore backup holds only its lists and settings; an archive holds the scores too)
+    if (app === 'forScore' && !items.some((it) => isPdfRel(it.rel) || isImgRel(it.rel))) {
+      toast('This forScore backup holds its lists and settings, not the scores themselves. In forScore, make an archive instead (Tools › Backups › Archive), or choose forScore’s folder in Files.', 9000);
+      return;
     }
     await bringItems(items, app);
   } catch (e) { console.error(e); toast('That archive could not be opened (' + (e.message || 'damaged') + ').', 6000); }
@@ -1193,7 +1262,7 @@ window.standFolder = async (msg) => {
   }
   const oldFiles = [];
   for (const f of files) if (/\.standbackup$/i.test(f.rel) && !underAny(f.rel, found.roots)) { const b = await get(f.rel); if (b) oldFiles.push(new File([b], f.rel.split('/').pop())); }
-  const loose = files.filter((f) => !/\.(zip|4sb|standbackup)$/i.test(f.rel)).map((f) => ({ rel: f.rel, size: f.size, read: async () => { const b = await get(f.rel); if (!b) throw new Error('missing'); return b; } }));
+  const loose = files.filter((f) => !/\.(zip|4sb|standbackup)$/i.test(f.rel)).map((f) => ({ rel: f.rel, size: f.size, mt: f.mt || 0, read: async () => { const b = await get(f.rel); if (!b) throw new Error('missing'); return b; } }));
   if (found.any || zipSrcs.length || oldFiles.length) {
     toast('Bringing back the Stand backup…', 600000);
     const r = await restoreStandBackups(found, get, zipSrcs, oldFiles);
@@ -1217,9 +1286,15 @@ $('#brArchiveInput')?.addEventListener('change', async (e) => {
   hidePanel();
   // (a backup made by an older Stand: one .standbackup file)
   if (/\.standbackup$/i.test(f.name)) { toast('Bringing back the Stand backup…', 600000); const r = await restoreStandBackups({ mirrors: [], sets: [] }, async () => null, [], [f]); await afterStandRestore(r, [], ''); return; }
+  if (/\.(4sc|4ss)$/i.test(f.name)) { await bringItems([{ rel: f.name, size: f.size, mt: f.lastModified || 0, read: async () => f }], 'forScore'); return; }
   await bringArchive(f);
 });
-$('#brFiles')?.addEventListener('click', () => { hidePanel(); $('#importInput').click(); });
+// (in the app: any kind of file can be chosen — forScore's .4sc and .4sb too — none greyed out)
+$('#brFiles')?.addEventListener('click', () => {
+  hidePanel();
+  const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standPickFolder;
+  if (h && (window.standCaps || {}).pickFiles) h.postMessage({ files: true }); else $('#importInput').click();
+});
 $('#bringBtn')?.addEventListener('click', () => showPanel('bring'));
 $('#bkBring')?.addEventListener('click', () => showPanel('bring'));
 window.__bring = { bringItems, bringArchive, brFolderName };
@@ -1228,6 +1303,17 @@ window.__bring = { bringItems, bringArchive, brFolderName };
 // together, in their order, as one score.
 const REVIEW_PHONE = { how: '' };
 async function phoneAdd(blobs, names, scanned) {
+  // (forScore's own files: the PDFs in them, each as a score; older copies left out)
+  if (names.some((n) => /\.(4sc|4ss)$/i.test(n || ''))) {
+    const b2 = [], n2 = [], seen = new Set();
+    for (let i = 0; i < blobs.length; i++) {
+      if (!/\.(4sc|4ss)$/i.test(names[i] || '')) { b2.push(blobs[i]); n2.push(names[i]); continue; }
+      const pdfs = await forScorePdfs(blobs[i], names[i]).catch(() => []);
+      for (const p of /\.4sc$/i.test(names[i]) ? pdfs.slice(0, 1) : pdfs) { const h = await sha(p.data); if (h && seen.has(h)) continue; seen.add(h); b2.push(new Blob([p.data], { type: 'application/pdf' })); n2.push(p.name); }
+    }
+    if (!b2.length) { toast('No score was found in that forScore file.', 4000); return; }
+    blobs = b2; names = n2;
+  }
   const isPdf = (b, n) => /\.pdf$/i.test(n || '') || b.type === 'application/pdf';
   const pdfs = blobs.map((b, i) => [b, names[i]]).filter(([b, n]) => isPdf(b, n));
   const pics = blobs.filter((b, i) => !isPdf(b, names[i]));
@@ -1304,7 +1390,10 @@ window.standIncoming = async (msg) => {
     }
     // another app's archive (a forScore .4sb, a .zip of scores)
     { const nm = msg.name || paths[0] || '';
-      if (/\.(zip|4sb)$/i.test(nm) && paths.length === 1) { await bringArchive(new File([blobs[0]], nm.split('/').pop())); return; } }
+      if (/\.(zip|4sb)$/i.test(nm) && paths.length === 1) { await bringArchive(new File([blobs[0]], nm.split('/').pop())); return; }
+      // (forScore's own score files, shared from forScore, AirDropped or opened from Files)
+      const nms = paths.map((p, i) => (msg.names && msg.names[i]) || (paths.length === 1 ? msg.name : '') || String(p).split('/').pop() || '');
+      if (nms.length && nms.every((n) => /\.(4sc|4ss)$/i.test(n))) { await bringItems(blobs.map((b, i) => ({ rel: nms[i].split('/').pop(), size: b.size, read: async () => b })), 'forScore'); return; } }
     // several files at once: the PDFs are added one by one, the pictures go to the scan review
     const names = paths.map((p, i) => (msg.names && msg.names[i]) || (paths.length === 1 ? msg.name : '') || String(p).split('/').pop() || 'Score.pdf');
     const isPdfAt = (i) => /\.pdf$/i.test(names[i]) || blobs[i].type === 'application/pdf';
@@ -2643,6 +2732,9 @@ function turn(dir) {
       return;
     }
     if (V.half) { V.half = false; layout(true); return; }
+    // back by halves too, the way it came: the previous page's half first, then the whole of it
+    const first = rr ? rr[0] : 0;
+    if (V.page - 1 >= first) { V.page -= 1; V.score.lastPage = V.page; rememberPlace(); V.half = true; layout(true); return; }
   }
   const next = clamp(V.page + dir * V.spread, rr ? rr[0] : 0, rr ? rr[1] : Math.max(0, V.doc.pages - 1));
   if (next === V.page) return;
@@ -2650,6 +2742,19 @@ function turn(dir) {
   goTo(next);
 }
 window.standTurn = turn;
+// The iPad moves the whole window up for the keyboard, and does not always put it back: with nothing
+// being typed, the window is put back in its place (the score never shows under an empty strip).
+function windowHome() {
+  if ($('#score').hidden) return;   // (only over a score: elsewhere the window scrolls as it likes)
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || (ae && ae.isContentEditable)) return;
+  if (window.scrollY || window.scrollX || document.documentElement.scrollTop || document.body.scrollTop) {
+    window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+  }
+}
+document.addEventListener('focusout', () => setTimeout(windowHome, 120));
+window.addEventListener('scroll', () => { clearTimeout(windowHome.t); windowHome.t = setTimeout(windowHome, 250); }, { passive: true });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => setTimeout(windowHome, 200));
 // (the keyboard coming up for typed words changes only the height: the pages are left as they are,
 // so the words being typed are not lost)
 let resizeT, lastW = window.innerWidth;
@@ -3029,7 +3134,9 @@ const ZOOM_MIN_NB = 0.7;
 const zoomMin = () => (NBK() ? ZOOM_MIN_NB : 1);
 // Zoomed in on a score, the page can be pulled a little past its top and bottom edges, so the top
 // line can be brought down below the markings bar to write above it.
-const zoomSlack = () => (NBK() || Z.s <= 1.02 ? { top: 0, bot: 0 } : (() => { const h = stage.clientHeight || 800; return { top: Math.min(260, h * 0.24), bot: Math.min(140, h * 0.12) }; })());
+// (only while writing: reading, a page made a little bigger by two fingers is never left hanging
+// below an empty strip at the top)
+const zoomSlack = () => (NBK() || Z.s <= 1.02 || !V.inking ? { top: 0, bot: 0 } : (() => { const h = stage.clientHeight || 800; return { top: Math.min(260, h * 0.24), bot: Math.min(140, h * 0.12) }; })());
 function spreadNatural() {
   // position of the spread inside the stage before our transform
   const sr = stage.getBoundingClientRect();
@@ -7275,7 +7382,11 @@ $('#twoUp').addEventListener('change', (e) => { S.twoUp = e.target.checked; keep
 $('#onePage').addEventListener('change', (e) => { S.onePage = e.target.checked; keepScoreView(); clearCache(); layout(); });
 $('#landscapeLock').addEventListener('change', (e) => { S.landscapeLock = e.target.checked; keepScoreView(); applyOrientation(); });
 $('#turnScore').addEventListener('change', (e) => { S.turnScore = e.target.checked; keepScoreView(); clearCache(); layout(); });
-$('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; keepScoreView(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
+$('#halfTurn').addEventListener('change', (e) => {
+  S.halfTurn = e.target.checked; keepScoreView(); if (!S.halfTurn && V.half) { V.half = false; layout(); }
+  // (two pages side by side turn whole: said, so it is not taken for a fault)
+  if (S.halfTurn && V.spread === 2) toast('Half-page turns work with one page on the screen: choose One page, or hold the iPad upright.', 4500);
+});
 $$('#paperSeg button').forEach((b) => b.addEventListener('click', () => {
   S.paper = b.dataset.paper; keepScoreView(); $('#score').dataset.paper = S.paper;
   if (DUO.on) { $('#duoView').style.background = DUO_PAPER[S.paper] || '#fff'; duoDraw(); }

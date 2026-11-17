@@ -559,24 +559,26 @@ function inkProfile(canvas, rows) {
   }
   return prof;
 }
-// Returns a split position (0..1) where both pages are blank across the width, near the middle.
+// Returns a split position (0..1): the middle of the page, as on the music stand, moved to the gap
+// between systems nearest to it (blank across the width on both pages), so no line of music is cut.
+// The middle wins over a wider gap further away: what is left of this page stays about half.
 export function findSplit(curCanvas, nextCanvas) {
   try {
     const rows = 400;
     const a = inkProfile(curCanvas, rows), b = inkProfile(nextCanvas, rows);
-    let best = null;
-    let runStart = -1;
-    for (let y = Math.floor(rows * 0.28); y <= Math.ceil(rows * 0.72); y++) {
-      const blank = a[y] < 0.012 && b[y] < 0.012;
-      if (blank && runStart < 0) runStart = y;
-      if ((!blank || y === Math.ceil(rows * 0.72)) && runStart >= 0) {
-        const end = blank ? y : y - 1, len = end - runStart + 1, mid = (runStart + end) / 2;
-        const score = len - Math.abs(mid - rows / 2) * 0.35;
-        if (len >= 3 && (!best || score > best.score)) best = { score, mid };
-        runStart = -1;
-      }
+    const gaps = [];
+    let start = -1;
+    for (let y = 0; y <= rows; y++) {
+      const blank = y < rows && a[y] < 0.012 && b[y] < 0.012;
+      if (blank && start < 0) start = y;
+      if (!blank && start >= 0) { if (y - start >= 3) gaps.push({ mid: (start + y - 1) / 2 / rows, len: (y - start) / rows }); start = -1; }
     }
-    return best ? best.mid / rows : 0.5;
+    // (nearest the middle first, within a third of a page of it; a wider gap only breaks a near tie)
+    for (const reach of [0.12, 0.2]) {
+      const near = gaps.filter((g) => Math.abs(g.mid - 0.5) <= reach);
+      if (near.length) return near.sort((x, y) => (Math.abs(x.mid - 0.5) - x.len * 0.25) - (Math.abs(y.mid - 0.5) - y.len * 0.25))[0].mid;
+    }
+    return 0.5;
   } catch { return 0.5; }
 }
 

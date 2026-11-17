@@ -18,11 +18,25 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
     private var onList: (([String: Any]) -> Void)?
     // (and what a Stand backup holds, when the folder is another Stand's: its library, recordings,
     // videos and the pieces of its markings — the page brings those back whole, never one by one)
-    private static let kinds: Set<String> = ["pdf", "jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "zip", "4sb", "4sc", "standbackup",
+    private static let kinds: Set<String> = ["pdf", "jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "zip", "4sb", "4sc", "4ss", "standbackup",
                                              "json", "mov", "mp4", "m4v", "webm", "wav", "m4a", "bin", "f32", "i16", "u8"]
+
+    private var filesMode = false
+
+    // Files, not a folder: any kind (a PDF, pictures, forScore's .4sc or .4sb, a .zip); copies of
+    // them are put together in a folder of Stand's own, read like a folder chosen in Files.
+    func pickFiles(from vc: UIViewController, onList: @escaping ([String: Any]) -> Void) {
+        self.onList = onList
+        filesMode = true
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.delegate = self
+        picker.allowsMultipleSelection = true
+        vc.present(picker, animated: true)
+    }
 
     func pick(from vc: UIViewController, onList: @escaping ([String: Any]) -> Void) {
         self.onList = onList
+        filesMode = false
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
         picker.delegate = self
         // (one folder or several: inside a folder, "Open" takes that folder; in a list, "Select"
@@ -51,6 +65,27 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { onList?(["cancelled": true]); return }
+        if filesMode {
+            filesMode = false
+            if let old = standPickedFolder { old.stopAccessingSecurityScopedResource() }
+            for (_, u) in standPickedRoots { u.stopAccessingSecurityScopedResource() }
+            standPickedRoots = [:]
+            // (the copies iOS made, gathered in one folder; the last time's let go)
+            let fm = FileManager.default
+            let top = fm.temporaryDirectory.appendingPathComponent("StandPicked", isDirectory: true)
+            try? fm.removeItem(at: top)
+            let dir = top.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            for u in urls {
+                var dest = dir.appendingPathComponent(u.lastPathComponent), n = 2
+                while fm.fileExists(atPath: dest.path) { dest = dir.appendingPathComponent("\(u.deletingPathExtension().lastPathComponent) \(n).\(u.pathExtension)"); n += 1 }
+                if (try? fm.moveItem(at: u, to: dest)) == nil { try? fm.copyItem(at: u, to: dest) }
+            }
+            standPickedFolder = dir
+            let reply = onList
+            DispatchQueue.global(qos: .userInitiated).async { var list = Self.list(dir); list["name"] = ""; DispatchQueue.main.async { reply?(list) } }
+            return
+        }
         if let old = standPickedFolder { old.stopAccessingSecurityScopedResource() }
         for (_, u) in standPickedRoots { u.stopAccessingSecurityScopedResource() }
         standPickedRoots = [:]; standPickedFolder = nil
@@ -85,13 +120,14 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        filesMode = false
         onList?(["cancelled": true])
     }
 
     private static func list(_ root: URL) -> [String: Any] {
         var files: [[String: Any]] = []
         var notHere = 0
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey, .contentModificationDateKey]
         let base = root.resolvingSymlinksInPath().standardizedFileURL.path
         let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsPackageDescendants])
         while let f = en?.nextObject() as? URL {
@@ -107,7 +143,8 @@ final class StandFolderImport: NSObject, UIDocumentPickerDelegate {
             var rel = f.resolvingSymlinksInPath().standardizedFileURL.path
             if rel.hasPrefix(base) { rel = String(rel.dropFirst(base.count)) }
             while rel.hasPrefix("/") { rel.removeFirst() }
-            files.append(["rel": rel, "size": v?.fileSize ?? 0])
+            // (when it was last changed: of several copies of one score, the newest is kept)
+            files.append(["rel": rel, "size": v?.fileSize ?? 0, "mt": Int((v?.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000)])
             if files.count >= 20000 { break }
         }
         files.sort { ($0["rel"] as? String ?? "").localizedStandardCompare($1["rel"] as? String ?? "") == .orderedAscending }
