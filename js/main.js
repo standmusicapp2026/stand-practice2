@@ -10682,28 +10682,42 @@ function renderServices(box, q, small) {
   for (const [cls, name, url] of serviceLinks(q)) {
     const a = el('a', 'service ' + cls + (small ? ' small' : '')); a.href = url; a.target = '_blank'; a.rel = 'noopener';
     a.append(icon('i-svc-' + cls), el('span', '', name));
-    // (YouTube, in the app: the performances found are shown here, one is chosen, it plays over the score)
-    if (cls === 'yt' && !small && ytCanFind()) a.addEventListener('click', (e) => { e.preventDefault(); ytFind(listenQuery()); });
+    // In the app: YouTube and Apple Music show what they find, here, to choose from; Spotify (which
+    // has no search open to other apps) opens in its own app, at the search for the piece.
+    if (!small && (cls === 'yt' || cls === 'am') && ytCanFind(cls)) a.addEventListener('click', (e) => { e.preventDefault(); ytFind(listenQuery(), cls); });
+    else if (!small && cls === 'sp' && canOpenApp()) a.addEventListener('click', (e) => { e.preventDefault(); const q2 = listenQuery(); openApp(['spotify:search:' + encodeURIComponent(q2), serviceLinks(q2)[1][2]]); });
     box.append(a);
   }
 }
-
-// ---- Listen → YouTube: choose the performance here ----
-// The videos YouTube finds for the piece and the performer, as a short list: a picture, the title,
-// who put it up, how long. The ones with the performer's name come first; if none has it, that is
-// said, plainly. A tap plays it over the score. "More on YouTube" is always there.
-const YF = { rid: 0, q: '', items: null };
-function ytCanFind() { return !!((NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.ytFind) || window.__ytFindTest); }
-function ytAsk(q, rid) {
-  if (window.__ytFindTest) { Promise.resolve(window.__ytFindTest(q)).then((items) => ytFound({ rid, ok: !!items, items: items || [] })); return; }
-  NATIVE.standMedia.postMessage({ op: 'find', q, rid });
+// (the app itself, at that place: Spotify, Music; the first that opens, then the web)
+function canOpenApp() { return !!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.openApp); }
+function openApp(urls) {
+  if (canOpenApp()) NATIVE.standMedia.postMessage({ op: 'openApp', urls });
+  else window.open(urls[urls.length - 1], '_blank', 'noopener');
 }
-function ytFind(q) {
+
+// ---- Listen → YouTube, Apple Music: choose here ----
+// What YouTube (the videos) or Apple Music (the recordings) finds for the piece and the performer,
+// as a short list: a picture, the title, who, how long. The ones with the performer's name come
+// first; if none has it, that is said, plainly. A video plays over the score; a recording opens in
+// the Music app, where a subscriber hears it whole. "More on …" is always there.
+const YF = { rid: 0, q: '', items: null, svc: 'yt' };
+const SVC = {
+  yt: { name: 'YouTube', cap: 'ytFind', test: '__ytFindTest', link: 0, looking: 'Looking on YouTube…', choose: 'Choose a performance', failed: 'YouTube could not be searched just now.', none: 'Nothing found on YouTube for this.', more: 'More on YouTube', noWho: (w) => `No video with ${w} found. These are the closest:` },
+  am: { name: 'Apple Music', cap: 'amFind', test: '__amFindTest', link: 2, looking: 'Looking on Apple Music…', choose: 'Choose a recording', failed: 'Apple Music could not be searched just now.', none: 'Nothing found on Apple Music for this.', more: 'More on Apple Music', noWho: (w) => `No recording with ${w} found. These are the closest:` },
+};
+function ytCanFind(svc = 'yt') { const v = SVC[svc]; return !!((NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps[v.cap]) || window[v.test]); }
+function ytAsk(q, rid, svc) {
+  const t = window[SVC[svc].test];
+  if (t) { Promise.resolve(t(q)).then((items) => ytFound({ rid, ok: !!items, items: items || [] })); return; }
+  NATIVE.standMedia.postMessage({ op: 'find', q, rid, svc });
+}
+function ytFind(q, svc = 'yt') {
   q = (q || '').trim(); if (!q) { toast('Write the piece first.'); $('#lsQuery').focus(); return; }
-  const rid = ++YF.rid; YF.q = q; YF.items = null;
+  const rid = ++YF.rid; YF.q = q; YF.items = null; YF.svc = svc;
   ytPicks('loading');
-  ytAsk(q, rid);
-  // (no answer: the search is left, YouTube itself is offered)
+  ytAsk(q, rid, svc);
+  // (no answer: the search is left, the service itself is offered)
   setTimeout(() => { if (YF.rid === rid && !YF.items) ytFound({ rid, ok: false, items: [] }); }, 15000);
 }
 function ytFound(m) {
@@ -10711,40 +10725,52 @@ function ytFound(m) {
   YF.items = m.ok ? m.items || [] : [];
   ytPicks(m.ok ? 'list' : 'failed');
 }
-const ytWords = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+const ytWords = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1);
 function ytPicks(state) {
   const box = $('#lsPicks'); box.textContent = ''; box.hidden = false;
+  const svc = YF.svc, V = SVC[svc], am = svc === 'am';
+  box.classList.toggle('am', am);
   const who = ($('#lsCustom').value.trim() || LS.who || '').trim();
   const head = el('div', 'yp-head');
-  head.append(el('h3', '', state === 'loading' ? 'Looking on YouTube…' : 'Choose a performance'));
+  head.append(el('h3', '', state === 'loading' ? V.looking : V.choose));
   const x = el('button', 'icon-btn small'); x.append(icon('i-close')); x.setAttribute('aria-label', 'Close');
   x.addEventListener('click', () => { YF.rid++; box.hidden = true; box.textContent = ''; });
   head.append(x); box.append(head);
-  const more = () => { const a = el('a', 'yp-more'); a.href = serviceLinks(YF.q)[0][2]; a.target = '_blank'; a.rel = 'noopener'; a.append(icon('i-svc-yt'), el('span', '', 'More on YouTube')); return a; };
+  const more = () => {
+    const url = serviceLinks(YF.q)[V.link][2];
+    const a = el('a', 'yp-more'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.append(icon('i-svc-' + svc), el('span', '', V.more));
+    if (am && canOpenApp()) a.addEventListener('click', (e) => { e.preventDefault(); openApp([url]); });
+    return a;
+  };
   if (state === 'loading') {
     const ul = el('ul', 'yp-list'); for (let i = 0; i < 3; i++) { const li = el('li', 'yp-row yp-ghost'); li.append(el('span', 'yp-pic'), el('span', 'yp-txt')); ul.append(li); } box.append(ul);
     return;
   }
   if (state === 'failed' || !YF.items.length) {
-    box.append(el('p', 'yp-note', state === 'failed' ? 'YouTube could not be searched just now.' : 'Nothing found on YouTube for this.'), more());
+    box.append(el('p', 'yp-note', state === 'failed' ? V.failed : V.none), more());
     return;
   }
-  // (the performer's name, or its last word, in the title or the channel: those first)
+  // (the performer's name, or its last word, in the title, the channel or the album: those first)
   const ww = ytWords(who), last = ww[ww.length - 1];
-  const hasWho = (it) => !!last && ytWords(it.title + ' ' + it.by).includes(last);
+  const words = (it) => ytWords(it.title + ' ' + it.by + ' ' + (it.album || ''));
+  const hasWho = (it) => !!last && words(it).includes(last);
   const qw = ytWords($('#lsQuery').value);
-  const fit = (it) => { const t = new Set(ytWords(it.title + ' ' + it.by)); return qw.length ? qw.filter((w) => t.has(w)).length / qw.length : 0; };
+  const fit = (it) => { const t = new Set(words(it)); return qw.length ? qw.filter((w) => t.has(w)).length / qw.length : 0; };
   const list = YF.items.map((it, i) => ({ it, i, w: hasWho(it) ? 1 : 0, f: fit(it) }))
-    .sort((a, b) => b.w - a.w || (b.f >= 0.5) - (a.f >= 0.5) || a.i - b.i).slice(0, 6);
-  if (who && !list.some((x) => x.w)) box.append(el('p', 'yp-note', `No video with ${who} found. These are the closest:`));
+    .sort((a, b) => b.w - a.w || (b.f >= 0.5) - (a.f >= 0.5) || a.i - b.i).slice(0, am ? 8 : 6);
+  if (who && !list.some((x2) => x2.w)) box.append(el('p', 'yp-note', V.noWho(who)));
   const ul = el('ul', 'yp-list');
   for (const { it } of list) {
     const li = el('li');
     const b = el('button', 'yp-row'); b.type = 'button';
-    const pic = el('span', 'yp-pic'); const im = el('img'); im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); if (it.pic) im.src = it.pic; pic.append(im, el('span', 'yp-len num', it.len));
-    const t = el('span', 'yp-txt'); t.append(el('span', 'yp-title', it.title), el('span', 'yp-by', [it.by, it.views].filter(Boolean).join(' · ')));
+    const pic = el('span', 'yp-pic'); const im = el('img'); im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); if (it.pic) im.src = it.pic; pic.append(im);
+    if (!am && it.len) pic.append(el('span', 'yp-len num', it.len));
+    const t = el('span', 'yp-txt');
+    t.append(el('span', 'yp-title', it.title), el('span', 'yp-by', (am ? [it.by, it.album] : [it.by, it.views]).filter(Boolean).join(' · ')));
+    if (am && it.len) t.append(el('span', 'yp-by num', it.len));
     b.append(pic, t);
-    b.addEventListener('click', () => { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title); });
+    if (am) { b.append(icon('i-svc-am')); b.lastChild.classList.add('yp-go'); b.setAttribute('aria-label', it.title + ' — open in Apple Music'); }
+    b.addEventListener('click', () => { if (am) openApp([it.url]); else { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title); } });
     li.append(b); ul.append(li);
   }
   box.append(ul, more());

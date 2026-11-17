@@ -512,6 +512,20 @@ async function ytFindRun(pre) {
     if (!got.ok || good.length < 3) throw new Error('ok ' + got.ok + ', ' + it.length + ' items: ' + JSON.stringify(it.slice(0, 2)).slice(0, 300));
     return `${it.length} found; first: ${good[0].title.slice(0, 60)} (${good[0].by}, ${good[0].len})`;
   }, 30000);
+  // Apple Music: Apple's own search, in the device's country; each recording with its link
+  await step(pre + 'Listen: Apple Music recordings found', async () => {
+    if (!(window.webkit && window.webkit.messageHandlers.standMedia && window.standCaps.amFind)) return 'no native search';
+    const was = window.standMediaEvent; let got = null;
+    window.standMediaEvent = (m) => { if (m && m.op === 'found' && m.rid === 4343) got = m; else if (was) was(m); };
+    window.webkit.messageHandlers.standMedia.postMessage({ op: 'find', svc: 'am', q: 'Bach cello suite 3 Yo-Yo Ma', rid: 4343 });
+    await waitFor(() => got, 20000);
+    window.standMediaEvent = was;
+    if (!got) throw new Error('no answer');
+    const it = got.items || [];
+    const good = it.filter((x) => x.title && x.by && /^https:\/\/music\.apple\.com\//.test(x.url || ''));
+    if (!got.ok || good.length < 3) throw new Error('ok ' + got.ok + ', ' + it.length + ' items: ' + JSON.stringify(it.slice(0, 2)).slice(0, 300));
+    return `${it.length} found; first: ${good[0].title.slice(0, 50)} (${good[0].by}, ${good[0].len})`;
+  }, 30000);
 }
 async function phoneRun() {
   // (a new iPhone first asks about linking an iPad: answered "Not now", as most would at first)

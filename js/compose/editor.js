@@ -1510,10 +1510,11 @@ const TABS = [
   { k: 'notes', title: 'Notes', draw: (g, W, H) => gC(g, NOTE_GLYPH[4], W, H, 3.4) },
   { k: 'art', title: 'Articulations', draw: (g, W, H) => gC(g, GL.art.acc[0], W, H, 4) },
   { k: 'dyn', title: 'Dynamics', draw: (g, W, H) => gC(g, GL.dyn.m + GL.dyn.f, W, H, 3.6) },
-  { k: 'lines', title: 'Lines', draw: (g, W, H) => { g.lineWidth = 0.18; g.beginPath(); g.moveTo(W * 0.22, H * 0.4); g.lineTo(W * 0.78, H * 0.28); g.moveTo(W * 0.22, H * 0.4); g.lineTo(W * 0.78, H * 0.52); g.stroke(); g.beginPath(); g.moveTo(W * 0.18, H * 0.78); g.quadraticCurveTo(W / 2, H * 0.6, W * 0.82, H * 0.78); g.stroke(); } },
+  // (a line over the notes: a slur over a dashed octave line with its hook)
+  { k: 'lines', title: 'Lines', draw: (g, W, H) => { g.lineWidth = 0.16; g.beginPath(); g.moveTo(W * 0.16, H * 0.42); g.quadraticCurveTo(W / 2, H * 0.14, W * 0.84, H * 0.42); g.stroke(); g.save(); g.setLineDash([0.42, 0.34]); g.beginPath(); g.moveTo(W * 0.16, H * 0.68); g.lineTo(W * 0.84, H * 0.68); g.stroke(); g.restore(); g.beginPath(); g.moveTo(W * 0.84, H * 0.68); g.lineTo(W * 0.84, H * 0.86); g.stroke(); } },
   { k: 'orn', title: 'Ornaments', draw: (g, W, H) => gC(g, GL.orn.tr, W, H, 3.6) },
   { k: 'text', title: 'Text and tempo', draw: (g, W, H) => { text(g, 'Aa', W / 2 - 1.15, H / 2 + 0.6, 2.0, '-apple-system, sans-serif', '600'); } },
-  { k: 'clef', title: 'Clef, key, time and transpose', draw: (g, W, H) => gC(g, CLEF_GLYPH.treble, W, H, 2.6) },
+  { k: 'clef', title: 'Clef, key, time and transpose', draw: (g, W, H) => gC(g, CLEF_GLYPH.treble, W, H, 2.05) },
   { k: 'bars', title: 'Bars and repeats', draw: (g, W, H) => { const y = H / 2 - 2 * 0.55; for (let i = 0; i < 5; i++) drawLine(g, W * 0.18, y + i * 0.55, W * 0.82, y + i * 0.55, 0.1); g.fillRect(W * 0.62, y, 0.28, 2.2); drawLine(g, W * 0.54, y, W * 0.54, y + 2.2, 0.1); } },
 ];
 if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { clearMetrics(); if (C.score && !$('#compose').hidden) { buildTabs(); renderTab(); relayout(); } });
@@ -1726,17 +1727,17 @@ function renderTabBody() {
     g2.append(mbtn('', 'Triplet', tupN() === 3, () => { T.tup = tupN() === 3 ? 0 : 3; setDuration(T.dur); }, { draw: (gg, W, H) => gC(gg, GL.tuplet(3), W, H, 3.4, -0.5), small: 'triplet' }));
     g2.append(mbtn('Chord', 'Add notes to a chord', T.chord, () => { T.chord = !T.chord; renderTab(); hint(T.chord ? 'Write on an existing note to add to its chord.' : 'Writing replaces what is there.'); }, { draw: (gg, W, H) => { const x = W / 2 - 0.6; for (const dy of [-1, 0, 1]) glyph(gg, GL.noteBlack, x, H / 2 + 0.5 + dy, 3.2); }, small: 'chord' }));
     g2.append(mbtn('', 'Write with your finger', C.finger, () => { C.finger = !C.finger; $('#compose').classList.toggle('finger', C.finger); renderTab(); hint(C.finger ? 'Your finger writes. Two fingers scroll and zoom.' : 'Your finger scrolls; the Pencil writes.'); }, { svg: 'i-finger' }));
-    lab('Tuplets');
-    const gtu = grid('five');
-    for (const [n, name] of [[2, 'Duplet (2 in the time of 3)'], [3, 'Triplet (3 in the time of 2)'], [4, 'Quadruplet (4 in the time of 3)'], [5, 'Quintuplet (5 in the time of 4)'], [6, 'Sextuplet (6 in the time of 4)'], [7, 'Septuplet (7 in the time of 4)'], [8, 'Octuplet (8 in the time of 6)'], [9, 'Nonuplet (9 in the time of 8)'], [10, 'Decuplet (10 in the time of 8)'], [11, 'Undecuplet (11 in the time of 8)']]) {
-      gtu.append(mbtn('', name, tupN() === n, () => { T.tup = tupN() === n ? 0 : n; setDuration(T.dur); hint(T.tup ? name + '. Choose the note value, then write the notes.' : 'Tuplet off.', 2200); }, { draw: (gg, W, H) => gC(gg, GL.tuplet(n), W, H, 3.4, -0.5), small: 'tuplet ' + n }));
-    }
     lab('Accidentals');
     const ga = grid('five');
     for (const [a, name] of [[-2, 'Double flat'], [-1, 'Flat'], [0, 'Natural'], [1, 'Sharp'], [2, 'Double sharp']]) ga.append(mbtn('', name, T.acc === a, () => setAcc(a), { glyph: GL.acc[a], size: a === 2 ? 4 : 3.6 }));
     const ga2 = grid('two');
     ga2.append(mbtn('F♯ ↔ G♭', 'Write the same note another way (J)', false, respell, { textCls: '', small: 'respell' }));
     ga2.append(mbtn('(♮)', 'Reminder accidental, in brackets', !!(evs[0] && evs[0].ev.notes && evs[0].ev.notes.length && evs[0].ev.notes.every((n) => n.cau)), toggleCautionary, { textCls: '', small: 'reminder' }));
+    lab('Tuplets');
+    const gtu = grid('five');
+    for (const [n, name] of [[2, 'Duplet (2 in the time of 3)'], [3, 'Triplet (3 in the time of 2)'], [4, 'Quadruplet (4 in the time of 3)'], [5, 'Quintuplet (5 in the time of 4)'], [6, 'Sextuplet (6 in the time of 4)'], [7, 'Septuplet (7 in the time of 4)'], [8, 'Octuplet (8 in the time of 6)'], [9, 'Nonuplet (9 in the time of 8)'], [10, 'Decuplet (10 in the time of 8)'], [11, 'Undecuplet (11 in the time of 8)']]) {
+      gtu.append(mbtn('', name, tupN() === n, () => { T.tup = tupN() === n ? 0 : n; setDuration(T.dur); hint(T.tup ? name + '. Choose the note value, then write the notes.' : 'Tuplet off.', 2200); }, { draw: (gg, W, H) => gC(gg, GL.tuplet(n), W, H, 3.4, -0.5), small: 'tuplet ' + n }));
+    }
     lab('Selected notes');
     const arc = (gg, W, H, up) => { gg.beginPath(); const y = H * (up ? 0.62 : 0.38), h = up ? -1.3 : 1.3; gg.moveTo(W * 0.18, y); gg.bezierCurveTo(W * 0.35, y + h, W * 0.65, y + h, W * 0.82, y); gg.bezierCurveTo(W * 0.65, y + h * 0.72, W * 0.35, y + h * 0.72, W * 0.18, y); gg.fill(); };
     const gt = grid('four');
@@ -1776,17 +1777,19 @@ function renderTabBody() {
     gz.append(mbtn('Cue notes', 'Cue notes: small, to show another part (not played)', zOn('cue'), () => setSize('cue'), { draw: zIcon('cue'), small: 'not played' }));
     gz.append(mbtn('Small notes', 'Small notes: played, drawn small (an optional note, an ossia)', zOn('small'), () => setSize('small'), { draw: zIcon('small'), small: 'played' }));
   } else if (C.tab === 'art') {
-    const g = grid();
-    for (const [a, name] of [['stacc', 'Staccato'], ['stacciss', 'Staccatissimo'], ['ten', 'Tenuto'], ['acc', 'Accent'], ['marc', 'Marcato'], ['ferm', 'Fermata'],
-      ['down', 'Down bow'], ['up', 'Up bow'], ['harm', 'Harmonic'], ['stopped', 'Stopped'], ['open', 'Open'], ['snap', 'Snap pizzicato']]) {
+    // (fermatas and the breath are with the pauses, under Ornaments)
+    const g = grid('five');
+    for (const [a, name] of [['stacc', 'Staccato'], ['stacciss', 'Staccatissimo'], ['ten', 'Tenuto'], ['acc', 'Accent'], ['marc', 'Marcato']]) g.append(mbtn('', name, hasArt(a), () => toggleArt(a), { glyph: GL.art[a][0], size: 4.2 }));
+    lab('Bowing and technique');
+    const gb = grid();
+    for (const [a, name] of [['down', 'Down bow'], ['up', 'Up bow'], ['harm', 'Harmonic'], ['stopped', 'Stopped'], ['open', 'Open'], ['snap', 'Snap pizzicato']]) {
       const gl = { stopped: GL.orn.stopped, open: GL.orn.open, snap: GL.orn.snapA }[a] || GL.art[a][0];
-      g.append(mbtn('', name, hasArt(a), () => toggleArt(a), { glyph: gl, size: a === 'ferm' ? 3.6 : 4.2 }));
+      gb.append(mbtn('', name, hasArt(a), () => toggleArt(a), { glyph: gl, size: 4.2 }));
     }
     lab('Tremolo and arpeggio');
-    const g2 = grid('five');
+    const g2 = grid('four');
     for (const [a, name] of [['trem', 'Tremolo, 1 stroke'], ['trem2', 'Tremolo, 2 strokes'], ['trem3', 'Tremolo, 3 strokes']]) g2.append(mbtn('', name, hasArt(a), () => toggleArt(a), { draw: (gg, W, H) => { const gl = a === 'trem' ? GL.art.trem[0] : GL.orn[a]; gC(gg, NOTE_GLYPH[4], W, H, 3.2); const m = gm(gl); glyph(gg, gl, W / 2 + 0.05 - (m.l + m.r) / 2 * 0.8, H / 2 - 0.4, 3.2); } }));
     g2.append(mbtn('', 'Arpeggio', hasArt('arp'), () => toggleArt('arp'), { draw: (gg, W, H) => { gg.save(); gg.translate(W / 2 - 0.3, H / 2 + 1.6); gg.rotate(-Math.PI / 2); for (let x = 0; x < 3.2; x += gm(GL.orn.arp).r || 0.8) glyph(gg, GL.orn.arp, x, 0.4, 3.4); gg.restore(); } }));
-    g2.append(mbtn('', 'Breath', hasArt('breath'), () => toggleArt('breath'), { glyph: GL.art.breath[0], size: 4.4 }));
   } else if (C.tab === 'dyn') {
     const cur = evs[0];
     const g = grid('five');
@@ -1804,27 +1807,36 @@ function renderTabBody() {
     }
     body.append(el('p', 'hint', 'Drag across notes in Select mode (or use Select more) and the hairpin goes under all of them, across bars and lines. With one note selected, each tap stretches it one note further.'));
   } else if (C.tab === 'lines') {
-    const has = (kind) => { const r = selRange(); return !!r && (C.score.spans || []).some((q) => q.kind === kind && (q.st === r.st.id || kind === 'volta') && q.a.m === r.a.m); };
-    const cg = cards('three');
+    // (hairpins and cresc. are under Dynamics; first and second endings under Bars and repeats)
+    const has = (kind) => { const r = selRange(); return !!r && (C.score.spans || []).some((q) => q.kind === kind && q.st === r.st.id && q.a.m === r.a.m); };
     const LK = { k: 6.6 };
     const dash = (gg, x0, x1, y) => { gg.save(); gg.lineWidth = 0.12; gg.setLineDash([0.5, 0.45]); gg.beginPath(); gg.moveTo(x0, y); gg.lineTo(x1, y); gg.stroke(); gg.restore(); };
-    cg.append(card('Trill', has('trill'), () => addSpan('trill'), (gg, W, H) => { glyph(gg, GL.orn.tr, W * 0.08, H / 2 + 0.7, 3.4); for (let x = W * 0.08 + 2.0; x < W * 0.92; x += gm(GL.orn.wiggle).r || 0.8) glyph(gg, GL.orn.wiggle, x, H / 2 + 0.2, 3.4); }, LK));
-    for (const [k, name] of [['8va', 'Octave up'], ['8vb', 'Octave down'], ['15ma', 'Two octaves up'], ['15mb', 'Two octaves down']]) cg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { const up = k !== '8vb' && k !== '15mb'; glyph(gg, GL.ott[k], W * 0.08, H / 2 + 0.8, 3.0); dash(gg, W * 0.08 + (k.startsWith('15') ? 3.0 : 2.3), W * 0.9, H / 2 - 0.1); drawLine(gg, W * 0.9, H / 2 - 0.1, W * 0.9, H / 2 + (up ? 1 : -1), 0.12); }, LK));
-    cg.append(card('Pedal', has('ped'), () => addSpan('ped'), (gg, W, H) => { glyph(gg, GL.ped, W * 0.06, H / 2 + 0.8, 3.0); gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.06 + 3.1, H / 2 + 0.7); gg.lineTo(W * 0.92, H / 2 + 0.7); gg.lineTo(W * 0.92, H / 2 - 0.6); gg.stroke(); }, LK));
-    cg.append(card('Pedal ✱', false, () => addSpan('ped', { line: false }), (gg, W, H) => { glyph(gg, GL.ped, W * 0.08, H / 2 + 0.8, 3.0); glyph(gg, GL.pedUp, W * 0.74, H / 2 + 0.8, 3.0); }, LK));
-    cg.append(card('1st ending', false, () => addEnding(1), (gg, W, H) => { gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.1, H * 0.85); gg.lineTo(W * 0.1, H * 0.25); gg.lineTo(W * 0.9, H * 0.25); gg.lineTo(W * 0.9, H * 0.85); gg.stroke(); text(gg, '1.', W * 0.1 + 0.4, H * 0.25 + 1.6, 1.6); }, LK));
-    cg.append(card('2nd ending', false, () => addEnding(2), (gg, W, H) => { gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.1, H * 0.85); gg.lineTo(W * 0.1, H * 0.25); gg.lineTo(W * 0.9, H * 0.25); gg.stroke(); text(gg, '2.', W * 0.1 + 0.4, H * 0.25 + 1.6, 1.6); }, LK));
+    const cg = cards('three');
+    cg.append(card('Slur', has('slur'), setSlur, (gg, W, H) => { glyph(gg, GL.noteBlack, W * 0.12, H * 0.78, 3.0); glyph(gg, GL.noteBlack, W * 0.74, H * 0.78, 3.0); gg.beginPath(); const y = H * 0.5; gg.moveTo(W * 0.14, y); gg.bezierCurveTo(W * 0.35, y - 1.5, W * 0.65, y - 1.5, W * 0.86, y); gg.bezierCurveTo(W * 0.65, y - 1.1, W * 0.35, y - 1.1, W * 0.14, y); gg.fill(); }, LK));
     cg.append(card('Glissando', has('gliss'), () => addSpan('gliss'), (gg, W, H) => { glyph(gg, GL.noteBlack, W * 0.1, H * 0.75, 3.0); glyph(gg, GL.noteBlack, W * 0.78, H * 0.35, 3.0); drawLine(gg, W * 0.1 + 1.2, H * 0.72, W * 0.78 - 0.2, H * 0.36, 0.12); }, LK));
-    // (cresc. and dim. are with the hairpins, under Dynamics)
-    for (const [k, word, name] of [['rit', 'rit.', 'rit. (slower)'], ['accel', 'accel.', 'accel. (faster)']]) cg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { text(gg, word, W * 0.06, H / 2 + 0.6, 1.9, TEXT_FONT, 'italic'); dash(gg, W * 0.06 + textWidth(gg, word, 1.9, TEXT_FONT, 'italic') + 0.4, W * 0.94, H / 2 + 0.1); }, LK));
-    const g2 = grid('three');
+    cg.append(card('Trill', has('trill'), () => addSpan('trill'), (gg, W, H) => { glyph(gg, GL.orn.tr, W * 0.08, H / 2 + 0.7, 3.4); for (let x = W * 0.08 + 2.0; x < W * 0.92; x += gm(GL.orn.wiggle).r || 0.8) glyph(gg, GL.orn.wiggle, x, H / 2 + 0.2, 3.4); }, LK));
+    lab('Octave lines');
+    const og = cards('two');
+    for (const [k, name] of [['8va', 'Octave up'], ['8vb', 'Octave down'], ['15ma', 'Two octaves up'], ['15mb', 'Two octaves down']]) og.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { const up = k !== '8vb' && k !== '15mb'; glyph(gg, GL.ott[k], W * 0.08, H / 2 + 0.8, 3.0); dash(gg, W * 0.08 + (k.startsWith('15') ? 3.0 : 2.3), W * 0.9, H / 2 - 0.1); drawLine(gg, W * 0.9, H / 2 - 0.1, W * 0.9, H / 2 + (up ? 1 : -1), 0.12); }, LK));
+    lab('Pedal');
+    const pg = cards('two');
+    pg.append(card('Pedal line', has('ped'), () => addSpan('ped'), (gg, W, H) => { glyph(gg, GL.ped, W * 0.06, H / 2 + 0.8, 3.0); gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.06 + 3.1, H / 2 + 0.7); gg.lineTo(W * 0.92, H / 2 + 0.7); gg.lineTo(W * 0.92, H / 2 - 0.6); gg.stroke(); }, LK));
+    pg.append(card('Ped. and ✱', false, () => addSpan('ped', { line: false }), (gg, W, H) => { glyph(gg, GL.ped, W * 0.08, H / 2 + 0.8, 3.0); glyph(gg, GL.pedUp, W * 0.74, H / 2 + 0.8, 3.0); }, LK));
+    lab('Tempo changes');
+    const tg = cards('two');
+    for (const [k, word, name] of [['rit', 'rit.', 'rit. (slower)'], ['accel', 'accel.', 'accel. (faster)']]) tg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { text(gg, word, W * 0.06, H / 2 + 0.6, 1.9, TEXT_FONT, 'italic'); dash(gg, W * 0.06 + textWidth(gg, word, 1.9, TEXT_FONT, 'italic') + 0.4, W * 0.94, H / 2 + 0.1); }, LK));
+    const g2 = grid('two');
     g2.append(mbtn('Remove', 'Remove the lines on the selection', false, removeSpans, { textCls: '', small: 'lines here' }, LK));
-    body.append(el('p', 'hint', 'Select the notes (or bars) first; the line goes from the first to the last. Endings go over the selected bars.'));
+    body.append(el('p', 'hint', 'Select the notes (or bars) first; the line goes from the first to the last.'));
   } else if (C.tab === 'orn') {
     const g = grid('five');
-    for (const [a, name, gl] of [['trill', 'Trill', GL.orn.tr], ['mord', 'Mordent', GL.orn.mord], ['prall', 'Short trill', GL.orn.prall], ['turn', 'Turn', GL.orn.turn], ['turnInv', 'Inverted turn', GL.orn.turnInv],
-      ['ferm', 'Fermata', GL.art.ferm[0]], ['fermS', 'Short fermata', GL.orn.fermSA], ['fermL', 'Long fermata', GL.orn.fermLA], ['caes', 'Caesura', GL.orn.caes], ['breath', 'Breath', GL.art.breath[0]]]) {
+    for (const [a, name, gl] of [['trill', 'Trill', GL.orn.tr], ['mord', 'Mordent', GL.orn.mord], ['prall', 'Short trill', GL.orn.prall], ['turn', 'Turn', GL.orn.turn], ['turnInv', 'Inverted turn', GL.orn.turnInv]]) {
       g.append(mbtn('', name, hasArt(a), () => toggleArt(a), { glyph: gl, size: 4 }));
+    }
+    lab('Fermatas and pauses');
+    const gp = grid('five');
+    for (const [a, name, gl] of [['ferm', 'Fermata', GL.art.ferm[0]], ['fermS', 'Short fermata', GL.orn.fermSA], ['fermL', 'Long fermata', GL.orn.fermLA], ['caes', 'Caesura', GL.orn.caes], ['breath', 'Breath', GL.art.breath[0]]]) {
+      gp.append(mbtn('', name, hasArt(a), () => toggleArt(a), { glyph: gl, size: 4 }));
     }
     lab('Grace notes');
     const gg4 = grid('four');
@@ -1846,16 +1858,7 @@ function renderTabBody() {
       gg5.append(mbtn('', 'Grace note down a step', false, () => graceStep(-1), { svg: 'i-down', small: 'down' }));
       for (const [a, name] of [[-1, 'Flat'], [0, 'Natural'], [1, 'Sharp']]) gg5.append(mbtn('', 'Grace note ' + name.toLowerCase(), curGrace.acc === a, () => graceAcc(a), { glyph: GL.acc[a], size: 3.6 }));
     }
-    lab('Signs on the bar');
-    const m = targetBar();
-    const cg = cards('three');
-    const ms = m === null ? {} : C.score.measures[m] || {};
-    cg.append(card('Segno', ms.mark === 'segno', () => setBarMark('mark', 'segno'), (gg, W, H) => gC(gg, GL.segno, W, H, 3.4)));
-    cg.append(card('Coda', ms.mark === 'coda', () => setBarMark('mark', 'coda'), (gg, W, H) => gC(gg, GL.coda, W, H, 3.4)));
-    for (const [k, t2] of [['tocoda', 'To Coda'], ['fine', 'Fine'], ['dcfine', 'D.C. al Fine'], ['dccoda', 'D.C. al Coda'], ['dscoda', 'D.S. al Coda'], ['dsfine', 'D.S. al Fine'], ['dc', 'D.C.'], ['ds', 'D.S.']]) {
-      cg.append(card(t2, ms.jump === k, () => setBarMark('jump', k), (gg, W, H) => { const w = textWidth(gg, t2, 2.1, TEXT_FONT, 'italic'); text(gg, t2, W / 2 - w / 2, H / 2 + 0.7, 2.1, TEXT_FONT, 'italic'); }, { k: 6.4 }));
-    }
-    body.append(el('p', 'hint', 'Ornaments go on the selected notes. Signs go on the selected bar; they are followed when the score plays.'));
+    body.append(el('p', 'hint', 'Ornaments, fermatas and grace notes go on the selected notes.'));
   } else if (C.tab === 'text') {
     // lyrics and chord symbols: type, press Return, and the next note is ready
     const entry = (label, key, ph) => {
@@ -2090,6 +2093,17 @@ function renderTabBody() {
     eg.append(card('2nd ending', !!voltaHere && voltaHere.n === 2, () => addEnding(2), endIcon(2, false), { k: 6.6 }));
     eg.append(card('3rd ending', !!voltaHere && voltaHere.n === 3, () => addEnding(3), endIcon(3, false), { k: 6.6 }));
     body.append(el('p', 'hint', 'Select the bar (or bars) of the ending, then choose it. A 1st ending gets its repeat barline by itself.'));
+    lab('Jumps: segno, coda, D.C.');
+    {
+    const cg = cards('three');
+    const ms = m === null ? {} : C.score.measures[m] || {};
+    cg.append(card('Segno', ms.mark === 'segno', () => setBarMark('mark', 'segno'), (gg, W, H) => gC(gg, GL.segno, W, H, 3.4)));
+    cg.append(card('Coda', ms.mark === 'coda', () => setBarMark('mark', 'coda'), (gg, W, H) => gC(gg, GL.coda, W, H, 3.4)));
+    for (const [k, t2] of [['tocoda', 'To Coda'], ['fine', 'Fine'], ['dcfine', 'D.C. al Fine'], ['dccoda', 'D.C. al Coda'], ['dscoda', 'D.S. al Coda'], ['dsfine', 'D.S. al Fine'], ['dc', 'D.C.'], ['ds', 'D.S.']]) {
+      cg.append(card(t2, ms.jump === k, () => setBarMark('jump', k), (gg, W, H) => { const w = textWidth(gg, t2, 2.1, TEXT_FONT, 'italic'); text(gg, t2, W / 2 - w / 2, H / 2 + 0.7, 2.1, TEXT_FONT, 'italic'); }, { k: 6.4 }));
+    }
+    body.append(el('p', 'hint', 'On the selected bar; they are followed when the score plays.'));
+    }
     lab('Pickup bar (the first bar, shorter)');
     {
       const t0 = M.timeAt(C.score, 1 < C.score.measures.length ? 1 : 0).slice(0, 2);

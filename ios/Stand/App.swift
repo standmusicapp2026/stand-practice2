@@ -161,7 +161,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut", "standMedia"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, amFind: 1, openApp: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -396,9 +396,20 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             case "find":
                 // Listen → YouTube: the performances found, to choose one here (StandYouTubeFind.swift)
                 let rid = body["rid"] as? Int ?? 0
-                StandYouTubeFind.search(body["q"] as? String ?? "") { [weak self] items in
+                let q = body["q"] as? String ?? ""
+                let back: ([[String: Any]]?) -> Void = { [weak self] items in
                     self?.send("standMediaEvent", ["op": "found", "rid": rid, "ok": items != nil, "items": items ?? []])
                 }
+                // (Apple Music: StandAppleMusicFind.swift)
+                if body["svc"] as? String == "am" { StandAppleMusicFind.search(q, done: back) } else { StandYouTubeFind.search(q, done: back) }
+            case "openApp":
+                // Spotify, Apple Music: their own app, at what was chosen (the first that opens; then the web)
+                let urls = (body["urls"] as? [String] ?? []).compactMap { URL(string: $0) }
+                func next(_ i: Int) {
+                    guard i < urls.count else { return }
+                    UIApplication.shared.open(urls[i], options: [:]) { ok in if !ok { next(i + 1) } }
+                }
+                next(0)
             default: break
             }
         case "standDone":
