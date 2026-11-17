@@ -168,9 +168,62 @@ function scoreTitle(title, words) {
   return s / n;
 }
 
+// ---------- composers suggested while typing ----------
+// Stand's own list answers at once (a surname begun, or mistyped; every composer of a surname, so
+// "Bach" offers the whole family); IMSLP's own list of composers (every one it has) is asked as well,
+// by the start of a name. A composer chosen is kept for the search ("pinned").
+export function localComposers(q) {
+  const list = composers || [];
+  const toks = fold(q).split(' ').filter(Boolean);
+  if (!toks.length) return [];
+  const last = toks[toks.length - 1], all = ' ' + toks.join(' ') + ' ';
+  const out = [];
+  // (a surname already written in full is offered only when several composers share it: "Bach",
+  // "Strauss", "Scarlatti"; one alone needs no choosing)
+  const same = new Map(); for (const c of list) for (const k of c.k) if (all.includes(' ' + k + ' ')) same.set(k, (same.get(k) || 0) + 1);
+  for (const c of list) {
+    let s = -1;
+    for (const k of c.k) {
+      if (all.includes(' ' + k + ' ')) { if (same.get(k) > 1 && k !== last) s = Math.max(s, 10 + c.p * 2 + c.g.filter((g) => all.includes(' ' + g + ' ')).length * 3); else if (k === last) s = Math.max(s, 10 + c.p * 2); }
+      else if (last.length >= 2 && k.startsWith(last)) s = Math.max(s, 5 + c.p * 2 - (k.length - last.length) / 10);
+      else if (last.length >= 5 && !MUSIC.has(last) && near(last, k)) s = Math.max(s, 3 + c.p * 2);
+    }
+    // (a given name begun, with the surname: "j s bach", "carl philipp")
+    if (s < 0 && last.length >= 3 && c.g.some((g) => g.startsWith(last)) && c.k.some((k) => all.includes(' ' + k + ' '))) s = 9 + c.p;
+    if (s >= 0) out.push({ c: c.c, n: c.n, s });
+  }
+  return out.sort((a, b) => b.s - a.s);
+}
+export async function imslpComposers(q) {
+  const all = fold(q).split(' ').filter(Boolean);
+  // (the last word typed is the one being written: a name's start; a music word is not a name)
+  const w = all[all.length - 1] || '';
+  if (w.length < 3 || STOP.has(w) || MUSIC.has(w) || /^\d+$/.test(w)) return [];
+  const d = await jsonp({ action: 'query', list: 'prefixsearch', pssearch: w, psnamespace: '14', pslimit: '12' }, 6000);
+  const out = [];
+  for (const r of (d.query && d.query.prefixsearch) || []) {
+    const cat = r.title.replace(/^Category:/, '');
+    const m = cat.match(/^([^,()]+), ([^,()]+)$/); if (!m) continue;
+    out.push({ c: cat, n: m[2] + ' ' + m[1] });
+  }
+  return out;
+}
+// what is left of the query once the pinned composer's name is taken out of it
+export function pinnedRest(q, pin) {
+  if (!pin) return null;
+  const f = ' ' + fold(q) + ' ';
+  const parts = fold(pin.n).split(' ');
+  if (!parts.every((p) => f.includes(' ' + p + ' '))) return null;
+  let rest = f; for (const p of parts) rest = rest.replace(' ' + p + ' ', ' ');
+  return rest.trim().split(/\s+/).filter(Boolean).map(norm);
+}
+
 // onEarly(results) gets a first answer straight away when the full one takes longer.
-export async function searchWorks(q, onEarly) {
+// pin: a composer chosen from the suggestions ({ c: IMSLP's category, n: the name }).
+export async function searchWorks(q, onEarly, pin) {
   const pq = await parseQuery(q);
+  const pr = pinnedRest(q, pin);
+  if (pr) { pq.composer = { c: pin.c, n: pin.n, k: [], g: [], p: 0 }; pq.words = pr; pq.keyWords = pr.filter((w) => !STOP.has(w)); }
   // a composer who is not in Stand's own list: IMSLP's list of composers finds them
   if (!pq.composer) {
     const found = await findComposerCategory(q).catch(() => null);

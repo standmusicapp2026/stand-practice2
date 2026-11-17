@@ -2293,3 +2293,13 @@ body.ruler-away .ruler, body.ruler-away .ruler-kinds { display: none; }
 /* the privacy policy and terms, at the foot of Settings */
 .legal-links a { color: var(--accent); text-decoration: none; white-space: nowrap; }
 .legal-links a:active { opacity: .6; }
+
+/* Find a score: composers offered while typing */
+.find-suggest { margin: 12px 0 16px; }
+.find-suggest .fs-lab { margin: 0 2px 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.fs-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.fs-c { display: inline-flex; align-items: center; gap: 5px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface-solid); color: var(--ink); font: 500 15px var(--font); cursor: pointer; transition: background .15s, border-color .15s; }
+.fs-c:hover, .fs-c:active { background: var(--accent-soft); border-color: transparent; }
+.fs-c .fs-given { color: var(--muted); }
+.fs-c .fs-sur { font-weight: 650; }
+.fs-c .fs-given:empty { display: none; }

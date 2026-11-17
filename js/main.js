@@ -30,7 +30,7 @@ import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview } from './review.js';
 import * as P from './pomodoro.js';
 import { placeWords } from './textplace.js';
-import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks } from './imslp.js';
+import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks, localComposers, imslpComposers, pinnedRest } from './imslp.js';
 import { initCompose, openComposition, openMusicFile } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { findMarks, resolveMarks, metroFor, noteOfMark } from './tempo.js';
@@ -1398,10 +1398,13 @@ async function runSearch(typing) {
   const st = $('#findStatus'); st.hidden = false; st.textContent = 'Searching…';
   $('#workList').textContent = '';
   try {
-    const res = await searchWorks(q, (early) => { if (token === searchToken) { st.textContent = 'Results'; renderWorkList(early.results, 30); } });
+    if (!typing) suggestHide();
+    const res = await searchWorks(q, (early) => { if (token === searchToken) { st.textContent = 'Results'; renderWorkList(early.results, 30); } }, FS.pin);
     if (token !== searchToken) return;
     const list = res.results;
     prefetchWorks(list.slice(0, res.browse ? 0 : 3).map((r) => r.title));
+    // (still typing a composer's name, with composers offered: no "nothing found" yet)
+    if (!list.length && typing && !$('#findSuggest').hidden) { st.hidden = true; $('#findBuy').hidden = true; return; }
     if (!list.length) { st.textContent = 'Nothing found for that. Try the composer’s surname and one word of the title, for example “Fauré élégie”. Newer music may only exist in print:'; renderBuy($('#findBuy'), q); $('#findBuy').hidden = false; return; }
     $('#findBuy').hidden = true;
     st.textContent = res.browse ? `All ${list.length} works by ${res.composer.n}` : (res.composer ? `Works by ${res.composer.n}` : 'Results');
@@ -1438,8 +1441,52 @@ $('#findInput').addEventListener('input', (e) => {
     typeT = setTimeout(() => { if ($('#findInput').value.trim() === v) runSearch(true); }, 650);
   }
 });
+// Composers offered while typing: Stand's own list at once, every composer IMSLP has a moment later.
+// One chosen is written in full and kept for the search; its works are shown; the piece is typed next.
+const FS = { pin: null, t: 0, tok: 0 };
+function suggestHide() { FS.tok++; clearTimeout(FS.t); const b = $('#findSuggest'); b.hidden = true; b.textContent = ''; }
+function suggestShow(list) {
+  const box = $('#findSuggest'); box.textContent = '';
+  if (!list.length) { box.hidden = true; return; }
+  box.append(el('div', 'fs-lab', 'Composers'));
+  const row = el('div', 'fs-list');
+  for (const c of list.slice(0, 6)) {
+    const b = el('button', 'fs-c'); b.type = 'button';
+    const [sur] = c.c.split(', ');
+    const given = c.n.slice(0, Math.max(0, c.n.length - sur.length)).trim();
+    b.append(el('span', 'fs-given', given), el('span', 'fs-sur', sur));
+    b.setAttribute('aria-label', c.n);
+    // (the keyboard stays up)
+    b.addEventListener('pointerdown', (e) => e.preventDefault());
+    b.addEventListener('click', () => pickComposer(c));
+    row.append(b);
+  }
+  box.append(row); box.hidden = false;
+}
+function pickComposer(c) {
+  FS.pin = { c: c.c, n: c.n };
+  const inp = $('#findInput'); inp.value = c.n + ' '; inp._syncClear?.();
+  suggestHide();
+  inp.focus();
+  runSearch(true);
+}
+function suggestFor(v) {
+  // (a composer chosen, still written: nothing to offer while the piece is typed)
+  if (FS.pin && pinnedRest(v, FS.pin)) { suggestHide(); return; }
+  FS.pin = null;
+  if (v.trim().length < 2) { suggestHide(); return; }
+  const tok = ++FS.tok;
+  let local = [], live = [];
+  // (Stand's own list first, then IMSLP's, whichever answers first)
+  const show = () => { if (tok !== FS.tok) return; const seen = new Set(local.map((c) => c.c)); suggestShow([...local, ...live.filter((c) => !seen.has(c.c))]); };
+  loadComposers().then(() => { local = localComposers(v); show(); }).catch(() => {});
+  clearTimeout(FS.t);
+  FS.t = setTimeout(() => { imslpComposers(v).then((r) => { live = r; show(); }).catch(() => {}); }, 260);
+}
+$('#findInput').addEventListener('input', (e) => suggestFor(e.target.value));
 $('#findInput').addEventListener('input', (e) => {
   if (e.target.value) return;
+  FS.pin = null; suggestHide();
   searchToken++; currentWork = null;
   $('#workView').hidden = true; $('#findList').hidden = true; $('#findBuy').hidden = true; $('#findStatus').hidden = true; $('#findIntro').hidden = false;
 });
