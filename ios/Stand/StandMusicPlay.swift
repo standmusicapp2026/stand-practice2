@@ -13,11 +13,13 @@ final class StandMusicPlay {
     private var a: Double? = nil, b: Double? = nil
     private var said = ""
     private var title = ""
+    private var storeID = ""
     private var ready = false
     private var player: MPMusicPlayerController { MPMusicPlayerController.systemMusicPlayer }
 
     func play(storeID: String, title: String) {
         self.title = title
+        self.storeID = storeID
         a = nil; b = nil; ready = false; said = ""
         tell()
         let go = { [weak self] in
@@ -66,6 +68,10 @@ final class StandMusicPlay {
             else if a == nil { a = t }
             else if let a0 = a, t > a0 + 0.3 { b = t; p.currentPlaybackTime = a0 }
             else { a = t }
+        // (a moment kept: played from there)
+        case "seek":
+            let t = (c["value"] as? Double) ?? Double(c["value"] as? Int ?? 0)
+            p.currentPlaybackTime = max(0, t); p.play()
         case "close":
             stop(); return
         default: break
@@ -96,7 +102,7 @@ final class StandMusicPlay {
         let p = player
         var m: [String: Any] = ["op": "status", "kind": "music", "ready": ready, "playing": p.playbackState == .playing,
                                 "speed": 1, "t": Int(p.currentPlaybackTime.isFinite ? p.currentPlaybackTime : 0),
-                                "d": Int(p.nowPlayingItem?.playbackDuration ?? 0), "title": title]
+                                "d": Int(p.nowPlayingItem?.playbackDuration ?? 0), "title": title, "id": storeID]
         if let a { m["a"] = Int(a) } else { m["a"] = NSNull() }
         if let b { m["b"] = Int(b) } else { m["b"] = NSNull() }
         let k = "\(m["ready"]!)\(m["playing"]!)\(m["t"]!)\(m["d"]!)\(a ?? -1)\(b ?? -1)"

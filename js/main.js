@@ -305,7 +305,7 @@ document.addEventListener('pointerdown', (e) => {
   swallowClick = false;
   if (!openPanel) return;
   // (a question or a window shown over the panel — Link, Forget, Delete… — is part of it: its taps count)
-  if (e.target.closest('.panel, .topbar, .dock, .tiles, .inkbar, .toast, .cam, .picker, .cp-pal, .cp-sel, .cp-zoom, .studio, .tour, .ask-back, .ptool')) return;
+  if (e.target.closest('.panel, .topbar, .dock, .tiles, .inkbar, .toast, .cam, .picker, .cp-pal, .cp-sel, .cp-zoom, .studio, .tour, .ask-back, .ptool, .mp-pop')) return;
   e.stopPropagation(); swallowClick = true; hidePanel();
 }, { capture: true });
 document.addEventListener('pointerup', (e) => { if (swallowClick) e.stopPropagation(); }, { capture: true });
@@ -1233,7 +1233,7 @@ async function bringArchive(file, opt = {}) {
     }
     // (a forScore backup holds only its lists and settings; an archive holds the scores too)
     if (app === 'forScore' && !items.some((it) => isPdfRel(it.rel) || isImgRel(it.rel))) {
-      toast('This forScore backup holds its lists and settings, not the scores themselves. In forScore, make an archive instead (Tools › Backups › Archive), or choose forScore’s folder in Files.', 9000);
+      toast('This forScore backup holds its lists and settings, not the scores themselves. In forScore, make an archive instead (Tools › Backup › + › Archive), or choose forScore’s folder in Files.', 9000);
       return;
     }
     await bringItems(items, app);
@@ -11043,9 +11043,11 @@ window.__mediaOf = mediaOf; window.__openMedia = openMedia;
 // A YouTube video's buttons, at the bottom with the metronome and the drone: play, 5 seconds back
 // and on, where it is, the speed, a passage repeated, close. The picture itself floats alone.
 const MP = { on: false, kind: '' };   // kind: 'youtube' (the video over the score) or 'music' (Apple Music, played here)
+const MOM = { all: null, open: false };   // the moments kept (below, "Moments")
 const mpFmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function mediaPillShow(on) {
-  MP.on = on; if (!on) MP.kind = ''; const p = $('#mediaPill'); if (!p) return;
+  MP.on = on; if (!on) { MP.kind = ''; MP.key = ''; if (typeof momentsOpen === 'function' && MOM.open) momentsOpen(false); }
+  if (on) momentsAll().then(() => momentsSync()).catch(() => {}); const p = $('#mediaPill'); if (!p) return;
   p.hidden = !on;
   if (!on) { p.classList.add('wait'); p.classList.remove('playing'); $('#mpNow').textContent = '0:00'; $('#mpDur').textContent = ''; $('#mpSpeedV').textContent = '100'; $('#mpSpeed').classList.remove('on'); $('#mpLoop').classList.remove('on', 'arm'); }
 }
@@ -11053,6 +11055,9 @@ function mediaStatus(s) {
   if (!s || (s.kind !== 'youtube' && s.kind !== 'music')) return;
   if (!MP.on) mediaPillShow(true);
   MP.kind = s.kind;
+  // (where it is now, and which video or recording: for its moments)
+  MP.t = s.t || 0; MP.key = s.id ? (s.kind === 'music' ? 'am:' : 'yt:') + s.id : '';
+  momentsSync();
   const p = $('#mediaPill');
   // (Apple Music plays at its own speed: no speed button for it)
   p.classList.toggle('music', s.kind === 'music');
@@ -11089,7 +11094,66 @@ $('#mpBack').addEventListener('click', () => mediaCmd({ cmd: 'back' }));
 $('#mpFwd').addEventListener('click', () => mediaCmd({ cmd: 'fwd' }));
 $('#mpSpeed').addEventListener('click', () => mediaCmd({ cmd: 'speed' }));
 $('#mpLoop').addEventListener('click', () => mediaCmd({ cmd: 'loop' }));
-$('#mpClose').addEventListener('click', mediaClose);
+$('#mpClose').addEventListener('click', () => { momentsOpen(false); mediaClose(); });
+// ---- Moments: places in the video or the recording, kept to play from ----
+// The bookmark in the bar opens a small window above it: "Keep this moment" keeps where it is now;
+// each moment kept can be named, played from (a tap) or let go (×). Kept for that video or
+// recording, on this device: they are there again the next time it is opened.
+async function momentsAll() { if (!MOM.all) { MOM.all = await getSetting('mediaMoments', {}).catch(() => ({})); if (!MOM.all || typeof MOM.all !== 'object') MOM.all = {}; } return MOM.all; }
+const momentsSave = () => setSetting('mediaMoments', MOM.all || {}).catch(() => {});
+const momentsOf = () => (MOM.all && MP.key ? MOM.all[MP.key] || [] : []);
+function momentsSync() {
+  const n = momentsOf().length, b = $('#mpMarksN');
+  if (b) { b.hidden = !n; b.textContent = String(n); }
+  if (MOM.open) { $('#mpAddT').textContent = mpFmt(MP.t); }
+}
+function momentsDraw() {
+  const list = $('#mpList'); list.textContent = '';
+  const ms = momentsOf();
+  $('#mpNone').hidden = !!ms.length; $('#mpPopHint').hidden = !ms.length;
+  $('#mpAddT').textContent = mpFmt(MP.t);
+  ms.forEach((m, i) => {
+    const li = el('li', 'mp-m');
+    const go = el('button', 'mp-go num', mpFmt(m.t)); go.type = 'button'; go.setAttribute('aria-label', 'Play from ' + mpFmt(m.t));
+    go.addEventListener('click', () => { mediaCmd({ cmd: 'seek', value: m.t }); go.classList.add('went'); setTimeout(() => go.classList.remove('went'), 500); });
+    const nm = el('input', 'mp-name'); nm.type = 'text'; nm.value = m.name || ''; nm.placeholder = 'Name it (optional)'; nm.maxLength = 40; nm.setAttribute('aria-label', 'Name of the moment at ' + mpFmt(m.t));
+    nm.addEventListener('change', () => { m.name = nm.value.trim(); momentsSave(); });
+    nm.addEventListener('keydown', (e) => { if (e.key === 'Enter') nm.blur(); });
+    const x = el('button', 'icon-btn small mp-del'); x.type = 'button'; x.append(icon('i-close')); x.setAttribute('aria-label', 'Remove this moment');
+    x.addEventListener('click', () => { const arr = momentsOf(); arr.splice(i, 1); if (!arr.length) delete MOM.all[MP.key]; momentsSave(); momentsDraw(); momentsSync(); });
+    li.append(go, nm, x); list.append(li);
+  });
+}
+function momentsPlace() {
+  const pop = $('#mpPop'), b = $('#mpMarks').getBoundingClientRect(), pill = $('#mediaPill').getBoundingClientRect();
+  const w = Math.min(320, innerWidth - 24);
+  pop.style.width = w + 'px';
+  pop.style.left = Math.round(Math.min(innerWidth - 12 - w, Math.max(12, b.left + b.width / 2 - w / 2))) + 'px';
+  pop.style.bottom = Math.round(innerHeight - pill.top + 10) + 'px';
+}
+async function momentsOpen(on) {
+  MOM.open = on; const pop = $('#mpPop');
+  $('#mpMarks').setAttribute('aria-expanded', String(on)); $('#mpMarks').classList.toggle('on', on);
+  if (!on) { pop.hidden = true; return; }
+  await momentsAll();
+  // (on the page itself: the bar's row is moved by a transform, which would carry the window with it)
+  if (pop.parentElement !== document.body) document.body.append(pop);
+  momentsDraw(); pop.hidden = false; momentsPlace();
+}
+$('#mpMarks').addEventListener('click', () => momentsOpen(!MOM.open));
+$('#mpAdd').addEventListener('click', async () => {
+  if (!MP.key) return;
+  await momentsAll();
+  const arr = MOM.all[MP.key] = MOM.all[MP.key] || [];
+  // (the same second twice is kept once; the moments in the order they come in the piece)
+  if (!arr.some((m) => Math.abs(m.t - MP.t) < 1)) { arr.push({ t: MP.t, name: '' }); arr.sort((a, b) => a.t - b.t); momentsSave(); }
+  momentsDraw(); momentsSync();
+  const i = arr.findIndex((m) => Math.abs(m.t - MP.t) < 1), row = $$('#mpList .mp-m')[i];
+  if (row) { row.classList.add('new'); setTimeout(() => row.classList.remove('new'), 700); }
+});
+// (a tap outside the window closes it)
+document.addEventListener('pointerdown', (e) => { if (MOM.open && !e.target.closest('#mpPop, #mpMarks')) momentsOpen(false); }, true);
+addEventListener('resize', () => { if (MOM.open) momentsPlace(); });
 window.standMediaEvent = (m) => {
   if (!m) return;
   if (m.op === 'closed' && m.kind === 'music') { if (MP.kind === 'music') mediaPillShow(false); }

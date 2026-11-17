@@ -62,6 +62,12 @@
   @media (prefers-reduced-motion: reduce) { body.clean #bar { transition: none; } }
   /* A video whose buttons are in Stand's own bar at the bottom of the page: the picture alone */
   body.dock #bar { display: none; }
+  /* two taps on the right or the left of a video: 10 seconds on or back (one tap: play or pause) */
+  #tapper { position: absolute; inset: 0; z-index: 2; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .rip { position: absolute; top: 50%; width: 96px; height: 96px; margin-top: -48px; border-radius: 50%; background: rgba(255,255,255,.2); color: #fff; display: grid; place-items: center; font: 600 15px -apple-system, system-ui, sans-serif; pointer-events: none; z-index: 3; animation: rip .65s ease-out forwards; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  .rip.l { left: 9%; } .rip.r { right: 9%; }
+  @keyframes rip { 0% { opacity: 0; transform: scale(.7); } 25% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.08); } }
+  @media (prefers-reduced-motion: reduce) { .rip { animation-duration: .9s; } }
   body.dock:not(.clean) #stage { margin-bottom: 6px; }
 </style>
 </head>
@@ -96,7 +102,8 @@ function ratesOf(yt) {
   return ours.length >= 3 ? ours : av.slice().sort((a, b) => a - b);
 }
 const T = (x) => (P.tr && P.tr[x]) || x;
-const P = { tr: null, kind: null, yt: null, sp: null, a: null, b: null, speed: 1, rates: null, url: '', tick: 0, playing: false, dock: false, ready: false, said: '' };
+const P = { vid: '', tr: null, kind: null, yt: null, sp: null, a: null, b: null, speed: 1, rates: null, url: '', tick: 0, playing: false, dock: false, ready: false, said: '' };
+window.__mp = P;   // (for the tests)
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function say(t, html) { const m = $('#msg') || Object.assign(document.createElement('div'), { id: 'msg' }); if (!m.parentNode) $('#stage').append(m); if (html) m.innerHTML = t; else m.textContent = t; m.hidden = false; }
 function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = null; P.sp = null; P.a = P.b = null; P.rates = null; P.playing = false; P.ready = false; syncBar(); }
@@ -104,7 +111,7 @@ function clear() { clearInterval(P.tick); $('#stage').textContent = ''; P.yt = n
 function status() {
   if (P.kind !== 'youtube' || P.gone) return;
   let t = 0, d = 0; try { if (P.yt && P.yt.getCurrentTime) { t = P.yt.getCurrentTime() || 0; d = P.yt.getDuration ? P.yt.getDuration() || 0 : 0; } } catch {}
-  const m = { kind: 'youtube', ready: P.ready, playing: P.playing, speed: P.speed, t: Math.floor(t), d: Math.floor(d), a: P.a, b: P.b };
+  const m = { kind: 'youtube', id: P.vid, ready: P.ready, playing: P.playing, speed: P.speed, t: Math.floor(t), d: Math.floor(d), a: P.a, b: P.b };
   const k = JSON.stringify(m); if (k === P.said) return; P.said = k;
   host('status', m);
 }
@@ -131,7 +138,30 @@ function loadYouTubeApi() {
   });
 }
 async function openYouTube(id, start) {
+  P.vid = id || '';
   const div = document.createElement('div'); div.id = 'yt'; $('#stage').append(div);
+  // (its buttons in Stand's bar: the picture itself takes taps — one to play or pause, two on a side
+  // for 10 seconds back or on)
+  if (P.dock) {
+    const tp = document.createElement('div'); tp.id = 'tapper'; $('#stage').append(tp);
+    let last = null, one = 0, down = null;
+    tp.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+    tp.addEventListener('pointercancel', () => { down = null; });
+    tp.addEventListener('pointerup', (e) => {
+      // (a drag or a pinch is not a tap)
+      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12) { down = null; return; }
+      down = null;
+      if (!P.yt || !P.ready) return;
+      const r = tp.getBoundingClientRect(), now = performance.now(), side = e.clientX - r.left > r.width / 2 ? 1 : -1;
+      if (last && now - last.t < 320 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 60) {
+        clearTimeout(one); last = { t: now, x: e.clientX, y: e.clientY, n: (last.n || 0) + 1 };
+        jump(side * 10);
+        return;
+      }
+      last = { t: now, x: e.clientX, y: e.clientY, n: 0 };
+      one = setTimeout(() => { last = null; doToggle(); }, 300);
+    });
+  }
   say(T('Loading the video…'));
   let YT; try { YT = await loadYouTubeApi(); } catch { say(T('YouTube could not be reached. Check the internet connection, then try again.')); host('error', { code: 'net' }); return; }
   P.yt = new YT.Player('yt', {
@@ -205,6 +235,15 @@ document.getElementById('bar').addEventListener('pointerdown', () => { if (docum
 const doToggle = () => { if (!P.yt || !P.yt.getPlayerState) return; const st = P.yt.getPlayerState(); if (st === 1 || st === 3) P.yt.pauseVideo(); else P.yt.playVideo(); };
 const doBack = () => { if (P.yt && P.yt.seekTo) { P.yt.seekTo(Math.max(0, P.yt.getCurrentTime() - 5), true); setTimeout(status, 60); } };
 const doFwd = () => { if (P.yt && P.yt.seekTo) { const d = P.yt.getDuration ? P.yt.getDuration() : 0; P.yt.seekTo(d ? Math.min(d - 0.5, P.yt.getCurrentTime() + 5) : P.yt.getCurrentTime() + 5, true); setTimeout(status, 60); } };
+// 10 seconds back or on (two taps on a side of the picture), shown as YouTube does
+function jump(s) {
+  if (!P.yt || !P.yt.seekTo) return;
+  const d = P.yt.getDuration ? P.yt.getDuration() : 0, t = P.yt.getCurrentTime() + s;
+  P.yt.seekTo(Math.max(0, d ? Math.min(d - 0.5, t) : t), true);
+  const rp = document.createElement('div'); rp.className = 'rip ' + (s > 0 ? 'r' : 'l'); rp.textContent = (s > 0 ? '+' : '−') + Math.abs(s) + ' s';
+  $('#stage').append(rp); setTimeout(() => rp.remove(), 700);
+  setTimeout(status, 60);
+}
 const doSpeed = () => {
   if (!P.yt || !P.yt.setPlaybackRate) return;
   const R = P.rates && P.rates.length ? P.rates : SPEEDS;
@@ -230,6 +269,9 @@ window.mediaCmd = (c) => {
   else if (c.cmd === 'toggle') doToggle();
   else if (c.cmd === 'back') doBack(); else if (c.cmd === 'fwd') doFwd();
   else if (c.cmd === 'loop') doLoop();
+  else if (c.cmd === 'jump') jump(+c.value || 0);
+  // (a moment kept: played from there)
+  else if (c.cmd === 'seek') { P.yt.seekTo(Math.max(0, +c.value || 0), true); P.yt.playVideo(); setTimeout(status, 80); }
   else if (c.cmd === 'speed') { if (typeof c.value === 'number') { P.speed = c.value; P.yt.setPlaybackRate(c.value); syncBar(); } else doSpeed(); }
 };
 $('#bPlay').onclick = doToggle;

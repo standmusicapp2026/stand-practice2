@@ -90,6 +90,7 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor"/></symbol>
     <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 13.5V9.5 M9.5 2.8h5 M12 2.8v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-moment" viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-4-6 4V5.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-back5" viewBox="0 0 24 24"><path d="M5.6 8.2A8 8 0 1 1 4 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M5.3 3.9v4.5h4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12.2" y="16.3" text-anchor="middle" font-size="8.6" font-weight="700" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">5</text></symbol>
     <symbol id="i-fwd5" viewBox="0 0 24 24"><path d="M18.4 8.2A8 8 0 1 0 20 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18.7 3.9v4.5h-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="11.8" y="16.3" text-anchor="middle" font-size="8.6" font-weight="700" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">5</text></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
@@ -595,7 +596,15 @@
     <span class="mp-sep"></span>
     <button class="mp-speed" id="mpSpeed" type="button" aria-label="Speed"><span class="num" id="mpSpeedV">100</span><span class="mp-pc">%</span></button>
     <button class="icon-btn small" id="mpLoop" type="button" aria-label="Repeat a passage: tap where it starts"><svg><use href="#i-loop"/></svg></button>
+    <button class="icon-btn small mp-marks" id="mpMarks" type="button" aria-label="Moments" aria-haspopup="dialog" aria-expanded="false"><svg><use href="#i-moment"/></svg><span class="mp-n num" id="mpMarksN" hidden></span></button>
     <button class="icon-btn small mp-x" id="mpClose" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+  </div>
+  <!-- moments of the video or recording, kept to play from: opened from the bar -->
+  <div class="mp-pop" id="mpPop" role="dialog" aria-label="Moments" hidden>
+    <div class="mp-pop-head"><h3>Moments</h3><span class="hint" id="mpPopHint">Tap one to play from there.</span></div>
+    <button class="btn primary mp-add" id="mpAdd" type="button"><svg><use href="#i-plus"/></svg><span>Keep this moment</span><span class="num mp-add-t" id="mpAddT">0:00</span></button>
+    <ol class="mp-list" id="mpList"></ol>
+    <p class="hint mp-none" id="mpNone">No moments yet. Play to where you want, then keep it.</p>
   </div>
   <div class="pill" id="scalePill" hidden>
     <svg class="pill-ico"><use href="#i-scales"/></svg>
@@ -1247,14 +1256,24 @@
   <div class="panel-head"><h2>Bring your scores</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
     <p class="hint">From forScore, MobileSheets, piaScore, Newzik or any app: your scores come in with their names, and their folders become folders here. Nothing is changed in the other app.</p>
+    <!-- forScore, the quickest way, in three steps (seen at once, not folded away) -->
+    <section class="sub-card br-fs">
+      <h3>From forScore</h3>
+      <ol class="br-steps">
+        <li>In forScore: Tools › Backup, then + › Archive. An archive holds all your scores.</li>
+        <li>Tap the archive, then Share › Save to Files.</li>
+        <li>Here: tap Choose a backup or archive, and choose it.</li>
+      </ol>
+      <p class="hint">Scores shared one by one from forScore (.4sc) come in with Choose files. The copies forScore keeps of one score (“Haydn”, “Haydn 2”…) come in once: the newest.</p>
+    </section>
     <div class="bring-list">
       <button class="rec-choice wide-choice" id="brFolder"><svg><use href="#i-folder"/></svg><b>Choose a folder</b><span>The other app’s folder in Files (On My iPad or iCloud Drive), or any folder of PDFs</span></button>
       <p class="hint br-how">Tapping a folder only opens it. To choose it: open the folder, then tap <b>Open</b> at the top right. Or tap <b>Select</b>, tap one or more folders, then <b>Open</b>. Everything inside comes in, and its folders become folders here.</p>
       <button class="rec-choice wide-choice" id="brArchive"><svg><use href="#i-cloud"/></svg><b>Choose a backup or archive</b><span>A Stand backup, a forScore archive (.4sb) or any .zip of scores</span></button>
-      <button class="rec-choice wide-choice" id="brFiles"><svg><use href="#i-pdf"/></svg><b>Choose PDFs</b><span>One or many at once (in Files, tap Select)</span></button>
+      <button class="rec-choice wide-choice" id="brFiles"><svg><use href="#i-pdf"/></svg><b>Choose files</b><span>PDFs, pictures or forScore scores (.4sc), one or many (in Files, tap Select)</span></button>
     </div>
-    <details class="set-more"><summary>How to get them out of forScore</summary>
-      <p class="hint">In forScore, open the <b>Backup</b> panel and make an <b>Archive</b> (it holds all your scores). Save it in Files, then choose it here with <b>Choose a backup or archive</b>. If your forScore folder shows in Files (On My iPad › forScore), you can also choose that folder.</p>
+    <details class="set-more"><summary>forScore’s folder in Files</summary>
+      <p class="hint">If your forScore folder shows in Files (On My iPad › forScore), you can also choose that folder with Choose a folder. A forScore backup (not an archive) holds only lists and settings: make an archive for the scores.</p>
     </details>
     <details class="set-more"><summary>From another Stand</summary>
       <p class="hint">Choose its Stand folder (Files › On My iPad › Stand, or a copy of it) or a Stand backup (.zip) with the buttons above. Everything comes back as it was: folders, titles, markings, notebooks, recordings and videos.</p>
