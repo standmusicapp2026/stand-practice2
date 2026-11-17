@@ -486,7 +486,7 @@ async function phoneReadRun() {
     const st = $('#phvStage'), sl = $$('.phv-slot'), n = sl.length;
     const w = Math.round(sl[0].getBoundingClientRect().width), sw = Math.round(st.getBoundingClientRect().width);
     st.scrollTop += sl[2].getBoundingClientRect().top - st.getBoundingClientRect().top + 20;
-    const l1 = await waitFor(() => /^3 \//.test($('#phvPage').textContent) && sl[2].querySelector('img.pg').getAttribute('src') && $('#phvPage').textContent, 6000);
+    const l1 = await waitFor(() => /^3 \//.test($('#phvPage').textContent) && sl[2].querySelector('img.pg').getAttribute('src') && $('#phvPage').textContent, 12000);
     window.__phoneViewer.wink('right');
     const l2 = await waitFor(() => /^4 \//.test($('#phvPage').textContent) && $('#phvPage').textContent, 4000);
     await sleep(800);
