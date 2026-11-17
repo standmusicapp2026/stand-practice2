@@ -10684,10 +10684,26 @@ function renderServices(box, q, small) {
     a.append(icon('i-svc-' + cls), el('span', '', name));
     // In the app: YouTube and Apple Music show what they find, here, to choose from; Spotify (which
     // has no search open to other apps) opens in its own app, at the search for the piece.
-    if (!small && (cls === 'yt' || cls === 'am') && ytCanFind(cls)) a.addEventListener('click', (e) => { e.preventDefault(); ytFind(listenQuery(), cls); });
-    else if (!small && cls === 'sp' && canOpenApp()) a.addEventListener('click', (e) => { e.preventDefault(); const q2 = listenQuery(); openApp(['spotify:search:' + encodeURIComponent(q2), serviceLinks(q2)[1][2]]); });
+    if (!small && ytCanFind(cls)) a.addEventListener('click', (e) => { e.preventDefault(); ytFind(listenQuery(), cls); });
     box.append(a);
   }
+}
+// Apple Music, played here with the subscription (the Music app's player), worked by the bar at the
+// bottom; a video over the score goes first (one thing plays at a time)
+const MUSIC = { it: null };
+function canPlayMusic() { return !!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.music); }
+function playMusic(it) {
+  MUSIC.it = it;
+  if (MEDIA.kind) { if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) NATIVE.standMedia.postMessage({ op: 'close' }); else if (MEDIA.closeIt) MEDIA.closeIt(); }
+  mediaPillShow(false); MP.kind = 'music'; mediaPillShow(true); MP.kind = 'music'; $('#mediaPill').classList.add('music');
+  NATIVE.standMedia.postMessage({ op: 'music', id: String(it.id), title: it.title });
+}
+function musicFailed(m) {
+  mediaPillShow(false);
+  const it = MUSIC.it;
+  if (m.why === 'permission') toast('Stand may not use Apple Music. Allow it in Settings › Stand › Media & Apple Music. Opening it in the Music app.', 5000);
+  else toast('This recording plays here only with an Apple Music subscription. Opening it in the Music app.', 4500);
+  if (it && it.url) openApp([it.url]);
 }
 // (the app itself, at that place: Spotify, Music; the first that opens, then the web)
 function canOpenApp() { return !!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.openApp); }
@@ -10701,20 +10717,23 @@ function openApp(urls) {
 // as a short list: a picture, the title, who, how long. The ones with the performer's name come
 // first; if none has it, that is said, plainly. A video plays over the score; a recording opens in
 // the Music app, where a subscriber hears it whole. "More on …" is always there.
-const YF = { rid: 0, q: '', items: null, svc: 'yt' };
+const YF = { rid: 0, q: '', items: null, svc: 'yt', all: false };
 const SVC = {
   yt: { name: 'YouTube', cap: 'ytFind', test: '__ytFindTest', link: 0, looking: 'Looking on YouTube…', choose: 'Choose a performance', failed: 'YouTube could not be searched just now.', none: 'Nothing found on YouTube for this.', more: 'More on YouTube', noWho: (w) => `No video with ${w} found. These are the closest:` },
+  // (Spotify lets no other app search it: the recordings come from Apple's catalogue, which has the
+  // same ones, and the one chosen opens in Spotify at that recording)
+  sp: { name: 'Spotify', cap: 'amFind', ask: 'am', test: '__amFindTest', link: 1, looking: 'Looking for recordings…', choose: 'Choose a recording', failed: 'Recordings could not be searched just now.', none: 'No recording found for this.', more: 'More on Spotify', noWho: (w) => `No recording with ${w} found. These are the closest:` },
   am: { name: 'Apple Music', cap: 'amFind', test: '__amFindTest', link: 2, looking: 'Looking on Apple Music…', choose: 'Choose a recording', failed: 'Apple Music could not be searched just now.', none: 'Nothing found on Apple Music for this.', more: 'More on Apple Music', noWho: (w) => `No recording with ${w} found. These are the closest:` },
 };
 function ytCanFind(svc = 'yt') { const v = SVC[svc]; return !!((NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps[v.cap]) || window[v.test]); }
 function ytAsk(q, rid, svc) {
   const t = window[SVC[svc].test];
   if (t) { Promise.resolve(t(q)).then((items) => ytFound({ rid, ok: !!items, items: items || [] })); return; }
-  NATIVE.standMedia.postMessage({ op: 'find', q, rid, svc });
+  NATIVE.standMedia.postMessage({ op: 'find', q, rid, svc: SVC[svc].ask || svc });
 }
 function ytFind(q, svc = 'yt') {
   q = (q || '').trim(); if (!q) { toast('Write the piece first.'); $('#lsQuery').focus(); return; }
-  const rid = ++YF.rid; YF.q = q; YF.items = null; YF.svc = svc;
+  const rid = ++YF.rid; YF.q = q; YF.items = null; YF.svc = svc; YF.all = false;
   ytPicks('loading');
   ytAsk(q, rid, svc);
   // (no answer: the search is left, the service itself is offered)
@@ -10728,8 +10747,9 @@ function ytFound(m) {
 const ytWords = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/).filter((w) => w.length > 1);
 function ytPicks(state) {
   const box = $('#lsPicks'); box.textContent = ''; box.hidden = false;
-  const svc = YF.svc, V = SVC[svc], am = svc === 'am';
-  box.classList.toggle('am', am);
+  const svc = YF.svc, V = SVC[svc], yt = svc === 'yt', sp = svc === 'sp', am = svc === 'am';
+  // (videos with their picture; recordings as words only)
+  box.classList.toggle('words', !yt);
   const who = ($('#lsCustom').value.trim() || LS.who || '').trim();
   const head = el('div', 'yp-head');
   head.append(el('h3', '', state === 'loading' ? V.looking : V.choose));
@@ -10739,11 +10759,11 @@ function ytPicks(state) {
   const more = () => {
     const url = serviceLinks(YF.q)[V.link][2];
     const a = el('a', 'yp-more'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.append(icon('i-svc-' + svc), el('span', '', V.more));
-    if (am && canOpenApp()) a.addEventListener('click', (e) => { e.preventDefault(); openApp([url]); });
+    if (!yt && canOpenApp()) a.addEventListener('click', (e) => { e.preventDefault(); openApp(sp ? ['spotify:search:' + encodeURIComponent(YF.q), url] : [url]); });
     return a;
   };
   if (state === 'loading') {
-    const ul = el('ul', 'yp-list'); for (let i = 0; i < 3; i++) { const li = el('li', 'yp-row yp-ghost'); li.append(el('span', 'yp-pic'), el('span', 'yp-txt')); ul.append(li); } box.append(ul);
+    const ul = el('ul', 'yp-list'); for (let i = 0; i < 3; i++) { const li = el('li', 'yp-row yp-ghost'); if (yt) li.append(el('span', 'yp-pic')); li.append(el('span', 'yp-txt')); ul.append(li); } box.append(ul);
     return;
   }
   if (state === 'failed' || !YF.items.length) {
@@ -10756,24 +10776,34 @@ function ytPicks(state) {
   const hasWho = (it) => !!last && words(it).includes(last);
   const qw = ytWords($('#lsQuery').value);
   const fit = (it) => { const t = new Set(words(it)); return qw.length ? qw.filter((w) => t.has(w)).length / qw.length : 0; };
-  const list = YF.items.map((it, i) => ({ it, i, w: hasWho(it) ? 1 : 0, f: fit(it) }))
-    .sort((a, b) => b.w - a.w || (b.f >= 0.5) - (a.f >= 0.5) || a.i - b.i).slice(0, am ? 8 : 6);
-  if (who && !list.some((x2) => x2.w)) box.append(el('p', 'yp-note', V.noWho(who)));
+  const sorted = YF.items.map((it, i) => ({ it, i, w: hasWho(it) ? 1 : 0, f: fit(it) }))
+    .sort((a, b) => b.w - a.w || (b.f >= 0.5) - (a.f >= 0.5) || a.i - b.i);
+  // (a first few; "Show more" for the rest)
+  const first = yt ? 6 : 8, list = YF.all ? sorted.slice(0, yt ? 12 : 20) : sorted.slice(0, first);
+  if (who && !sorted.slice(0, first).some((x2) => x2.w)) box.append(el('p', 'yp-note', V.noWho(who)));
   const ul = el('ul', 'yp-list');
   for (const { it } of list) {
-    const li = el('li');
+    const li = el('li', 'yp-li');
     const b = el('button', 'yp-row'); b.type = 'button';
-    const pic = el('span', 'yp-pic'); const im = el('img'); im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); if (it.pic) im.src = it.pic; pic.append(im);
-    if (!am && it.len) pic.append(el('span', 'yp-len num', it.len));
+    if (yt) { const pic = el('span', 'yp-pic'); const im = el('img'); im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); if (it.pic) im.src = it.pic; pic.append(im); if (it.len) pic.append(el('span', 'yp-len num', it.len)); b.append(pic); }
     const t = el('span', 'yp-txt');
-    t.append(el('span', 'yp-title', it.title), el('span', 'yp-by', (am ? [it.by, it.album] : [it.by, it.views]).filter(Boolean).join(' · ')));
-    if (am && it.len) t.append(el('span', 'yp-by num', it.len));
-    b.append(pic, t);
-    if (am) { b.append(icon('i-svc-am')); b.lastChild.classList.add('yp-go'); b.setAttribute('aria-label', it.title + ' — open in Apple Music'); }
-    b.addEventListener('click', () => { if (am) openApp([it.url]); else { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title); } });
-    li.append(b); ul.append(li);
+    t.append(el('span', 'yp-title', it.title), el('span', 'yp-by', (yt ? [it.by, it.views] : [it.by, it.album]).filter(Boolean).join(' · ')));
+    b.append(t);
+    if (!yt && it.len) b.append(el('span', 'yp-dur num', it.len));
+    if (yt) b.addEventListener('click', () => { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title); });
+    // Spotify: opens in Spotify at that recording (its title and who plays it)
+    else if (sp) { b.setAttribute('aria-label', it.title + ' — Spotify'); b.addEventListener('click', () => openApp(['spotify:search:' + encodeURIComponent(it.title + ' ' + it.by), serviceLinks(it.title + ' ' + it.by)[1][2]])); }
+    // Apple Music: plays here (with the bar at the bottom); or, beside it, in the Music app
+    else if (am) {
+      b.addEventListener('click', () => { if (canPlayMusic()) { hidePanel(); playMusic(it); } else openApp([it.url]); });
+    }
+    li.append(b);
+    if (am && canPlayMusic()) { const o = el('button', 'icon-btn small yp-out'); o.type = 'button'; o.append(icon('i-svc-am')); o.setAttribute('aria-label', 'Open in the Music app'); o.title = 'Open in the Music app'; o.addEventListener('click', () => openApp([it.url])); li.append(o); }
+    ul.append(li);
   }
-  box.append(ul, more());
+  box.append(ul);
+  if (!YF.all && sorted.length > first) { const m2 = el('button', 'yp-showmore', 'Show more'); m2.type = 'button'; m2.addEventListener('click', () => { YF.all = true; ytPicks('list'); }); box.append(m2); }
+  box.append(more());
 }
 function renderListen() {
   const box = $('#lsWho'); box.textContent = '';
@@ -10844,6 +10874,8 @@ function openMedia(url, name) {
   // (a video floating: a tap on the score no longer wakes Stand's sound, which would stop it)
   window.__standVideoFloats = o.kind === 'youtube';
   // (a video: the picture alone floats; its buttons stay at the bottom, with the metronome)
+  // (Apple Music playing here stops: one thing plays at a time)
+  if (MP.kind === 'music' && NATIVE && NATIVE.standMedia) NATIVE.standMedia.postMessage({ op: 'musicCmd', cmd: 'close' });
   o.dock = o.kind === 'youtube'; mediaPillShow(false); if (o.dock) mediaPillShow(true);
   // (in the iPad app: a player of its own, which YouTube accepts)
   if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) { NATIVE.standMedia.postMessage({ op: 'open', ...o }); MEDIA.kind = o.kind; return; }
@@ -10852,17 +10884,20 @@ function openMedia(url, name) {
 window.__mediaOf = mediaOf; window.__openMedia = openMedia;
 // A YouTube video's buttons, at the bottom with the metronome and the drone: play, 5 seconds back
 // and on, where it is, the speed, a passage repeated, close. The picture itself floats alone.
-const MP = { on: false };
+const MP = { on: false, kind: '' };   // kind: 'youtube' (the video over the score) or 'music' (Apple Music, played here)
 const mpFmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function mediaPillShow(on) {
-  MP.on = on; const p = $('#mediaPill'); if (!p) return;
+  MP.on = on; if (!on) MP.kind = ''; const p = $('#mediaPill'); if (!p) return;
   p.hidden = !on;
   if (!on) { p.classList.add('wait'); p.classList.remove('playing'); $('#mpNow').textContent = '0:00'; $('#mpDur').textContent = ''; $('#mpSpeedV').textContent = '100'; $('#mpSpeed').classList.remove('on'); $('#mpLoop').classList.remove('on', 'arm'); }
 }
 function mediaStatus(s) {
-  if (!s || s.kind !== 'youtube') return;
+  if (!s || (s.kind !== 'youtube' && s.kind !== 'music')) return;
   if (!MP.on) mediaPillShow(true);
+  MP.kind = s.kind;
   const p = $('#mediaPill');
+  // (Apple Music plays at its own speed: no speed button for it)
+  p.classList.toggle('music', s.kind === 'music');
   p.classList.toggle('wait', !s.ready);
   p.classList.toggle('playing', !!s.playing);
   const pb = $('#mpPlay'), want = s.playing ? '#i-pause' : '#i-play';
@@ -10878,6 +10913,7 @@ function mediaStatus(s) {
 }
 // (to the player: in the iPad app its own web view; in a browser the frame over the page)
 function mediaCmd(c) {
+  if (MP.kind === 'music') { if (NATIVE && NATIVE.standMedia) NATIVE.standMedia.postMessage({ op: 'musicCmd', ...c }); return; }
   if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) { NATIVE.standMedia.postMessage({ op: 'cmd', ...c }); return; }
   const box = MEDIA.box; if (!box) return;
   // (put away at the edge: it comes back to play, as a video plays only where it is seen)
@@ -10885,6 +10921,7 @@ function mediaCmd(c) {
   try { box.querySelector('.mf-frame').contentWindow.mediaCmd(c); } catch {}
 }
 function mediaClose() {
+  if (MP.kind === 'music') { if (NATIVE && NATIVE.standMedia) NATIVE.standMedia.postMessage({ op: 'musicCmd', cmd: 'close' }); mediaPillShow(false); return; }
   if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) NATIVE.standMedia.postMessage({ op: 'close' });
   else if (MEDIA.closeIt) MEDIA.closeIt();
   mediaPillShow(false);
@@ -10897,7 +10934,9 @@ $('#mpLoop').addEventListener('click', () => mediaCmd({ cmd: 'loop' }));
 $('#mpClose').addEventListener('click', mediaClose);
 window.standMediaEvent = (m) => {
   if (!m) return;
-  if (m.op === 'closed') { MEDIA.kind = ''; window.__standVideoFloats = false; mediaPillShow(false); }
+  if (m.op === 'closed' && m.kind === 'music') { if (MP.kind === 'music') mediaPillShow(false); }
+  else if (m.op === 'closed') { MEDIA.kind = ''; window.__standVideoFloats = false; if (MP.kind !== 'music') mediaPillShow(false); }
+  else if (m.op === 'musicFailed') musicFailed(m);
   else if (m.op === 'status') mediaStatus(m);
   else if (m.op === 'found') ytFound(m);
 };

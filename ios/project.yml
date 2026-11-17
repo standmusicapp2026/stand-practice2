@@ -43,6 +43,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSMicrophoneUsageDescription: "Stand listens to your instrument for the tuner, harmonics, the drone that follows your key, turning pages as you play, and your recordings. Sound is analysed on this device and is not uploaded."
+        NSAppleMusicUsageDescription: "Stand plays the Apple Music recording you choose under Listen, with your subscription, so you can hear it while you read the score."
         NSCameraUsageDescription: "Stand uses the camera to film your practice, to scan sheet music, to let your iPhone film for your iPad, and (only if you turn it on) to see when you wink to turn the page. Wink detection happens on this device; no picture of your face is saved or sent."
         CFBundleDocumentTypes:
           - CFBundleTypeName: PDF score

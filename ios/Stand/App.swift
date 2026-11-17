@@ -142,6 +142,7 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, UIPencilInteractionDelegate {
     private var webView: WKWebView!
     private var media: StandMediaFloat?
+    private var music: StandMusicPlay?             // Apple Music played here (StandMusicPlay.swift)
     /// keeps the page from sliding sideways (see below)
     private var sideLock: NSKeyValueObservation?
     private var pageReady = false
@@ -161,7 +162,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag", "standAwake", "standPickFolder", "standMotion", "standVideoIn", "standVideoOut", "standMedia"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, amFind: 1, openApp: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 4, folders: 1, busy: 1, recover: 1, memory: 1, videoIn: 1, videoOut: 1, videoOver: 1, media: 1, ytFind: 1, amFind: 1, openApp: 1, music: 1, version: '\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")', selfTest: \(ProcessInfo.processInfo.arguments.contains("-standSelfTest")) };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -402,6 +403,13 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 }
                 // (Apple Music: StandAppleMusicFind.swift)
                 if body["svc"] as? String == "am" { StandAppleMusicFind.search(q, done: back) } else { StandYouTubeFind.search(q, done: back) }
+            case "music":
+                // Apple Music, played here (StandMusicPlay.swift), worked by the bar at the bottom
+                let mp = music ?? StandMusicPlay()
+                music = mp
+                mp.event = { [weak self] m in self?.send("standMediaEvent", m) }
+                mp.play(storeID: body["id"] as? String ?? "", title: body["title"] as? String ?? "")
+            case "musicCmd": music?.command(body)
             case "openApp":
                 // Spotify, Apple Music: their own app, at what was chosen (the first that opens; then the web)
                 let urls = (body["urls"] as? [String] ?? []).compactMap { URL(string: $0) }
