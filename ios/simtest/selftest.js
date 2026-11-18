@@ -272,10 +272,13 @@ async function run() {
     $('[data-panel=compose]').click(); await sleep(800); $('.tour-skip') && $('.tour-skip').click();
     // (a slow simulator: wait until the button is really there before pressing it)
     const ex = await waitFor(() => { const b = $('#cnExample'); return b && b.offsetParent ? b : null; }, 10000);
-    if (!ex) return false;
+    if (!ex) throw new Error('the example button did not show in 10 s');
     ex.click();
-    return !!(await waitFor(() => !$('#compose').hidden && $$('#compose canvas').length > 0, 20000));
-  });
+    // (an orchestra: on a slow simulator it can take a while; waited for whole, so it never opens late over the next step)
+    const ok = await waitFor(() => !$('#compose').hidden && $$('#compose canvas').length > 0, 45000);
+    if (!ok) throw new Error('not open after 45 s');
+    return true;
+  }, 70000);
   await shot('10b-jupiter');
   await step('back home 4', async () => { await home(); return !$('#library').hidden; });
   await musicXmlRun('');
@@ -425,11 +428,13 @@ async function musicXmlRun(pre) {
     if (f === 'chloe.mxl') await step(pre + 'Compose: one part on its own, then the full score', async () => {
       const E = await import('./compose/editor.js'); const C = E.composeState, sel = $('#cpView');
       if (!sel || sel.hidden) return false;
-      sel.value = C.score.parts[1].id; sel.dispatchEvent(new Event('change')); await sleep(800);
-      const one = C.lay.partIndex === 1 && C.lay.pages.every((pg) => pg.systems.every((sy) => sy.staves.every((s) => s.pi === 1)));
+      sel.value = C.score.parts[1].id; sel.dispatchEvent(new Event('change'));
+      const one = !!(await waitFor(() => C.lay.partIndex === 1 && C.lay.pages.every((pg) => pg.systems.every((sy) => sy.staves.every((s) => s.pi === 1))), 8000));
       await shot(pre ? 'p-part' : '10e-part');
-      sel.value = ''; sel.dispatchEvent(new Event('change')); await sleep(800);
-      return one && C.lay.partIndex === undefined ? `${C.score.parts[1].name} alone, then all ${C.score.parts.length}` : false;
+      sel.value = ''; sel.dispatchEvent(new Event('change'));
+      const all = !!(await waitFor(() => C.lay.partIndex === undefined, 8000));
+      if (!one || !all) throw new Error(`one part: ${one}, back to all: ${all}, parts ${C.score.parts.length}, picker ${sel.hidden ? 'hidden' : 'shown'}`);
+      return one && all ? `${C.score.parts[1].name} alone, then all ${C.score.parts.length}` : false;
     });
     if (f === 'chloe.mxl') await step(pre + 'Compose: the bar-repeat sign', async () => {
       const E = await import('./compose/editor.js'), M = await import('./compose/model.js'), P = await import('./compose/playback.js'); const C = E.composeState;

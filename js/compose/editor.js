@@ -64,7 +64,7 @@ export async function openComposition(id) {
   if (!file || !file.data) { D.toast('This score could not be opened.'); return; }
   C.id = id; C.fileId = meta.fileId; C.score = M.migrateScore(file.data); C.lyFor = null;
   C.undo = []; C.redo = []; C.sel.clear(); C.selBars = null; C.capDoubt = null; syncUndo();
-  C.view = ((await getSetting('composeViews')) || {})[id] || null;
+  C.view = (VIEWS.all || {})[id] || null;
   meta.opened = Date.now(); db.put('scores', meta);
   await show();
 }
@@ -262,12 +262,16 @@ function syncViewPicker() {
   sel.classList.toggle('on', !!sel.value);
   $('#compose').classList.toggle('part-view', !!sel.value);
 }
-async function setView(id, quiet) {
+// (which part each composition was left showing: read once, kept here, so nothing waits for it)
+const VIEWS = { all: null };
+getSetting('composeViews').then((v) => { VIEWS.all = { ...(v || {}), ...(VIEWS.all || {}) }; }).catch(() => { VIEWS.all = VIEWS.all || {}; });
+function setView(id, quiet) {
   C.view = id || null;
   C.sel.clear(); C.selBars = null;
-  const all = (await getSetting('composeViews')) || {}; if (C.view) all[C.id] = C.view; else delete all[C.id];
-  setSetting('composeViews', all);
+  // shown at once; remembered quietly after
   relayout(true); syncSelBar(); renderTab();
+  const all = { ...(VIEWS.all || {}) }; if (C.view) all[C.id] = C.view; else delete all[C.id];
+  VIEWS.all = all; setSetting('composeViews', all).catch(() => {});
   if (!quiet) {
     const i = viewPartIndex();
     hint(i === undefined ? 'The full score: every part together.' : 'Only the {0} part, as its player reads it. What you write here is in the full score too.'.replace('{0}', C.score.parts[i].name), 4200);
