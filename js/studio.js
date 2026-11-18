@@ -339,7 +339,7 @@ function stripLayout(A, W, H, canvas) {
     const evAll = sts.map((st, k) => pcsOf(st, k, sts.length));
     // (the rests read in the top staff: a bar of rests only, at the start, is not played — tapping
     // along starts after them)
-    const restXs = []; try { for (const b of staffEvents(s0Of(sts))) for (const it of b) if (it.rest) restXs.push(it.x); } catch {}
+    const restXs = [], multis = []; try { for (const b of staffEvents(s0Of(sts))) for (const it of b) if (it.rest) { restXs.push(it.x); if (it.multi > 1) multis.push({ x: it.x, n: it.multi }); } } catch {}
     const top = clamp(Math.min(...sts.map((s) => s.top)) - sp * 3.6, 0, H), bot = clamp(Math.max(...sts.map((s) => s.bottom)) + sp * 3.6, 0, H);
     const s0 = sts[0];
     const firstHead = s0.heads.length ? Math.min(...s0.heads.map((h) => h.x)) : s0.x0 + sp * 4;
@@ -355,9 +355,21 @@ function stripLayout(A, W, H, canvas) {
       const a = cuts[k], b = cuts[k + 1];
       if (b - a < sp * 1.5) continue;
       const bi = bars.length;
-      bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1, rests: restXs.filter((x) => x >= a && x < b).length });
       // the notes of this bar (top staff), for following the playing
       const inBar = s0.heads.filter((h) => h.x >= a && h.x < b).sort((p, q) => p.x - q.x);
+      // (a bar that begins with a rest: its first beat has no note to be heard)
+      const r0 = restXs.filter((x) => x >= a && x < b), firstR = r0.length ? Math.min(...r0) : Infinity, firstN = inBar.length ? inBar[0].x : Infinity;
+      // (bars of rest counted together — a thick bar, or a rest, with the number of bars above it: as
+      // many bars, each tapped, each its own place on the timeline)
+      const mm = !inBar.length && multis.find((m) => m.x >= a && m.x < b);
+      if (mm) {
+        const bi0 = bars.length;
+        for (let q = 0; q < mm.n; q++) bars.push({ x0: sx + (a - x0) + ((b - a) * q) / mm.n, x1: sx + (a - x0) + ((b - a) * (q + 1)) / mm.n, seg: segs.length - 1, rests: 1, restFirst: true, mm: { n: mm.n, i: q } });
+        // (what the other staves play meanwhile, in the bar it falls in)
+        evAll.forEach((evs, si2) => { if (si2 === 0) return; for (const e of evs) if (e.x >= a && e.x < b) events.push({ bar: bi0 + Math.min(mm.n - 1, Math.floor(((e.x - a) / (b - a)) * mm.n)), x: sx + (e.x - x0), pcs: [...e.pcs] }); });
+        continue;
+      }
+      bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1, rests: r0.length, restFirst: firstR < firstN - sp * 0.3 });
       const groups = [];
       for (const h of inBar) { const g = groups[groups.length - 1]; if (g && Math.abs(g.x - h.x) < sp * 0.5) g.ps.push({ p: h.p, acc: h.acc }); else groups.push({ x: h.x, ps: [{ p: h.p, acc: h.acc }] }); }
       for (const g of groups) notes.push({ bar: bi, x: sx + (g.x - x0), ps: g.ps });
@@ -385,6 +397,7 @@ function stripLayout(A, W, H, canvas) {
   const bands = canvas && Array.isArray(canvas.bands) && canvas.bands.length ? canvas.bands : null;
   const bandOf = (st) => { if (!bands) return -1; const m = (st.top + st.bottom) / 2; return bands.findIndex(([a, b]) => m >= a && m <= b); };
   const staffs = A.staves.every((st) => st.edge) ? A.staves.map((st, i) => ({ sys: sysOf.has(i) ? sysOf.get(i) : -1, sp: st.sp, top: st.top, bottom: st.bottom, edge: st.edge, band: bandOf(st) })) : null;
+  events.sort((p, q) => p.x - q.x);
   return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key, staffs, bands, v: staffs ? 2 : 1 };
 }
 function evenTimes(n) {
@@ -1288,10 +1301,13 @@ function startTap(o, from = 0) {
   from = from > 0 && from < o.layout.bars.length ? from : 0;
   const unset = !o.times || o.synced === 'even';
   ST.tapping = { o, k: from, from, times: from && !unset ? o.times.slice(0, from) : Array(from).fill(null), orig: o.times ? o.times.slice() : null, back: from > 0 && unset };
-  const t0 = Math.max(ST.P.trim.a, (o.times && !unset ? o.times[from] : ST.P.trim.a) - 2);
+  // (from the first bar: from the very start of the recording, wherever Stand thought the playing
+  // begins — it may begin sooner. From a later bar: a little before it)
+  const t0 = from === 0 ? ST.P.trim.a : Math.max(ST.P.trim.a, (o.times && !unset ? o.times[from] : ST.P.trim.a) - 2);
   ST.at = null; ST.pend = null; clearTimeout(ST.exactT); ST.media.currentTime = t0;
   $('#studio').classList.add('tapping');
-  { const pad = $('#stTapPad'), st = $('#studio').getBoundingClientRect(), tt = $('#stTransport').getBoundingClientRect(); pad.style.top = Math.max(0, tt.top - st.top) + 'px'; pad.hidden = false; }
+  // (over the clock and the play button only: the timeline stays in sight, the bars falling into place)
+  { const pad = $('#stTapPad'), st = $('#studio').getBoundingClientRect(), tt = $('#stTransport').getBoundingClientRect(); pad.style.top = Math.max(0, tt.top - st.top) + 'px'; pad.style.height = tt.height + 'px'; pad.hidden = false; }
   tapLabel();
   // (the notes' starts, found while you tap)
   if (ST.pcm && !(ST.onsets && ST.onsets.a === ST.P.trim.a && ST.onsets.b === ST.P.trim.b)) {
@@ -1340,16 +1356,48 @@ function tap(e) {
   const n = T.o.layout.bars.length;
   const pad = $('#stTap'); pad.classList.add('hit'); setTimeout(() => pad.classList.remove('hit'), 90);
   tapLabel(); tapPreview(); TL.curB = -2;
+  // (the bars already tapped: their notes as they were heard, so the line follows the playing)
+  if (ST.onsets && ST.onsets.list && T.k - 1 > T.from) {
+    try { const kn = notesHeard(T.o, T.o.times, ST.onsets.list); T.o.knots = T.o.knots || Array.from({ length: n }, () => []); for (let k = T.from; k < T.k - 1 && k < n; k++) T.o.knots[k] = kn[k]; } catch {}
+  }
+  // (the bars on the timeline as they are tapped)
+  try { renderTimeline(); } catch {}
   if (T.k > n) finishTap();
 }
+// The notes of each bar matched with the note starts heard between its two taps, in order: each note
+// to the start nearest where it stands in the bar (as far along the bar as it is along the page), so
+// the line reaches every note as it sounds.
+export function notesHeard(o, times, onsets, sr = ST.sr || 48000) {
+  const L = o.layout, bars = L.bars, n = bars.length;
+  const late = 3072 / sr - 0.012;
+  const on = onsets.map((x) => x.t + late).sort((a, b) => a - b);
+  const byBar = Array.from({ length: n }, () => []);
+  for (let k = 0; k < n; k++) {
+    const T0 = times[k], T1 = times[k + 1], b = bars[k]; if (!(T1 > T0)) continue;
+    const span = T1 - T0, xs = [...new Set(L.notes.filter((q) => q.bar === k).map((q) => q.x))].sort((p, q) => p - q);
+    let j = 0;
+    for (const x of xs) {
+      const fx = (x - b.x0) / Math.max(1, b.x1 - b.x0); if (fx < 0.06) continue;   // (the first note is the tap itself)
+      const e = T0 + fx * span, win = Math.max(0.06, span * 0.18);
+      while (j < on.length && on[j] < e - win) j++;
+      let best = -1, bd = win;
+      for (let q = j; q < on.length && on[q] <= e + win; q++) { if (on[q] <= T0 + 0.04 || on[q] >= T1 - 0.04) continue; const d = Math.abs(on[q] - e); if (d < bd) { bd = d; best = q; } }
+      if (best >= 0) { byBar[k].push({ x, t: on[best] }); j = best + 1; }
+    }
+  }
+  return knotsOf(byBar, times, bars);
+}
 // each tap to the clearest note start near it (from a little before to a little after the tap)
-export function snapTaps(times, onsets, sr = 48000, win = [-0.2, 0.12]) {
+export function snapTaps(times, onsets, sr = 48000, win = [-0.2, 0.12], silent = null) {
   if (!onsets || onsets.length < 2) return times.slice();
   // (a note start is found a little early, by most of the listening window: put back where it is heard)
   const late = 3072 / sr - 0.012;
   onsets = onsets.map((x) => ({ t: x.t + late, fl: x.fl }));
   const fls = onsets.map((x) => x.fl).sort((x, y) => x - y), med = fls[fls.length >> 1] || 1;
-  const out = times.map((t) => {
+  const out = times.map((t, i) => {
+    // (a bar that begins with a rest: nothing is heard on its first beat, and the note nearest the
+    // tap is one before or after it — the tap is kept as it was)
+    if (silent && silent[i]) return t - 0.03;
     let best = null, bs = 0;
     for (const on of onsets) {
       const d = on.t - t; if (d < win[0] || d > win[1]) continue;
@@ -1374,7 +1422,9 @@ async function finishTap() {
     if (!ST.onsets.list) busy('Lining up your taps…', 'Listening for the notes.', 0.5);
     const list = ST.onsets.list || await ST.onsets.job; busy(null);
     // (only the new taps: the bars kept stay exactly where they were)
-    raw = snapTaps(raw, list, ST.sr);
+    const bars = T.o.layout.bars;
+    raw = snapTaps(raw, list, ST.sr, undefined, raw.map((_, i) => !!(bars[from + i] && bars[from + i].restFirst)));
+    T.heard = list;
   }
   for (let i = 1; i < raw.length; i++) if (raw[i] <= raw[i - 1] + 0.05) raw[i] = raw[i - 1] + 0.05;
   // (a tap clearly off the pace of the ones around it, a slip of the finger, is put back on it; a
@@ -1392,7 +1442,11 @@ async function finishTap() {
   for (let i = Math.max(1, from); i < times.length; i++) if (times[i] <= times[i - 1] + 0.05) times[i] = times[i - 1] + 0.05;
   T.o.times = times; T.o.synced = 'tap';
   const kept = (k) => k < from && !T.back;
-  if (T.o.knots) T.o.knots = T.o.knots.map((kn, k) => (kept(k) || (from && k >= T.times.length && old[k] === times[k]) ? kn : []));
+  // (inside each bar tapped, the line moves with the notes as they are heard — through a rest and
+  // on to the next note — and not evenly at the pace of the taps)
+  const heardKn = T.heard ? notesHeard(T.o, times, T.heard) : null;
+  const knots0 = T.o.knots || Array.from({ length: n }, () => []);
+  T.o.knots = knots0.map((kn, k) => (kept(k) || (from && k >= T.times.length && old[k] === times[k]) ? kn : (heardKn && heardKn[k]) || []));
   // (two parts of one piece: the same bars at the same moments, in both lines)
   const other = scoreLines().find((x) => x !== T.o);
   if (other && other.layout.bars.length === n) { other.times = times.slice(); other.synced = 'tap'; other.knots = other.knots ? other.knots.map((kn, k) => (kept(k) ? kn : [])) : null; }

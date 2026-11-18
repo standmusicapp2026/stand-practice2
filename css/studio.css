@@ -21,16 +21,21 @@
 .st-empty .btn span { color: inherit; font-size: 14px; display: inline; }
 .st-empty .btn svg { width: 16px; height: 16px; color: inherit; }
 
-/* tapping along: a big pad over the timeline (not needed then), with the bar it is waiting for; the
-   picture stays whole above it, to see where you are */
-.st-tappad { position: absolute; left: 0; right: 0; bottom: 0; z-index: 9; padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px); background: var(--surface-solid); border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: stretch; }
+/* tapping along: the round blue ball takes the play button's place, bigger, and the bar it waits for
+   is in it; the picture, the clock and the timeline stay, so you see the bars fall into place */
+.st-tappad { position: absolute; left: 0; right: 0; z-index: 9; height: 54px; padding: 0 12px; background: var(--surface-solid); border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
 .st-tappad[hidden] { display: none; }
-.st-tap { border-radius: 20px; background: var(--accent); color: var(--accent-ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; touch-action: none; -webkit-user-select: none; user-select: none; min-height: 96px; transition: transform .06s; }
-.st-tap b { font: 700 30px var(--font-num); }
-.st-tap span { font-size: 13px; opacity: .85; padding: 0 18px; line-height: 1.25; }
-.st-tap:active, .st-tap.hit { transform: scale(.97); filter: brightness(1.12); }
-.st-tapstop { align-self: center; }
-.studio.tapping .st-panel { display: none; }
+.st-tapinfo { font-size: 14px; color: var(--muted); line-height: 1.25; min-width: 0; }
+.st-tap { position: relative; width: 96px; height: 96px; margin-top: -42px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; touch-action: none; -webkit-user-select: none; user-select: none; box-shadow: 0 6px 22px rgba(0,0,0,.28), 0 0 0 5px var(--surface-solid); transition: transform .07s; }
+.st-tap b { font: 700 20px/1.05 var(--font-num); text-align: center; padding: 0 8px; }
+.st-tap::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--accent); opacity: 0; pointer-events: none; }
+.st-tap.hit { transform: scale(.94); filter: brightness(1.15); }
+.st-tap.hit::after { animation: st-ring .45s ease-out; }
+@keyframes st-ring { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.45); } }
+@media (prefers-reduced-motion: reduce) { .st-tap.hit::after { animation: none; } }
+.st-tapstop { justify-self: end; }
+.studio.tapping .st-playbtn { visibility: hidden; }
+.studio.tapping .st-panel, .studio.tapping .st-tabs { opacity: .35; pointer-events: none; }
 /* the tools */
 .st-side { width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface-solid); }
 .st-tabs { flex: none; display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
@@ -171,8 +176,9 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
   .studio.sheet-tall .st-stage { flex: 0 0 auto; height: 40vh; height: 40dvh; min-height: 0; }
   .studio.sheet-tall .st-panel { flex: 1 1 0; max-height: none; }
   .st-panel .seg button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; padding-left: 4px; padding-right: 4px; }
-  .st-tappad { grid-template-columns: 1fr; }
-  .st-tapstop { justify-self: center; }
+  .st-tap { width: 80px; height: 80px; margin-top: -34px; }
+  .st-tap b { font-size: 17px; }
+  .st-tapinfo { font-size: 13px; }
   .st-media { height: 46px; }
   .st-scoretrack { height: 34px; }
   .st-imgtrack { height: 24px; }
@@ -191,8 +197,9 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
   .st-imgtrack { height: 20px; }
   .st-ruler { height: 14px; }
   .st-timeline { padding-top: 2px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px); }
-  .st-tap { min-height: 0; }
-  .st-tap b { font-size: 22px; }
+  .st-tappad { height: 44px; }
+  .st-tap { width: 66px; height: 66px; margin-top: -24px; }
+  .st-tap b { font-size: 15px; }
 }
 @media (max-width: 600px), (max-height: 500px) {
   .st-empty { bottom: 10px; padding: 6px 6px 6px 12px; gap: 8px; }

@@ -1870,6 +1870,21 @@ function readStaff(s, ctx, header) {
   // nothing else is read inside them
   for (const m of multis) for (let k = rests.length - 1; k >= 0; k--) if (rests[k].cx > m.x - sp * 0.3 && rests[k].cx < m.x1 + sp * 0.3) rests.splice(k, 1);
   for (const m of multis) rests.push({ x: m.x, t: 1, cx: (m.x + m.x1) / 2, w: m.x1 - m.x, dots: 0, multi: m.n });
+  // (a whole rest with a number above it, straight over it: as many bars of rest. Only digits right
+  // over the rest and close above the staff count — a fingering, a bar number or a triplet's 3 belong
+  // to notes, a clef or a barline, never stand over a rest)
+  for (const r of rests) {
+    if (r.multi || r.t !== 1) continue;
+    const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return Math.abs(qc - r.cx) < sp * 1.3 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 4.5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 2.2; }).sort((a, b2) => a.x0 - b2.x0);
+    if (!ds.length || ds.length > 2) continue;
+    if (heads.some((hd) => Math.abs(hd.cx - r.cx) < sp * 2.5)) continue;
+    let n = 0, okAll = true;
+    for (const q of ds) {
+      const k = classifyLoose(shapeOf(C, w, q.x0, q.y0, q.x1, q.y1, sp, labC, q.id), ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'])[0];
+      if (k && k.d < 0.4) n = n * 10 + +k.cls.slice(1); else okAll = false;
+    }
+    if (okAll && n >= 2 && n <= 99) { r.multi = n; if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ multi: n, x: r.x, whole: true }); }
+  }
   // ---- grace notes: small filled heads with a short stem, just before a note
   const graces = [];
   {
