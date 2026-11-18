@@ -15,6 +15,7 @@ import Foundation
 import UIKit
 import WebKit
 import MultipeerConnectivity
+import Network
 import CryptoKit
 import Security
 
@@ -179,6 +180,11 @@ final class StandNativeExtras: NSObject {
             guard let code = body["code"] as? String, var p = pairing, !p.shower else { return }
             p.typed = code; pairing = p   // (kept: the other device must prove it knows the same code)
             sendAuth(["op": "pc", "m": mac(code, p.theirNonce + "|pair")], to: p.peer)
+        case "openSettings":
+            // (Settings › Stand: where "Local Network" is turned on again after a "Don't Allow")
+            if let u = URL(string: UIApplication.openSettingsURLString) { DispatchQueue.main.async { UIApplication.shared.open(u) } }
+        case "localNet":
+            checkLocalNetwork()
         case "pairList":
             reportLinked()
         case "pairForget":
@@ -247,6 +253,69 @@ final class StandNativeExtras: NSObject {
         session = s
         newLooking()
         scheduleRest(after: 120)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.checkLocalNetwork() }
+        startWatch()
+    }
+
+    // ---------- "Local Network": allowed, or turned off ----------
+    // iOS asks once whether Stand may find devices on the network; a quick "Don't Allow" and the iPad
+    // and iPhone can never see each other, with no word of why. Looked at with a browser of Apple's
+    // Network framework: refused, it waits with the "policy denied" error, and the page says so (and
+    // offers Settings). The browser is only looked at, never stopped while the looking runs.
+    private var lnBrowser: NWBrowser?
+    private var lnSaid = ""
+    private func checkLocalNetwork() {
+        if lnBrowser != nil { return }
+        let params = NWParameters(); params.includePeerToPeer = true
+        let b = NWBrowser(for: .bonjour(type: "_stand-link._tcp", domain: nil), using: params)
+        b.stateUpdateHandler = { [weak self] st in
+            guard let self = self else { return }
+            var said = ""
+            switch st {
+            case .waiting(let err), .failed(let err):
+                if case .dns(let code) = err, Int(code) == -65570 { said = "denied" }   // (kDNSServiceErr_PolicyDenied)
+            case .ready: said = "ok"
+            default: break
+            }
+            if !said.isEmpty && said != self.lnSaid {
+                self.lnSaid = said
+                StandLog.write("link: local network " + said)
+                self.js("window.standLocalNet && window.standLocalNet(\(self.jsValue(said)))")
+            }
+        }
+        b.start(queue: .main)
+        lnBrowser = b
+        Self.kept.append(b)
+        // (looked at for a while, then left: a new look the next time Stand comes to the front)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self = self, self.lnBrowser === b else { return }
+            b.stateUpdateHandler = nil; b.cancel(); self.lnBrowser = nil
+        }
+    }
+
+    // ---------- finding each other again by itself ----------
+    // A linked device not connected for a while, with Stand in front: the looking is made anew (the
+    // old one retired first, the new one a few seconds later, the way that never upset iOS). Without
+    // this, after the two lost each other the iPhone sometimes never found the iPad again until
+    // "look again" was pressed.
+    private var watch: Timer?
+    private var lastConnected = Date()
+    private var lastRenew = Date.distantPast
+    private func startWatch() {
+        if watch != nil { return }
+        watch = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            guard let self = self, let s = self.session else { return }
+            if !s.connectedPeers.isEmpty { self.lastConnected = Date(); return }
+            guard UIApplication.shared.applicationState == .active, self.looking, !self.linked.isEmpty, self.pairing == nil, !self.pairMode,
+                  Date().timeIntervalSince(self.lastConnected) > 40, Date().timeIntervalSince(self.lastRenew) > 60 else { return }
+            self.lastRenew = Date()
+            StandLog.write("link: none found for a while, looking anew")
+            self.retireLooking()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self = self, self.session != nil, self.browser == nil, UIApplication.shared.applicationState == .active else { return }
+                self.newLooking()
+            }
+        }
     }
 
     // The same identity every time (Apple's advice): a new one each start left the other device
@@ -516,6 +585,7 @@ final class StandNativeExtras: NSObject {
         lookAgain = w
         let wait = max(1.5, 3 - Date().timeIntervalSince(stoppedAt))
         DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: w)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait + 2) { [weak self] in self?.lastConnected = Date(); self?.checkLocalNetwork() }
     }
     // (asked to start or stop while Stand is in the background: done once it is open again)
     private func whenActive(_ f: @escaping () -> Void) -> Bool {

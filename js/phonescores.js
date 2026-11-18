@@ -162,10 +162,10 @@ export function initPhoneScores({ askIpad, toast, connected, share }) {
       d = null;
       if (onPage) onPage(i + 1, info.n);
       // (a breath between pages: the memory of the page just kept is let go before the next comes)
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, info.paper ? 5 : 20));
     }
     halt();
-    const copy = { id: copyId(s.id), kind: 'ipadcopy', stamp, title: s.title, n: info.n, at: Date.now(), ...(info.src ? {} : { noSrc: true }) };
+    const copy = { id: copyId(s.id), kind: 'ipadcopy', stamp, title: s.title, n: info.n, at: Date.now(), ...(info.src ? {} : { noSrc: true }), ...(info.paper ? { paper: true } : {}) };
     await db.put('files', copy);
     // (the score being read here goes on in its new version, whose pages are all here now)
     if (PS.view && PS.view.copy && PS.view.copy.id === copy.id) { PS.view.copy = copy; PS.view.i = Math.min(PS.view.i, copy.n - 1); }
@@ -758,7 +758,8 @@ export function initPhoneScores({ askIpad, toast, connected, share }) {
     // (a page that came white from the iPad, drawn when it was short of memory: thrown away, and the
     // score asked for again, those pages only, the next time the iPad is found)
     const blankCheck = async () => {
-      if (PS.view !== v || s.dataset.k !== k || !looksBlank(im)) return;
+      // (a notebook's page may be empty paper: it is what it is)
+      if (PS.view !== v || s.dataset.k !== k || v.copy.paper || !looksBlank(im)) return;
       preDrop(k);
       const id = v.copy.id.slice(9);
       // (drawn here from the PDF: drawn again the next time, nothing to ask the iPad for)

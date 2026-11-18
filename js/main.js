@@ -7721,6 +7721,8 @@ function infoForPhone(id) {
   return phoneJob(async () => {
     const P = await phoneDoc(id);
     const out = { v: 2, id, n: Math.min(P.doc.pages, 2000), stamp: phoneStamp(id) };
+    // (a notebook: its pages are drawn by Stand, never white for want of memory — an empty page is just empty)
+    if (P.doc.paper || (P.base && P.base.paper)) out.paper = true;
     // The score's own PDF, offered whole: sent in one go over the direct link, the iPhone draws its
     // pages (and finds its lines for Play) itself, many times quicker than page by page from here.
     // (a PDF with nothing added from other files; the markings come apart, a clear layer a page)
@@ -8539,9 +8541,11 @@ function pageForPhone(id, i) {
   return phoneJob(async () => {
     // (iOS said memory is short, or the iPad is busy reading or playing: the iPhone asks again later)
     if (Date.now() < (window.__phoneHoldUntil || 0) || recState || player.playing) throw new Error('busy');   // (never while recording or playing a recording: the picture must stay smooth)
-    // (a breath between pages, so the memory of the last one is let go before the next is drawn)
-    await new Promise((r) => setTimeout(r, 250));
     const P = await phoneDoc(id), doc = P.doc;
+    const paper = !!(doc.paper || (P.base && P.base.paper));
+    // (a breath between pages, so the memory of the last one is let go before the next is drawn; a
+    // notebook's page is light to draw: a short one)
+    await new Promise((r) => setTimeout(r, paper ? 30 : 120));
     if (!(i >= 0 && i < doc.pages)) throw new Error('none');
     const [pw, ph] = doc.sizes[i], W = 1170, H = Math.round((W * ph) / pw);
     if (i === 0) nlog('iPad: sending a score to the iPhone (' + doc.pages + ' pages)');
@@ -8554,7 +8558,7 @@ function pageForPhone(id, i) {
     // (a page that came out white or black, the iPad short of memory: asked again later, never sent)
     // (drawn white twice: the page really is empty, and it is sent)
     const bk = id + ':' + i;
-    if ((looksBlank(c) && !BLANK_ONCE.has(bk)) || looksBlack(c)) { BLANK_ONCE.add(bk); c.width = c.height = 0; window.__phoneHoldUntil = Date.now() + 20000; throw new Error('busy'); }
+    if (!paper && ((looksBlank(c) && !BLANK_ONCE.has(bk)) || looksBlack(c))) { BLANK_ONCE.add(bk); c.width = c.height = 0; window.__phoneHoldUntil = Date.now() + 20000; throw new Error('busy'); }
     const img = await canvasData(c, 'image/jpeg', 0.8);
     c.width = c.height = 0;
     if (!img) throw new Error('draw');

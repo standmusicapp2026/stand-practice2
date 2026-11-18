@@ -19,8 +19,36 @@ const CHUNK = 64 * 1024;
 const NATIVE = () => !!(window.standCaps && window.standCaps.peer && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standPeer);
 const hub = { sigs: new Map(), started: false, seen: new Set(), peers: 0 };
 const ANY_HOST = 'stand-any-host';
+// Before iOS asks the first time whether Stand may find devices on the network, a word on why: a
+// quick "Don't Allow" and the iPad and the iPhone can never see each other. (Not for a device already
+// linked to another: it has been allowed.) Refused before: a card says so, with Settings to open.
+const LN = { asking: false, said: false };
+function primed() { return LS.get('standLnPrimed') === '1' || (LS.get('standPairs') && LS.get('standPairs') !== '[]') || !!(window.standCaps && window.standCaps.selfTest); }
+async function prime() {
+  if (LN.asking) return false;
+  LN.asking = true;
+  try {
+    const { ask } = await import('./dialog.js');
+    const kind = /iPhone|iPod/.test(navigator.userAgent) ? 'iPad' : 'iPhone';
+    const ok = await ask(`Stand will look for your ${kind} nearby`, { ok: 'Continue', cancel: 'Not now', sub: 'iOS asks next whether Stand may find devices on your local network. Tap Allow: that is how your iPad and iPhone reach each other, straight, with nothing through the internet.' });
+    if (ok) LS.set('standLnPrimed', '1');
+    return ok;
+  } finally { LN.asking = false; }
+}
+window.standLocalNet = async (state) => {
+  if (state !== 'denied' || LN.said) return;
+  LN.said = true;
+  nlog('link: local network turned off for Stand');
+  const { ask } = await import('./dialog.js');
+  const kind = /iPhone|iPod/.test(navigator.userAgent) ? 'iPad' : 'iPhone';
+  const go = await ask(`Stand cannot see your ${kind}`, { ok: 'Open Settings', cancel: 'Not now', sub: '“Local Network” is off for Stand, so your iPad and iPhone cannot find each other. In Settings, turn on Local Network for Stand, then come back.' });
+  if (go) { try { window.webkit.messageHandlers.standPeer.postMessage({ op: 'openSettings' }); } catch {} }
+  // (asked again once Stand is back in front, if it is still off)
+  setTimeout(() => { LN.said = false; }, 60000);
+};
 function hubStart() {
   if (hub.started || !NATIVE()) return;
+  if (!primed()) { if (!LN.asking) prime().then((ok) => { if (ok) hubStart(); }); return; }
   hub.started = true;
   window.standPeerMessage = (str) => { let m; try { m = JSON.parse(str); } catch { return; } deliver(m); };
   window.standPeerState = (n, names) => { if (n !== hub.peers) nlog('link: ' + n + ' device(s) ' + (names || []).join(', ')); hub.peers = n; hub.names = names || []; for (const f of [...direct.watch]) { try { f(n); } catch {} } };
