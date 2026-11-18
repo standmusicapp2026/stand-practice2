@@ -71,7 +71,9 @@ final class StandMusicPlay {
         // (a moment kept: played from there)
         case "seek":
             let t = (c["value"] as? Double) ?? Double(c["value"] as? Int ?? 0)
-            p.currentPlaybackTime = max(0, t); p.play()
+            p.currentPlaybackTime = max(0, t)
+            // (dragged along the bar's line while paused: it stays paused there)
+            if (c["play"] as? Bool) != false { p.play() }
         case "close":
             stop(); return
         default: break

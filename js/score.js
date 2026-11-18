@@ -5,7 +5,7 @@ import { loadMusicFont } from './ink.js';
 import { paintCover } from './covers.js';
 import { pixGet, pixPut, pixHas, pixDel, lightGet, lightPut, lightKeys, lightDel } from './pixcache.js';
 // heavy scans, for the whole app: their pages are drawn one at a time, wherever they are drawn
-const HEAVY = { chain: Promise.resolve(), active: 0, fids: new Set(), lightening: new Set() };
+const HEAVY = { chain: Promise.resolve(), active: 0, fids: new Set(), lightening: new Set(), bg: null };
 import { db } from './db.js';
 import { drawNotebookPage, drawCover, PAGE_W as NB_W, PAGE_H as NB_H } from './notebook.js';
 
@@ -233,7 +233,9 @@ async function openDocumentOne(file, known) {
           let ok = false;
           try {
             HEAVY.active++;
-            await (HEAVY.chain = HEAVY.chain.then(() => pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }).promise).then(() => { ok = true; }).catch(() => {}));
+            // (stopped at once if a page is wanted meanwhile: it is made again later, when all is quiet.
+            // Not stopped, a page turned to waited behind it, a second or more on an iPad)
+            await (HEAVY.chain = HEAVY.chain.then(() => { if (gone || HEAVY.want > 0) return; const t = pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }); HEAVY.bg = t; return t.promise.then(() => { ok = true; }); }).catch(() => {}).finally(() => { HEAVY.bg = null; }));
           } finally { HEAVY.active--; }
           // (a page that did not draw is never kept: it would show black from then on)
           const b = ok && !looksBlack(c) && !looksBlank(c) ? await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86)) : null;
@@ -297,7 +299,12 @@ async function openDocumentOne(file, known) {
         let page = null;
         // (a heavy scan: after the page drawn before it)
         let release = null;
-        if (heavy || scanLike) { const prev = HEAVY.chain; HEAVY.chain = new Promise((r) => { release = r; }); await Promise.race([prev.catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); }   // (never stuck behind a drawing that never ends)
+        if (heavy || scanLike) {
+          // (a light copy being made quietly stops for this page)
+          HEAVY.want = (HEAVY.want || 0) + 1; if (HEAVY.bg) try { HEAVY.bg.cancel(); } catch {}
+          const prev = HEAVY.chain; HEAVY.chain = new Promise((r) => { release = r; });
+          try { await Promise.race([prev.catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); } finally { HEAVY.want--; }   // (never stuck behind a drawing that never ends)
+        }
         HEAVY.active++;
         try {
         if (gone) return;
@@ -305,15 +312,31 @@ async function openDocumentOne(file, known) {
         page = await pdf.getPage(i + 1).catch((e) => { if (gone) return null; throw e; });
         if (!page) return;
         const vp1 = page.getViewport({ scale: 1 });
-        const vp = page.getViewport({ scale: w / vp1.width });
-        canvas.width = W; canvas.height = H;
-        const task = page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: vp, background: 'rgb(255,255,255)' });
+        // A heavy scan's page not yet kept light: drawn once at the light copy's size, kept, and the
+        // page shown from it. (Drawn at the page's size, it was drawn a second time later for the
+        // light copy: the picture in the file, tens of millions of dots, read twice.)
+        const asLight = heavy && fid && lightHave && !lightHave.has(i) && !opts.sharp && Math.max(W, H) < LIGHT_LONG * 0.75;
+        let into = canvas;
+        if (asLight) { const sc = LIGHT_LONG / Math.max(vp1.width, vp1.height); into = document.createElement('canvas'); into.width = Math.round(vp1.width * sc); into.height = Math.round(vp1.height * sc); }
+        else { canvas.width = W; canvas.height = H; }
+        const vp = page.getViewport({ scale: into.width / vp1.width });
+        const task = page.render({ canvasContext: into.getContext('2d', { alpha: false }), viewport: vp, background: 'rgb(255,255,255)' });
         // a drawing no longer wanted (the page was turned past) stops at once
         if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
         // (a drawing stopped because it is no longer wanted is not an error: whoever asked knows it was stopped)
         let stopped = false;
         await task.promise.catch((e) => { if (gone || (e && e.name === 'RenderingCancelledException' && opts.ctl && opts.ctl.aborted)) { stopped = true; return; } throw e; });
-        if (stopped) return;
+        if (stopped) { if (into !== canvas) into.width = into.height = 0; return; }
+        if (into !== canvas) {
+          canvas.width = W; canvas.height = H;
+          const g = canvas.getContext('2d', { alpha: false }); g.imageSmoothingQuality = 'high'; g.drawImage(into, 0, 0, W, H);
+          if (!looksBlack(into) && !looksBlank(into)) {
+            lightHave.add(i);
+            into.toBlob((b) => { into.width = into.height = 0; if (b && !gone) lightPut(fid, i, b).catch(() => lightHave.delete(i)); else lightHave.delete(i); }, 'image/jpeg', 0.86);
+          } else into.width = into.height = 0;
+          if (!lightening) setTimeout(lightenAll, 1500);
+          return;
+        }
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
         if (key && (opts.keep || performance.now() - t0 > PIX_SLOW) && !looksBlank(canvas) && !looksBlack(canvas)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
         // a heavy page just drawn big enough is its own light copy (no need to draw it twice)

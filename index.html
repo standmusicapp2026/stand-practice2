@@ -589,6 +589,7 @@
   </div>
   <!-- a YouTube video over the score: the picture alone floats; its buttons stay here -->
   <div class="pill media-pill wait" id="mediaPill" hidden>
+    <div class="scrub mp-scrub" id="mpScrub" role="slider" aria-label="Where in the video" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0" hidden><i class="sc-fill"></i><b class="sc-knob"></b><span class="sc-tip num"></span></div>
     <button class="mp-play" id="mpPlay" type="button" aria-label="Play"><svg><use href="#i-play"/></svg></button>
     <button class="icon-btn small" id="mpBack" type="button" aria-label="Back 5 seconds"><svg><use href="#i-back5"/></svg></button>
     <button class="icon-btn small" id="mpFwd" type="button" aria-label="On 5 seconds"><svg><use href="#i-fwd5"/></svg></button>
@@ -1763,6 +1764,7 @@
 <!-- a recording's video, small over the score: move it, resize it, pinch to zoom -->
 <div class="vfloat" id="vfloat" hidden aria-label="Video">
   <div class="vf-stage" id="vfStage"></div>
+  <div class="scrub vf-scrub" id="vfScrub" role="slider" aria-label="Where in the video" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0"><i class="sc-fill"></i><b class="sc-knob"></b><span class="sc-tip num"></span></div>
   <div class="vf-bar">
     <button class="vf-btn" id="vfPlay" aria-label="Play"><svg><use href="#i-play"/></svg></button>
     <button class="vf-btn vf-speed num" id="vfSpeed" aria-label="Speed">100%</button>

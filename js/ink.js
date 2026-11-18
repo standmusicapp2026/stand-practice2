@@ -447,6 +447,10 @@ export function flushInk() { return Promise.all([...LIVE.keys()].map(writeLive))
 export function dropInk(scoreId) { for (const [k, e] of LIVE) if (k.startsWith(scoreId + ':')) { clearTimeout(e.t); LIVE.delete(k); } }
 export function liveInk(key) { const e = LIVE.get(key); return e ? e.items : null; }
 
+// Told whenever a page's markings are drawn again (the whole page, a part, or one new thing added):
+// zoomed in, Stand shows the markings on a layer of its own lined up with the screen (see main.js).
+export const inkHooks = { changed: null };
+const told = (L, item, area) => { if (inkHooks.changed) try { inkHooks.changed(L, item, area); } catch {} };
 export class InkLayer {
   constructor(ink, scoreId, page) {
     this.canvas = ink; this.scoreId = scoreId; this.page = page;
@@ -500,6 +504,7 @@ export class InkLayer {
     this._hide = hide;
     if (v) this._baseLater();
     if (this.onItems) this.onItems();
+    told(this);
   }
   // Back to the whole page: the canvas also goes back to covering the whole page. (It was left placed
   // over the part that was on screen, so after a zoom the page's markings were squeezed into that part,
@@ -534,6 +539,7 @@ export class InkLayer {
     const ctx = this.canvas.getContext('2d');
     this.prep(ctx); drawItem(ctx, item, this.fullW, this.fullH, false); ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (this.view) this._baseLater();
+    told(this, item);
     this.save();
   }
   // Erases like a real eraser: the part of a pen or highlighter stroke under the eraser goes,
@@ -584,6 +590,7 @@ export class InkLayer {
     });
     ctx.restore();
     if (v) this._baseLater();
+    told(this, null, b);
   }
   flushErase() { if (!this.erasing) return; this.erasing = false; this.redraw(); this.save(); }
   // (things added at the end are new: they go in the layer being written in; undo passes raw)

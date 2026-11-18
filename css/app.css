@@ -241,8 +241,7 @@ html:not([lang="en"]) .btn svg { flex: none; }
 /* ---------- score stage ---------- */
 #score { background: var(--stage); }
 .stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; touch-action: none; overflow: hidden; }
-.spread { display: flex; align-items: center; justify-content: center; gap: 2px; transition: opacity .12s ease; }
-.spread.fade { opacity: 0.35; }
+.spread { display: flex; align-items: center; justify-content: center; gap: 2px; }
 .pg { position: relative; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.06), 0 4px 18px rgba(0,0,0,.14); overflow: hidden; }
 .pgi { position: absolute; }
 .spread { transform-origin: 0 0; }
@@ -580,6 +579,10 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 
 /* ---------- zoom, live layer, selection ---------- */
 .live-layer { position: fixed; z-index: 8; pointer-events: none; }
+/* zoomed in and still: the markings on a layer lined up with the screen (the page's own hidden under it) */
+.ink-over { position: fixed; z-index: 7; pointer-events: none; }
+.ink-over[hidden] { display: none; }
+body.ink-over-on #stage canvas.ink { visibility: hidden; }
 .zoom-pill { position: absolute; z-index: 9; right: max(14px, env(safe-area-inset-right)); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); min-height: 34px; padding: 0 14px; border-radius: 17px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); font-size: 13px; font-weight: 600; color: var(--ink); }
 .sel-box { position: absolute; z-index: 5; border: 1px dashed color-mix(in srgb, var(--accent-text) 70%, transparent); border-radius: 3px; background: transparent; touch-action: none; cursor: move; }
 .sel-handle { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); transform: scale(var(--inv, 1)); cursor: nwse-resize; }
@@ -2333,3 +2336,25 @@ body.ruler-away .ruler, body.ruler-away .ruler-kinds { display: none; }
 .mp-del { flex: none; color: var(--muted); }
 .mp-none { margin: 10px 2px 2px; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { .mp-pop { animation: none; } }
+
+/* The line under a video or a recording that shows where it is: drag along it (or tap) to go there */
+.scrub { position: absolute; height: 24px; touch-action: none; cursor: pointer; --f: 0; -webkit-user-select: none; user-select: none; }
+.scrub[hidden] { display: none; }
+.scrub::before, .scrub .sc-fill { content: ''; position: absolute; left: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; transition: height .15s, margin-top .15s; }
+.scrub::before { right: 0; background: color-mix(in srgb, var(--ink) 16%, transparent); }
+.scrub .sc-fill { width: calc(var(--f) * 100%); background: var(--accent); }
+.scrub .sc-knob { position: absolute; top: 50%; left: calc(var(--f) * 100%); width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.25); transform: scale(.7); transition: transform .15s; }
+.scrub.on::before, .scrub.on .sc-fill { height: 5px; margin-top: -2.5px; }
+.scrub.on .sc-knob { transform: scale(1.15); }
+.scrub .sc-tip { position: absolute; bottom: calc(100% + 4px); left: calc(var(--f) * 100%); transform: translateX(-50%); padding: 3px 8px; border-radius: 8px; background: var(--ink); color: var(--bg); font-size: 12px; font-weight: 600; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s; }
+.scrub.on .sc-tip { opacity: 1; }
+.scrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* (in the bar at the bottom: along its top, inside its rounded ends) */
+.media-pill { position: relative; }
+.media-pill.has-scrub { padding-top: 12px; }
+.media-pill .mp-scrub { left: 24px; right: 24px; top: -3px; }
+/* (on a recording's own video over the score: along the foot of the picture, over its buttons) */
+.vf-scrub { left: 14px; right: 14px; bottom: 46px; z-index: 2; transition: opacity .25s; }
+.vf-scrub::before { background: rgba(255,255,255,.35); }
+.vf-scrub .sc-tip { background: rgba(0,0,0,.75); color: #fff; }
+.vfloat.quiet .vf-scrub { opacity: 0; pointer-events: none; }

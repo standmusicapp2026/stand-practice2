@@ -271,7 +271,7 @@ window.mediaCmd = (c) => {
   else if (c.cmd === 'loop') doLoop();
   else if (c.cmd === 'jump') jump(+c.value || 0);
   // (a moment kept: played from there)
-  else if (c.cmd === 'seek') { P.yt.seekTo(Math.max(0, +c.value || 0), true); P.yt.playVideo(); setTimeout(status, 80); }
+  else if (c.cmd === 'seek') { P.yt.seekTo(Math.max(0, +c.value || 0), true); if (c.play !== false) P.yt.playVideo(); setTimeout(status, 80); }
   else if (c.cmd === 'speed') { if (typeof c.value === 'number') { P.speed = c.value; P.yt.setPlaybackRate(c.value); syncBar(); } else doSpeed(); }
 };
 $('#bPlay').onclick = doToggle;

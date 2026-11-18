@@ -24,7 +24,7 @@ import { ask, choose } from './dialog.js';
 import { forScorePdfs } from './forscore.js';
 import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js';
 import { DuoFollower, shiftOfName } from './duofollow.js';
-import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
+import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPicture, exportPdf, imagesToPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
@@ -1752,6 +1752,9 @@ function renderWork(data) {
 const V = { score: null, file: null, base: null, doc: null, page: 0, spread: 1, half: false, cache: new Map(), splits: new Map(), pages: [], inking: false, usedJumps: new Set(), undo: [], redo: [], crop: null };
 const stage = $('#stage');
 const liveCanvas = el('canvas', 'live-layer'); $('#score').append(liveCanvas);
+// (zoomed in and still, the markings shown lined up with the screen: see sharpDraw)
+const SHARP = { on: false, sig: '', raf: 0, full: 0, pages: [] };
+const inkOver = el('canvas', 'ink-over'); inkOver.hidden = true; $('#score').append(inkOver);
 const zoomPill = el('button', 'zoom-pill num'); zoomPill.hidden = true; $('#score').append(zoomPill);
 let wakeLock = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
@@ -2166,12 +2169,28 @@ async function layout(fade) {
   stage.append(spread);
   Z.el = spread; Z.s = 1; Z.x = 0; Z.y = 0; Z.sharp = 1; applyZoom();
   if (ghost) nbSlideIn(ghost, spread, L);
-  else if (fade && !V.instant && !matchMedia('(prefers-reduced-motion: reduce)').matches) { spread.classList.add('fade'); requestAnimationFrame(() => requestAnimationFrame(() => spread.classList.remove('fade'))); }
+  else if (fade && !V.instant && !matchMedia('(prefers-reduced-motion: reduce)').matches) turnCue(spread, V.turnDir);
+  V.turnDir = 0;
   $('#pageLabel').textContent = label + ' / ' + V.doc.pages;
   syncPaperPlus();
   $('#pageRange').value = V.page + 1;
   prefetch(token);
   showTempoMarks(token, entries);
+}
+// A page turned: the new page comes in from the side it is turned from (from the right going on,
+// from the left going back), a few points, settling in a moment, and lighter at first: enough to
+// see that the page changed, never a flash of the whole screen. A jump (a page chosen, a set) just
+// comes in softly where it is.
+function turnCue(spread, dir) {
+  const pages = [...spread.children].filter((n) => n.classList.contains('pg'));
+  if (!pages.length || !spread.animate) return;
+  const dx = dir > 0 ? 22 : dir < 0 ? -22 : 0;
+  for (const pg of pages) {
+    try {
+      pg.animate([{ transform: `translateX(${dx}px)`, opacity: 0.55 }, { transform: 'translateX(0)', opacity: 1 }],
+        { duration: dir ? 240 : 180, easing: 'cubic-bezier(.2, .75, .25, 1)' });
+    } catch {}
+  }
 }
 // ---------- pages one under the other, scrolled like Notes (a choice: turning like a book stays the usual) ----------
 // Every page has its place in one long column; only the pages on screen and near it are drawn (their
@@ -2598,7 +2617,10 @@ function prefetch(token) {
     const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
     pageBox(ids).forEach((b, k) => renderPage(ids[k], innerW(ids[k], b[0]), innerH(ids[k], b[1]), 1, 1));
   }
-  clearTimeout(WARM.t); WARM.t = setTimeout(() => warmAhead(token), 2500);
+  // (soon after a turn, not seconds later: turning through a score for the first time at an easy
+  // pace, the pages further on were never ready, as each turn put this off again. It never holds up
+  // anything: it waits for the pages on screen and the next turn's, and stops for any page asked for)
+  clearTimeout(WARM.t); WARM.t = setTimeout(() => warmAhead(token), 350);
 }
 // A little further ahead, slow pages (scans) are drawn once, quietly, and kept as pictures, so
 // turning several pages quickly never waits. Only when nothing else is being drawn.
@@ -2727,21 +2749,24 @@ function turn(dir) {
   if (scrollReady() && dir < 0) { const w = scrollWhere(); if (w.f > 0.08 && !rr) { scrollToPage(w.page); return; } }
   if (S.halfTurn && V.spread === 1 && !V.inking && !SCROLL()) {
     if (dir > 0) {
-      if (!V.half && V.page + 1 <= lastPg()) { V.half = true; layout(true); return; }
-      if (V.half) { goTo(V.page + 1); return; }
+      if (!V.half && V.page + 1 <= lastPg()) { V.turnDir = 1; V.half = true; layout(true); return; }
+      if (V.half) { V.turnDir = 1; goTo(V.page + 1); return; }
       return;
     }
-    if (V.half) { V.half = false; layout(true); return; }
+    if (V.half) { V.turnDir = -1; V.half = false; layout(true); return; }
     // back by halves too, the way it came: the previous page's half first, then the whole of it
     const first = rr ? rr[0] : 0;
-    if (V.page - 1 >= first) { V.page -= 1; V.score.lastPage = V.page; rememberPlace(); V.half = true; layout(true); return; }
+    if (V.page - 1 >= first) { V.turnDir = -1; V.page -= 1; V.score.lastPage = V.page; rememberPlace(); V.half = true; layout(true); return; }
   }
   const next = clamp(V.page + dir * V.spread, rr ? rr[0] : 0, rr ? rr[1] : Math.max(0, V.doc.pages - 1));
   if (next === V.page) return;
+  V.turnDir = dir;
   if (nbSlides()) { if (!V.slide) V.slide = { dir, x: 0, v: 0, t: performance.now() }; nbLaunch(V.slide); }
   goTo(next);
 }
 window.standTurn = turn;
+// (for the tests: which pages are drawn and kept, and what is being drawn)
+window.__pagesNow = () => ({ page: V.page, spread: V.spread, cache: [...V.cache.entries()].map(([k, v]) => k + (v instanceof Promise ? '…' : '')), running: [...RQ.running].map((j) => j.prio), queued: RQ.q.map((j) => j.prio) });
 // The iPad moves the whole window up for the keyboard, and does not always put it back: with nothing
 // being typed, the window is put back in its place (the score never shows under an empty strip).
 function windowHome() {
@@ -3192,6 +3217,7 @@ function clampZoom() {
 }
 function applyZoom() {
   if (!Z.el) return;
+  sharpOff();
   const turn = TURN();
   Z.el.style.transformOrigin = turn ? '50% 50%' : '';
   const turnCss = turn ? ' rotate(-90deg)' : '';
@@ -3278,7 +3304,7 @@ function inkFollowsArt(p) {
 }
 function sharpenInk() {
   clearTimeout(Z.inkT);
-  if (!V.pages.length) return;
+  if (!V.pages.length) { sharpOff(); return; }
   if (GS && (GS.kind === 'ink' || GS.kind === 'erase' || GS.kind === 'smart')) { Z.inkT = setTimeout(sharpenInk, 300); return; }
   Z.sharpWhere = Z.s + ':' + Z.x + ':' + Z.y + ':' + V.pages.length + ':' + (V.pages[0] && V.pages[0].art && V.pages[0].art.width);
   const dpr = Math.min(window.devicePixelRatio || 1, 3), sr = stage.getBoundingClientRect();
@@ -3308,7 +3334,82 @@ function sharpenInk() {
     Object.assign(p.ink.style, { inset: 'auto', left: x0 * 100 + '%', top: y0 * 100 + '%', width: (x1 - x0) * 100 + '%', height: (y1 - y0) * 100 + '%' });
     p.layer.setView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pw, ph);
   }
+  if (Z.s > 1.05 && !TURN()) sharpDraw(); else sharpOff();
 }
+// Zoomed in and still, the markings are shown on a layer of their own over the score, lined up
+// with the screen's own pixels and outside the zoom, exactly as a line is drawn while the Pencil is
+// down. (Inside the zoomed page, the iPad showed the writing a little soft once the Pencil lifted,
+// however sharp the page's own markings layer was made.) The moment the page moves (a pinch, a
+// drag, a turn), this layer goes and the page's own markings show, as before; still again, it is back.
+function sharpSig() {
+  return SHARP.pages.map((p) => { const r = p.inner.getBoundingClientRect(); return r.left.toFixed(2) + ',' + r.top.toFixed(2) + ',' + r.width.toFixed(2); }).join(';');
+}
+function sharpOff() {
+  if (!SHARP.on) return;
+  SHARP.on = false; cancelAnimationFrame(SHARP.raf); SHARP.raf = 0; cancelAnimationFrame(SHARP.full); SHARP.full = 0;
+  document.body.classList.remove('ink-over-on');
+  inkOver.hidden = true;
+}
+function sharpCan() {
+  // (not over a half page: its two halves have markings layers of their own)
+  return !!(V.doc && Z.s > 1.05 && !TURN() && !V.half && !stage.querySelector('.half-clip') && !$('#score').hidden && !(GS && /^(pinch|nav)$/.test(GS.kind)) && V.pages.some((p) => p.layer && p.ink));
+}
+// one page's markings onto the layer (or only one new thing)
+function sharpPaint(g, p, k, sr, only, area) {
+  const r = p.inner.getBoundingClientRect(), L = p.layer;
+  if (!L || r.right < sr.left || r.left > sr.right || r.bottom < sr.top || r.top > sr.bottom) return;
+  const W = r.width * k, H = r.height * k;
+  let v = { x: (sr.left - r.left) / r.width, y: (sr.top - r.top) / r.height, w: sr.width / r.width, h: sr.height / r.height };
+  g.save();
+  g.beginPath(); g.rect((r.left - sr.left) * k, (r.top - sr.top) * k, W, H); g.clip();
+  // (only a part of the page: cleared and drawn again there)
+  if (area) {
+    const ox = (r.left - sr.left) * k, oy = (r.top - sr.top) * k;
+    const x0 = Math.floor(ox + area.x0 * W) - 2, y0 = Math.floor(oy + area.y0 * H) - 2, x1 = Math.ceil(ox + area.x1 * W) + 2, y1 = Math.ceil(oy + area.y1 * H) + 2;
+    g.beginPath(); g.rect(x0, y0, x1 - x0, y1 - y0); g.clip(); g.clearRect(x0, y0, x1 - x0, y1 - y0);
+    v = { x: area.x0 - 0.01, y: area.y0 - 0.01, w: area.x1 - area.x0 + 0.02, h: area.y1 - area.y0 + 0.02 };
+  }
+  g.setTransform(1, 0, 0, 1, (r.left - sr.left) * k, (r.top - sr.top) * k);
+  const hide = L._hide;
+  const one = (s) => {
+    if (s.t !== 'bg' && s.t !== 'passage') { const b = itemBounds(s); if (b && (b.x1 < v.x - 0.02 || b.x0 > v.x + v.w + 0.02 || b.y1 < v.y - 0.02 || b.y0 > v.y + v.h + 0.02)) return; }
+    drawItem(g, s, W, H, false);
+  };
+  if (only) one(only); else L.items.forEach((s, i) => { if (!(hide && hide.has(i))) one(s); });
+  g.restore();
+}
+function sharpDraw() {
+  SHARP.full = 0;
+  if (!sharpCan()) { sharpOff(); return; }
+  const sr = stage.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 3);
+  // (cut on the screen's own pixels: the layer starts on a whole pixel)
+  const L = Math.round(sr.left * dpr) / dpr, T = Math.round(sr.top * dpr) / dpr;
+  const w = Math.round(sr.width * dpr), h = Math.round(sr.height * dpr);
+  Object.assign(inkOver.style, { left: L + 'px', top: T + 'px', width: w / dpr + 'px', height: h / dpr + 'px' });
+  if (inkOver.width !== w || inkOver.height !== h) { inkOver.width = w; inkOver.height = h; }
+  const box = { left: L, top: T, right: L + w / dpr, bottom: T + h / dpr, width: w / dpr, height: h / dpr };
+  const g = inkOver.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
+  SHARP.pages = V.pages.filter((p) => p.layer && p.ink && p.inner);
+  SHARP.box = box; SHARP.k = dpr;
+  for (const p of SHARP.pages) sharpPaint(g, p, dpr, box);
+  SHARP.sig = sharpSig();
+  if (!SHARP.on) { SHARP.on = true; inkOver.hidden = false; document.body.classList.add('ink-over-on'); }
+  // every frame while it shows: has the page moved under it? Then it goes at once (in that same
+  // frame, before the screen is drawn), and the page's own markings show
+  cancelAnimationFrame(SHARP.raf);
+  const watch = () => { SHARP.raf = 0; if (!SHARP.on) return; if (!sharpCan() || sharpSig() !== SHARP.sig) { sharpOff(); clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 260); return; } SHARP.raf = requestAnimationFrame(watch); };
+  SHARP.raf = requestAnimationFrame(watch);
+}
+// markings changed: a new thing is added at once; anything else, the layer drawn again
+inkHooks.changed = (L, item, area) => {
+  if (!SHARP.on) return;
+  const p = SHARP.pages.find((q) => q.layer === L);
+  if (!p) return;
+  if (item && !SHARP.full) { sharpPaint(inkOver.getContext('2d'), p, SHARP.k, SHARP.box, item); return; }
+  if (area && !SHARP.full) { sharpPaint(inkOver.getContext('2d'), p, SHARP.k, SHARP.box, null, area); return; }
+  if (!SHARP.full) SHARP.full = requestAnimationFrame(sharpDraw);
+};
 // Zoomed in, the page picture can't be drawn whole at the screen's sharpness (it would be too big
 // for the memory): the paper's lines, the printed music and the notes went soft from about 150%.
 // So, as for the markings, just the part of the page on screen is drawn again at the screen's own
@@ -10381,6 +10482,36 @@ player.onBusy = (on) => { $('#waveBusy').hidden = !on; };
 // one went quiet, so it is never silent)
 const playTake = () => { if (!player.playing) freshSound(); unlock(); player.playing ? player.pause() : player.play(); };
 $('#playBtn').addEventListener('click', playTake);
+// ---------- a line to drag along, to go anywhere in a video or a recording ----------
+// src: { get() → { t, d } in seconds, seek(t) }. Dragged, it shows the time it would go to, and goes
+// there when let go; a tap goes there at once. The arrow keys move 5 seconds.
+function scrubber(root, src) {
+  const tip = root.querySelector('.sc-tip');
+  const put = (f) => root.style.setProperty('--f', String(clamp(f, 0, 1)));
+  let drag = null;
+  const at = (e) => { const r = root.getBoundingClientRect(); return clamp((e.clientX - r.left) / Math.max(1, r.width), 0, 1); };
+  root.addEventListener('pointerdown', (e) => {
+    const { d } = src.get(); if (!d) return;
+    e.preventDefault(); e.stopPropagation(); try { root.setPointerCapture(e.pointerId); } catch {}
+    drag = { id: e.pointerId, f: at(e), d }; root.classList.add('on'); put(drag.f); tip.textContent = mpFmt(drag.f * d);
+  });
+  root.addEventListener('pointermove', (e) => { if (!drag || e.pointerId !== drag.id) return; e.stopPropagation(); drag.f = at(e); put(drag.f); tip.textContent = mpFmt(drag.f * drag.d); });
+  const up = (e) => { if (!drag || e.pointerId !== drag.id) return; e.stopPropagation(); const g = drag; drag = null; root.classList.remove('on'); if (e.type === 'pointerup') { src.seek(g.f * g.d); root.dataset.held = String(performance.now()); } };
+  root.addEventListener('pointerup', up); root.addEventListener('pointercancel', up);
+  root.addEventListener('keydown', (e) => { const { t, d } = src.get(); if (!d) return; if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); src.seek(clamp(t + (e.key === 'ArrowRight' ? 5 : -5), 0, d)); } });
+  return {
+    // (where it is now; the line is left where the finger put it for a moment after letting go, until the player has caught up)
+    show() {
+      if (drag) return;
+      const { t, d } = src.get();
+      if (performance.now() - (+root.dataset.held || 0) < 700) return;
+      put(d ? t / d : 0);
+      root.setAttribute('aria-valuemax', String(Math.round(d || 0))); root.setAttribute('aria-valuenow', String(Math.round(t || 0)));
+      root.setAttribute('aria-valuetext', mpFmt(t) + (d ? ' / ' + mpFmt(d) : ''));
+    },
+    get dragging() { return !!drag; },
+  };
+}
 // ---------- the video over the score ----------
 // Drag a video out of Recordings (or tap its button) and it floats small over the score, as while
 // recording: drag it anywhere, pull its corner to resize, pinch (or double-tap) to zoom into the
@@ -10397,7 +10528,11 @@ function vfApply() {
   v.style.transform = `translate(${VF.x}px, ${VF.y}px) scale(${VF.z})` + (mirror ? ` translateX(${W}px) scaleX(-1)` : '');
   $('#vfZoom').hidden = VF.z < 1.05; $('#vfZoom').textContent = VF.z.toFixed(1) + '×';
 }
+// (its line: where the recording is, drag to go anywhere in it)
+const vfScrub = scrubber($('#vfScrub'), { get: () => ({ t: player.currentPos(), d: player.duration }), seek: (t) => { player.seek(t); vfSync(); } });
+function vfLine() { cancelAnimationFrame(VF.lineRaf); const go = () => { VF.lineRaf = 0; if (!VF.on) return; vfScrub.show(); if (player.playing || vfScrub.dragging) VF.lineRaf = requestAnimationFrame(go); }; go(); }
 function vfSync() {
+  vfLine();
   const p = $('#vfPlay'); p.innerHTML = player.playing ? '<svg><use href="#i-pause"/></svg>' : '<svg><use href="#i-play"/></svg>';
   p.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
   $('#vfSpeed').textContent = Math.round(player.rate * 100) + '%';
@@ -10458,8 +10593,10 @@ for (const b of vfEl.querySelectorAll('.vf-btn')) b.addEventListener('pointerdow
     const r = vfEl.getBoundingClientRect();
     if (pts.size === 1) g = { kind: 'one', x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, px: VF.x, py: VF.y, moved: false, t0: performance.now() };
     else if (pts.size === 2) {
-      const [a, b] = [...pts.values()], sr = st.getBoundingClientRect();
-      g = { kind: 'pinch', d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: VF.z, x0: VF.x, y0: VF.y, cx: (a[0] + b[0]) / 2 - sr.left, cy: (a[1] + b[1]) / 2 - sr.top };
+      // two fingers: the window itself bigger or smaller (as the YouTube video), about the point between them
+      const [a, b] = [...pts.values()], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      if (vfEl.classList.contains('big')) { vfEl.style.width = r.width + 'px'; vfEl.classList.remove('big'); }
+      g = { kind: 'pinch', d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, w0: r.width, ar: r.height / Math.max(1, r.width), fx: (mx - r.left) / r.width, fy: (my - r.top) / r.height };
     }
   });
   st.addEventListener('pointermove', (e) => {
@@ -10475,10 +10612,13 @@ for (const b of vfEl.querySelectorAll('.vf-btn')) b.addEventListener('pointerdow
         vfEl.style.top = clamp(g.top + dy, 4, innerHeight - r.height - 4) + 'px'; vfEl.style.bottom = 'auto';
       }
     } else if (g.kind === 'pinch' && pts.size >= 2) {
-      const [a, b] = [...pts.values()];
-      const z = clamp(g.z0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / g.d0, 1, 5);
-      // zoom about the point between the fingers
-      VF.x = g.cx - (g.cx - g.x0) * (z / g.z0); VF.y = g.cy - (g.cy - g.y0) * (z / g.z0); VF.z = z; vfApply();
+      const [a, b] = [...pts.values()], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      const wMax = Math.max(200, Math.min(innerWidth - 16, (innerHeight - 16) / g.ar));
+      const w = clamp(g.w0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / g.d0, Math.min(200, wMax), wMax), h = w * g.ar;
+      vfEl.style.width = w + 'px';
+      vfEl.style.left = clamp(mx - g.fx * w, 4, Math.max(4, innerWidth - w - 4)) + 'px';
+      vfEl.style.top = clamp(my - g.fy * h, 4, Math.max(4, innerHeight - h - 4)) + 'px'; vfEl.style.bottom = 'auto';
+      vfApply();
     }
   });
   const up = (e) => {
@@ -11046,17 +11186,25 @@ const MP = { on: false, kind: '' };   // kind: 'youtube' (the video over the sco
 const MOM = { all: null, open: false };   // the moments kept (below, "Moments")
 const mpFmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function mediaPillShow(on) {
-  MP.on = on; if (!on) { MP.kind = ''; MP.key = ''; if (typeof momentsOpen === 'function' && MOM.open) momentsOpen(false); }
+  MP.on = on; if (!on) { MP.kind = ''; MP.key = ''; MP.d = 0; MP.t = 0; MP.playing = false; cancelAnimationFrame(MP.lineRaf); const sc = $('#mpScrub'); if (sc) { sc.hidden = true; $('#mediaPill').classList.remove('has-scrub'); } if (typeof momentsOpen === 'function' && MOM.open) momentsOpen(false); }
   if (on) momentsAll().then(() => momentsSync()).catch(() => {}); const p = $('#mediaPill'); if (!p) return;
   p.hidden = !on;
   if (!on) { p.classList.add('wait'); p.classList.remove('playing'); $('#mpNow').textContent = '0:00'; $('#mpDur').textContent = ''; $('#mpSpeedV').textContent = '100'; $('#mpSpeed').classList.remove('on'); $('#mpLoop').classList.remove('on', 'arm'); }
 }
+// (the bar's line: where the video or recording is; between the player's reports, a playing one
+// moves on smoothly by the clock)
+const mpNowT = () => { const t = MP.t || 0; if (!MP.playing || !MP.at) return t; return Math.min(MP.d || Infinity, t + ((performance.now() - MP.at) / 1000) * (MP.speed || 1)); };
+const mpScrub = scrubber($('#mpScrub'), { get: () => ({ t: mpNowT(), d: MP.d || 0 }), seek: (t) => { mediaCmd({ cmd: 'seek', value: Math.round(t * 10) / 10, play: !!MP.playing }); MP.t = t; MP.at = performance.now(); } });
+function mpLine() { cancelAnimationFrame(MP.lineRaf); const go = () => { MP.lineRaf = 0; if (!MP.on) return; mpScrub.show(); if (MP.playing || mpScrub.dragging) MP.lineRaf = requestAnimationFrame(go); }; go(); }
 function mediaStatus(s) {
   if (!s || (s.kind !== 'youtube' && s.kind !== 'music')) return;
   if (!MP.on) mediaPillShow(true);
   MP.kind = s.kind;
   // (where it is now, and which video or recording: for its moments)
   MP.t = s.t || 0; MP.key = s.id ? (s.kind === 'music' ? 'am:' : 'yt:') + s.id : '';
+  MP.d = s.d || 0; MP.playing = !!s.playing; MP.speed = s.speed || 1; MP.at = performance.now();
+  { const sc = $('#mpScrub'), has = !!(s.ready && MP.d); if (sc.hidden === has) { sc.hidden = !has; $('#mediaPill').classList.toggle('has-scrub', has); } }
+  mpLine();
   momentsSync();
   const p = $('#mediaPill');
   // (Apple Music plays at its own speed: no speed button for it)
