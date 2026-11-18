@@ -1,7 +1,7 @@
 // MusicXML 4.0 export (.musicxml and compressed .mxl) and import, so scores move to and from
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
-import { hasVoice2, hasVoice, voiceView,
+import { expandBarRepeats, hasVoice2, hasVoice, voiceView,
   WHOLE, STEP_NAMES, barTicks, evTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval, lyricOf, versesOf, setLyric, MAX_VERSES, figRows,
 } from './model.js';
 import * as M0 from './model.js';
@@ -19,7 +19,7 @@ const JUMP_WORDS = { dc: 'D.C.', dcfine: 'D.C. al Fine', dccoda: 'D.C. al Coda',
 const GM = { piano: 1, harpsichord: 7, celesta: 9, glockenspiel: 10, vibraphone: 12, marimba: 13, xylophone: 14, bells: 15, organ: 20, accordion: 22, guitar: 25, steelguitar: 26, eguitar: 28, jazzbass: 33, ebass: 34, violin: 41, viola: 42, cello: 43, bass: 44, violins: 49, violas: 49, cellos: 49, basses: 49, tremolo: 45, pizz: 46, harp: 47, timpani: 48, strings: 49, choir: 53, oohs: 54, trumpet: 57, trombone: 58, tuba: 59, horn: 61, brass: 62, sopsax: 65, altosax: 66, tenorsax: 67, barisax: 68, oboe: 69, englishhorn: 70, bassoon: 71, clarinet: 72, piccolo: 73, flute: 74, recorder: 75, banjo: 106, woodblock: 116, drum: 119, snare: 119, bassdrum: 119, toms: 119, cymbals: 120, suspcymbal: 120, tambourine: 119, bongos: 119, triangle: 114,  epiano: 5 };
 
 export function toMusicXML(score0) {
-  const score = spansToMarks(score0);
+  const score = spansToMarks(expandBarRepeats(score0));   // (a ％ bar: written out, as other programs read it)
   const out = [];
   const w = (s) => out.push(s);
   w('<?xml version="1.0" encoding="UTF-8" standalone="no"?>');

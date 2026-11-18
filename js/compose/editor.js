@@ -64,6 +64,7 @@ export async function openComposition(id) {
   if (!file || !file.data) { D.toast('This score could not be opened.'); return; }
   C.id = id; C.fileId = meta.fileId; C.score = M.migrateScore(file.data); C.lyFor = null;
   C.undo = []; C.redo = []; C.sel.clear(); C.selBars = null; C.capDoubt = null; syncUndo();
+  C.view = ((await getSetting('composeViews')) || {})[id] || null;
   meta.opened = Date.now(); db.put('scores', meta);
   await show();
 }
@@ -137,7 +138,7 @@ async function save(thumb) {
   clearTimeout(C.saveT); C.saveT = 0;
   // (what is saved is taken now: Compose closed, or another score opened, while this is written
   // changes nothing in it)
-  const sc = C.score, id = C.id, fileId = C.fileId, lay = C.lay;
+  const sc = C.score, id = C.id, fileId = C.fileId, lay = C.view && C.lay ? layoutScore(sc) : C.lay;   // (the library shows the full score, even while one part is shown)
   if (!sc || !id) return;
   const th = thumb && lay ? thumbOf(lay) : null;
   await db.put('files', { id: fileId, kind: 'comp', data: sc });
@@ -236,9 +237,47 @@ function paintVisible() {
 }
 let paintRaf = 0;
 function paintSoon() { if (paintRaf) return; paintRaf = requestAnimationFrame(() => { paintRaf = 0; paintVisible(); }); }
+// ---------- one part on its own ----------
+// Write the clarinet's part alone, as its player will read it (its own key, its own pages), then the
+// next instrument's: everything written is the same music as the full score's, so the full score is
+// always complete. Chosen from the title bar; remembered for each composition.
+function viewPartIndex() {
+  if (!C.score || !C.view) return undefined;
+  const i = C.score.parts.findIndex((p) => p.id === C.view);
+  if (i < 0 || C.score.parts.length < 2) { C.view = null; return undefined; }
+  return i;
+}
+function syncViewPicker() {
+  const sel = $('#cpView'); if (!sel || !C.score) return;
+  const parts = C.score.parts;
+  sel.hidden = parts.length < 2;
+  const want = ['', ...parts.map((p) => p.id)].join('|');
+  if (sel.dataset.k !== want + '#' + parts.map((p) => p.name).join('|')) {
+    sel.dataset.k = want + '#' + parts.map((p) => p.name).join('|');
+    sel.textContent = '';
+    const o = el('option', '', 'Full score'); o.value = ''; sel.append(o);
+    for (const p of parts) { const q = el('option', '', p.name); q.value = p.id; sel.append(q); }
+  }
+  sel.value = viewPartIndex() === undefined ? '' : C.view;
+  sel.classList.toggle('on', !!sel.value);
+  $('#compose').classList.toggle('part-view', !!sel.value);
+}
+async function setView(id, quiet) {
+  C.view = id || null;
+  C.sel.clear(); C.selBars = null;
+  const all = (await getSetting('composeViews')) || {}; if (C.view) all[C.id] = C.view; else delete all[C.id];
+  setSetting('composeViews', all);
+  relayout(true); syncSelBar(); renderTab();
+  if (!quiet) {
+    const i = viewPartIndex();
+    hint(i === undefined ? 'The full score: every part together.' : 'Only the {0} part, as its player reads it. What you write here is in the full score too.'.replace('{0}', C.score.parts[i].name), 4200);
+  }
+}
 function relayout(scrollTop) {
   if (!C.score) return;
-  C.lay = layoutScore(C.score);
+  const pi = viewPartIndex();
+  C.lay = pi === undefined ? layoutScore(C.score) : layoutScore(C.score, { partIndex: pi, multiRests: false, hideEmpty: false, staffMm: Math.max(7, C.score.layout.staffMm || 7) });
+  syncViewPicker();
   const box = $('#cpPages');
   const k = pxPerSp();
   while (C.pages.length < C.lay.pages.length) {
@@ -334,12 +373,15 @@ function noteFromTarget(tg) {
   const clef = M.clefAtPos(C.score, st, m, tg.t || 0);
   if (inst.unpitched) return { s: M.CLEFS[clef].bottom + tg.p, a: 0, perc: inst.unpitched };
   const step = M.CLEFS[clef].bottom + tg.p;
-  const concert = C.score.layout.concert !== false;
+  const concert = shownConcert();
   const key = concert ? M.keyAt(C.score, m) : M.writtenKey(M.keyAt(C.score, m), inst);
   const a = C.tool.acc !== null ? C.tool.acc : M.keyAlter(key, step);
   const n = { s: step, a };
   return concert ? n : M.toConcert(n, inst);
 }
+// (the music on the screen at concert pitch, or as the players read it: a part on its own is always in
+// its own written key, whatever the full score is set to)
+function shownConcert() { return C.lay && C.lay.score === C.score ? C.lay.concert !== false : C.score.layout.concert !== false; }
 function midiOfNote(n, inst) { return inst.unpitched ? (n.perc || inst.unpitched) : M.midiOf(n.s, n.a); }
 function soundOf(part, m) { if (part.instCh && m !== undefined) { const i = M.instAt(part, m); if (i.id !== part.inst) return i.sound; } return part.sound || (INST[part.inst] || INST.piano).sound; }
 // the instrument where the pen is (a part may change instrument from a bar on)
@@ -374,7 +416,7 @@ function drawHover() {
     g.save(); g.fillStyle = color; glyph(g, GL.rest[C.tool.dur], x, tg.staff.y + 2); g.restore();
   } else {
     const n = noteFromTarget(tg);
-    const concert = C.score.layout.concert !== false;
+    const concert = shownConcert();
     const shown = concert ? n : M.toWritten(n, tgInst(tg));
     const key = concert ? M.keyAt(C.score, tg.meas.m) : M.writtenKey(M.keyAt(C.score, tg.meas.m), tgInst(tg));
     const acc = shown.a !== M.keyAlter(key, shown.s) || C.tool.acc !== null ? shown.a : null;
@@ -841,7 +883,7 @@ function moveNotes(steps, chromatic) {
   const evs = selNoteEvents(); if (!evs.length) { hint('Select notes or bars first.'); return; }
   edit(() => {
     for (const f of evs) {
-      const concert = C.score.layout.concert !== false;
+      const concert = shownConcert();
       const key = M.keyAt(C.score, f.m);
       f.ev.notes = f.ev.notes.map((n) => {
         if (chromatic || n.perc) return n;
@@ -1110,6 +1152,22 @@ function deleteSel() {
 // Empty: the bars keep their time and key, and everything else in them goes: notes, rests'
 // markings, second voices, slurs and every line over the notes, clef changes; with every staff
 // chosen also the tempo marks, rehearsal marks, repeats, endings and D.C. signs
+// ％: each selected bar (not the first of the piece) becomes "the bar before, again"; already so, it is emptied
+function barRepeat() {
+  const b = C.selBars; if (!b) { hint('Select the bars that repeat the bar before them.'); return; }
+  const S = C.score, sts = selStaves();
+  const from = Math.max(1, b.from);
+  if (from > b.to) { hint('The first bar has no bar before it to repeat.'); return; }
+  const on = sts.every((st) => { for (let m = from; m <= b.to; m++) if (!M.isBarRepeat(st.bars[m])) return false; return true; });
+  edit(() => {
+    for (const st of sts) for (let m = from; m <= b.to; m++) {
+      st.bars[m] = on ? M.restBar(M.timeAt(S, m)) : [M.barRepeatEvent()];
+      for (const v of M.VOICES) { const vb = st[M.voiceKey(v)]; if (vb && vb[m]) vb[m] = M.restBar(M.timeAt(S, m)); }
+    }
+  });
+  hint(on ? 'Back to empty bars.' : (b.to > from ? 'These bars play the bar before them again.' : 'This bar plays the bar before it again.'));
+  renderTab();
+}
 function clearBars() {
   const b = C.selBars; if (!b) return;
   const S = C.score, sts = selStaves(), ids = new Set(sts.map((x) => x.id));
@@ -2075,6 +2133,11 @@ function renderTabBody() {
     g.append(mbtn('+1', 'Add a bar at the end', false, () => edit(() => M.addBars(C.score, 1)), { textCls: '', small: 'at the end' }));
     g.append(mbtn('Before', 'Insert a bar before the selection', false, () => { if (m === null) { hint('Select a bar first.'); return; } insertBars(1, false); }, { textCls: '', small: 'insert bar' }));
     g.append(mbtn('After', 'Insert a bar after the selection', false, () => { if (m === null) { hint('Select a bar first.'); return; } insertBars(1, true); }, { textCls: '', small: 'insert bar' }));
+    // the bar-repeat sign: the selected bars play the bar before again (tap again: empty bars)
+    lab('Repeat the bar before');
+    const rg = cards('three');
+    const rptOn = !!C.selBars && selStaves().every((st) => { for (let k = C.selBars.from; k <= C.selBars.to; k++) if (!M.isBarRepeat(st.bars[k])) return false; return true; });
+    rg.append(card('Bar repeat', rptOn, () => barRepeat(), (gg, W, H) => { const y = H / 2 - 2; staff5(gg, 1, W - 1, y); glyph(gg, '\uE500', W / 2 - gm('\uE500').w / 2, y + 2); }, { k: 5.2 }));
     lab('Barline at the end of bar ' + (m === null ? '…' : m + 1));
     const cg = cards('three');
     const setBar = (type) => { if (m === null) { hint('Select a bar first.'); return; } edit(() => { const ms = C.score.measures[m]; if (type === 'start') ms.start = ms.start === 'repeat' ? undefined : 'repeat'; else ms.bar = ms.bar === type ? undefined : type; }, { keepSel: true }); };
@@ -2198,6 +2261,7 @@ function hint(msg, ms = 3200) { const h = $('#cpHint'); h.textContent = msg; h.h
 // Top bar
 // =====================================================================
 function wireTop() {
+  $('#cpView').addEventListener('change', (e) => setView(e.target.value));
   $('#cpBack').addEventListener('click', closeCompose);
   $('#cpUndo').addEventListener('click', undo);
   $('#cpRedo').addEventListener('click', redo);
@@ -3021,7 +3085,7 @@ function captureBarEvents(inst) {
     if (Math.abs(a2) > 1) { const sp = M.spell(midi, iv.to); s2 = sp.s; a2 = sp.a; }
     return { ...w, s: s2, a: a2 };
   };
-  const concert = C.score.layout.concert !== false;
+  const concert = shownConcert();
   let last = cap.bars.length - 1; while (last > 0 && cap.bars[last].every((n) => n.rest)) last--;
   // the key in force in each bar (a key may change along the music)
   let keyNow = cap.key;

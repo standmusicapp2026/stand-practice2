@@ -175,7 +175,27 @@ async function run() {
     await sleep(800); const pill = $('.zoom-pill'); return pill && !pill.hidden ? pill.textContent : false;
   });
   await shot('05-zoom');
+  // zoomed in, a line written with the Pencil is shown on the layer lined up with the screen once the
+  // Pencil lifts (as sharp as while it was drawn): the layer is on, at the screen's own pixels, with the line in it
+  await step('zoomed: writing as sharp after the Pencil lifts', async () => {
+    await stroke('pen', 0.45, 0.45); await sleep(1500);
+    const o = $('canvas.ink-over'), sr = $('#stage').getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 3);
+    if (!o || o.hidden || !document.body.classList.contains('ink-over-on')) return false;
+    const exact = Math.abs(o.width - Math.round(sr.width * dpr)) <= 1 && Math.abs(o.height - Math.round(sr.height * dpr)) <= 1;
+    const d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; let n = 0; for (let i = 3; i < d.length; i += 16) if (d[i] > 128) n++;
+    return exact && n > 20 ? `layer ${o.width}x${o.height} at ${dpr}x, ${n} dots of ink` : false;
+  });
+  await shot('05b-zoom-ink');
   await step('zoom back', async () => { const pill = $('.zoom-pill'); if (pill && !pill.hidden) pill.click(); await sleep(500); return true; });
+  // a page turn shows itself by a gentle slide, never by dimming the whole screen
+  await step('a page turn: a gentle slide, no flash', async () => {
+    $('#inkBtn') && document.body.classList.contains('inking') && $('#inkBtn').click(); await sleep(300);
+    const lab = $('#pageLabel'), b0 = lab && lab.textContent; key('ArrowRight');
+    const moved = await waitFor(() => lab.textContent !== b0, 3000); const pg = $('#stage .pg'), sp = $('#stage .spread');
+    const an = pg && pg.getAnimations ? pg.getAnimations().length : 0, op = sp ? +getComputedStyle(sp).opacity : 0;
+    await sleep(500); key('ArrowLeft'); await sleep(500);
+    return moved && an > 0 && op === 1 ? `slide, screen at ${op}` : false;
+  });
   await step('Pages panel', async () => {
     $('#score [data-panel=settings]').click(); await sleep(400);
     const b = $('#pagesBtn, [data-panel="pages"], #pgOpen'); if (b) b.click(); await sleep(1500);
@@ -401,6 +421,23 @@ async function musicXmlRun(pre) {
       return ok && sc && sc.parts.length === parts ? `${sc.parts.length} parts, ${sc.measures.length} bars, pickup ${M.pickupOf(sc)}` : false;
     });
     if (f === 'chloe.mxl') await shot(pre ? 'p-mxl' : '10c-mxl');
+    // one part on its own (as its player reads it), then the full score again; the bar-repeat sign
+    if (f === 'chloe.mxl') await step(pre + 'Compose: one part on its own, then the full score', async () => {
+      const E = await import('./compose/editor.js'); const C = E.composeState, sel = $('#cpView');
+      if (!sel || sel.hidden) return false;
+      sel.value = C.score.parts[1].id; sel.dispatchEvent(new Event('change')); await sleep(800);
+      const one = C.lay.partIndex === 1 && C.lay.pages.every((pg) => pg.systems.every((sy) => sy.staves.every((s) => s.pi === 1)));
+      await shot(pre ? 'p-part' : '10e-part');
+      sel.value = ''; sel.dispatchEvent(new Event('change')); await sleep(800);
+      return one && C.lay.partIndex === undefined ? `${C.score.parts[1].name} alone, then all ${C.score.parts.length}` : false;
+    });
+    if (f === 'chloe.mxl') await step(pre + 'Compose: the bar-repeat sign', async () => {
+      const E = await import('./compose/editor.js'), M = await import('./compose/model.js'), P = await import('./compose/playback.js'); const C = E.composeState;
+      const st = C.score.parts[0].staves[0], m = 2, before = P.buildTimeline(C.score, { from: 0, humanize: false }).notes.length;
+      const was = st.bars[m]; st.bars[m] = [M.barRepeatEvent()]; window.__composeRelayout();
+      const after = P.buildTimeline(C.score, { from: 0, humanize: false }).notes.length; st.bars[m] = was; window.__composeRelayout();
+      return after > 0 ? `notes ${before} -> ${after}` : false;
+    });
     await step(pre + 'back home from MusicXML', async () => { $('#cpBack') && $('#cpBack').click(); await sleep(1200); if (pre) await closePanels(); else await home(); return $('#compose').hidden; });
   }
 }

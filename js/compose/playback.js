@@ -1,6 +1,6 @@
 // Playing a score with the sampled instruments: tempo changes, repeats, ties, dynamics and
 // hairpins, articulations, fermatas and a light human touch. Also renders the score to audio.
-import { WHOLE, barTicks, timeAt, tempoAt, ticksOf, midiOf, staffInfo, keyAlter, keyAt, voiceView, instAt, instChanges } from './model.js';
+import { expandBarRepeats, WHOLE, barTicks, timeAt, tempoAt, ticksOf, midiOf, staffInfo, keyAlter, keyAt, voiceView, instAt, instChanges } from './model.js';
 import { INST } from './instruments.js';
 import { sampler, Sampler, DEFAULT_MIX, realSet } from '../sampler.js';
 import { getCtx, wantAudio } from '../audio.js';
@@ -91,6 +91,7 @@ function pianoKey(x) {
   return 118 / 127;
 }
 export function buildTimeline(score, { from = 0, humanize = true } = {}) {
+  score = expandBarRepeats(score);   // (a ％ bar plays the bar before)
   const style = (score.sound && score.sound.style) || 'expressive';
   const expr = style !== 'straight';
   if (!expr) humanize = false;

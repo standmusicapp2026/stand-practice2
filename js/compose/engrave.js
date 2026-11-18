@@ -145,6 +145,7 @@ export function layoutScore(score, opts = {}) {
         if (ev.clef) o.clef = 1;
         if ((ev.lyric || ev.lyricV) && !ev.grace) for (let v = 1, nv = versesOf(ev); v <= nv; v++) { const sy = lyricOf(ev, v); if (!sy) continue; o.ly = Math.max(o.ly || 0, lyricW(sy.replace(/-$/, ''))); if (/-$/.test(sy)) o.lyH = 1; }
         if (ev.full) o.full = true;
+        if (ev.rpt && ev.full) o.rpt = true;   // (a ％ bar is music, never merged into a long rest)
         if (ev.dots) o.dots = Math.max(o.dots, ev.dots);
         if (ev.notes && ev.notes.some((n) => n.a || n.cau)) { o.acc = Math.max(o.acc, n0acc(ev)); hasAcc = true; }
         if (ev.notes && ev.notes.length > 1) o.acc = Math.max(o.acc, ev.notes.filter((n) => n.a).length > 2 ? 2 : o.acc);
@@ -169,7 +170,7 @@ export function layoutScore(score, opts = {}) {
       if (nx) have += segs[j].pre;
       if (have < need) segs[j - 1 < segs.length ? j - 1 : segs.length - 1].w += need - have;
     }
-    const allFull = times.length === 1 && onsets.get(0).full;
+    const allFull = times.length === 1 && onsets.get(0).full && !onsets.get(0).rpt;
     let ideal = 1.3 + segs.reduce((a, s) => a + s.w + s.pre, 0);
     if (allFull) ideal = Math.max(ideal, 20);          // empty bars as wide as a written bar of quavers (about four to a line, as Sibelius)
     const ms = score.measures[m];
@@ -271,7 +272,7 @@ export function layoutScore(score, opts = {}) {
   const plan = systems.map((sy) => {
     let shown = info;
     if (L.hideEmpty && opts.partIndex === undefined && !sy.first) {
-      shown = info.filter((s) => sy.measures.some((mm) => { for (let m = mm.m; m <= mm.end; m++) if ((s.st.bars[m] || []).some((e) => !e.rest)) return true; return false; }));
+      shown = info.filter((s) => sy.measures.some((mm) => { for (let m = mm.m; m <= mm.end; m++) if ((s.st.bars[m] || []).some((e) => !e.rest || e.rpt)) return true; return false; }));
       if (!shown.length) shown = [info[0]];
     }
     return { shown, ext: shown.map((s) => staffExtent(score, s, sy, concert)) };
@@ -1531,6 +1532,8 @@ function drawBeam(ctx, g, sy, sel, opts) {
 }
 function drawRest(ctx, e, sy, time) {
   const ev = e.ev;
+  // the bar-repeat sign: in the middle of the bar, across the middle line
+  if (ev.rpt && ev.full) { const g = '\uE500'; glyph(ctx, g, e.x - gm(g).w / 2 + 0.9, yOf(sy, 4)); return; }
   if (ev.full) { glyph(ctx, GL.rest[1], e.x, yOf(sy, 6)); return; }
   const t = ev.t;
   const g = GL.rest[Math.min(128, t)];

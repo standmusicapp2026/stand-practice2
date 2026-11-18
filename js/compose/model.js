@@ -191,6 +191,28 @@ export function setInstChange(score, pi, m, id) {
   }
 }
 export const allStaves = (score) => score.parts.flatMap((p) => p.staves);
+// ---- the bar-repeat sign (％): "play the bar before again". Kept as a whole-bar rest that knows it
+// repeats (so everything that reads bars treats it safely), drawn as the sign, played and exported as
+// the music it stands for.
+export const isBarRepeat = (bar) => !!(bar && bar.length === 1 && bar[0].rpt);
+export const barRepeatEvent = () => ({ id: newId(), rest: true, full: true, rpt: 1, t: 1, dots: 0 });
+// the score with every ％ bar written out as the bar it repeats (a copy; the same score when there is none)
+export function expandBarRepeats(score) {
+  const has = score.parts.some((p) => p.staves.some((st) => ['bars', 'v2', 'v3', 'v4'].some((k) => (st[k] || []).some(isBarRepeat))));
+  if (!has) return score;
+  const out = JSON.parse(JSON.stringify(score));
+  for (const p of out.parts) for (const st of p.staves) for (const k of ['bars', 'v2', 'v3', 'v4']) {
+    const bars = st[k]; if (!bars) continue;
+    for (let m = 0; m < bars.length; m++) {
+      if (!isBarRepeat(bars[m])) continue;
+      const src = m > 0 ? bars[m - 1] : null;
+      bars[m] = src && !isBarRepeat(src) ? src.map((e) => ({ ...JSON.parse(JSON.stringify(e)), id: e.id + 'r' + m })) : [{ id: newId(), rest: true, full: true, t: 1, dots: 0 }];
+      // (a tie from the bar before into the copy, or out of the copy into the bar after, is not meant)
+      for (const e of bars[m]) if (e.notes) for (const n of e.notes) if (n.tie && e === bars[m][bars[m].length - 1] && !(bars[m + 1] && bars[m + 1].length)) delete n.tie;
+    }
+  }
+  return out;
+}
 export function staffInfo(score) {
   const out = [];
   score.parts.forEach((p, pi) => p.staves.forEach((st, si) => out.push({ st, part: p, pi, si, inst: instOf(p) })));
@@ -546,7 +568,7 @@ export function prevEvent(score, st, m, i) {
   if (m > 0) return { m: m - 1, i: st.bars[m - 1].length - 1, ev: st.bars[m - 1][st.bars[m - 1].length - 1] };
   return null;
 }
-export function isEmptyStaff(st) { return st.bars.every((b) => b.every((e) => e.rest)); }
+export function isEmptyStaff(st) { return st.bars.every((b) => b.every((e) => e.rest && !e.rpt)); }
 
 // ---------- slurs and hairpins as lines over any number of notes (across bars and lines) ----------
 // A slur or hairpin is a span: { kind: 'slur' | 'hairpin', st, v, a: {m,pos}, b: {m,pos}, dir }.
