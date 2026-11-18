@@ -181,7 +181,11 @@ async function run() {
     await stroke('pen', 0.45, 0.45); await sleep(1500);
     const o = $('canvas.ink-over'), sr = $('#stage').getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 3);
     if (!o || o.hidden || !document.body.classList.contains('ink-over-on')) return false;
-    const exact = Math.abs(o.width - Math.round(sr.width * dpr)) <= 1 && Math.abs(o.height - Math.round(sr.height * dpr)) <= 1;
+    // (sharp: one pixel of the layer to one pixel of the screen, and the layer covers the stage; it may
+    // reach a little beyond it, so the writing stays sharp while the page moves)
+    const orc = o.getBoundingClientRect();
+    const exact = Math.abs(o.width - Math.round(orc.width * dpr)) <= 1 && Math.abs(o.height - Math.round(orc.height * dpr)) <= 1
+      && orc.left <= sr.left + 1 && orc.top <= sr.top + 1 && orc.right >= sr.right - 1 && orc.bottom >= sr.bottom - 1;
     const d = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; let n = 0; for (let i = 3; i < d.length; i += 16) if (d[i] > 128) n++;
     return exact && n > 20 ? `layer ${o.width}x${o.height} at ${dpr}x, ${n} dots of ink` : false;
   });
