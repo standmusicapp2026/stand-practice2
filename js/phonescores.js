@@ -17,7 +17,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const copyId = (id) => 'ipadcopy:' + id;
 const toBlob = async (dataUrl) => (dataUrl ? (await fetch(dataUrl)).blob() : null);
 
-export function initPhoneScores({ askIpad, toast, connected }) {
+export function initPhoneScores({ askIpad, toast, connected, share }) {
   const PS = { list: null, at: 0, busy: false, view: null, ink: true, urls: [], removed: new Set(), editing: false, sync: null, folder: null, org: { folders: [], place: {} }, drag: null, own: [] };
   // every score shown: the iPad's, and the ones added on this iPhone (scanned, from Photos or Files)
   const allScores = () => [...(PS.list || []), ...PS.own];
@@ -822,6 +822,49 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (RD.io) RD.io.disconnect(); RD.io = null; list.textContent = ''; RD.slots = []; RD.key = ''; RD.near.clear(); preAll();
   });
   $('#phvInk').addEventListener('click', () => { PS.ink = !PS.ink; drawPage(); });
+  // ---------- a score sent on as a PDF, with its markings or clean ----------
+  // Clean, and kept on the iPhone as its own PDF (its pages as they are in the file): that file
+  // itself, as sharp as it was. Otherwise every page as it is read here (the picture, and the
+  // markings on it when asked), one page of the PDF each.
+  async function pdfOfCopy(copy, withInk, progress) {
+    const st = copy.struct || {};
+    const asIs = copy.mode === 'pdf' && !st.pageMap && !st.cuts && !st.glue && !(st.rot && Object.keys(st.rot).length);
+    if (!withInk && asIs) {
+      const src = await db.get('files', srcKey(copy.id.slice(9), copy.stamp)).catch(() => null);
+      if (src && src.data) return src.data instanceof Blob ? src.data : new Blob([src.data], { type: 'application/pdf' });
+    }
+    const n = countOf(copy), blobs = [];
+    for (let i = 0; i < n; i++) {
+      progress && progress(i / n);
+      const p = await pageOf(copy, i);
+      if (!p || !p.img) throw new Error('page ' + (i + 1) + ' is not on the iPhone yet');
+      if (!withInk || !p.ink) { blobs.push(p.img); continue; }
+      const bmp = await createImageBitmap(p.img), ib = await createImageBitmap(p.ink);
+      const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+      const g = c.getContext('2d'); g.drawImage(bmp, 0, 0); g.drawImage(ib, 0, 0, c.width, c.height);
+      try { bmp.close(); ib.close(); } catch {}
+      blobs.push(await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9))); c.width = c.height = 0;
+    }
+    progress && progress(1);
+    const { imagesToPdf } = await import('./export.js');
+    return new Blob([await imagesToPdf(blobs)], { type: 'application/pdf' });
+  }
+  const shareSheet = $('#phvShareSheet');
+  $('#phvShare').addEventListener('click', () => { if (!PS.view) return; shareSheet.hidden = !shareSheet.hidden; });
+  document.addEventListener('pointerdown', (e) => { if (!shareSheet.hidden && !e.target.closest('#phvShareSheet, #phvShare')) shareSheet.hidden = true; }, true);
+  for (const b of shareSheet.querySelectorAll('[data-ink]')) b.addEventListener('click', async () => {
+    const v = PS.view; if (!v) return;
+    const withInk = b.dataset.ink === '1';
+    shareSheet.hidden = true;
+    const name = (v.copy.title || 'Score').replace(/[\\/:*?"<>|]+/g, '').slice(0, 80) + (withInk ? '' : ' (clean)') + '.pdf';
+    try {
+      toast('Making the PDF…', 60000);
+      const blob = await pdfOfCopy(v.copy, withInk, (f) => { const t = $('#toast'); if (t) t.textContent = `Making the PDF… ${Math.round(f * 100)}%`; });
+      const t = $('#toast'); if (t) t.hidden = true;
+      if (share) await share(blob, name);
+    } catch (e) { toast('The PDF could not be made: ' + ((e && e.message) || e), 4000); }
+  });
+  window.__phonePdf = (withInk) => (PS.view ? pdfOfCopy(PS.view.copy, withInk) : null);   // (tests)
   document.addEventListener('keydown', (e) => {
     if (viewer.hidden) return;
     // (a page-turning pedal sends these keys)

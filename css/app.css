@@ -2376,3 +2376,12 @@ body.ruler-away .ruler, body.ruler-away .ruler-kinds { display: none; }
 body.media-on #pageScrub { display: none; }
 .media-pill .mp-keep.on { color: var(--accent-text); background: var(--accent-soft); }
 .media-pill .mp-keep[hidden] { display: none; }
+/* the iPhone reader: Share as a PDF, with the markings or clean */
+.phv-share { flex: none; }
+.phv-sheet { position: fixed; z-index: 60; right: 10px; top: calc(env(safe-area-inset-top, 0px) + 56px); width: min(300px, calc(100vw - 20px)); padding: 6px; border-radius: 18px; background: var(--surface-solid); border: 1px solid var(--line); box-shadow: 0 14px 40px rgba(0,0,0,.2); animation: mp-pop-in .16s ease-out; }
+.phv-sheet[hidden] { display: none; }
+.phv-sheet-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.phv-sheet-row:active { background: var(--sunk); }
+.phv-sheet-row svg { flex: none; width: 22px; height: 22px; color: var(--accent-text); }
+.phv-sheet-row b { display: block; font-size: 16px; font-weight: 600; }
+.phv-sheet-row small { display: block; color: var(--muted); font-size: 13px; margin-top: 1px; }

@@ -8760,7 +8760,7 @@ async function initPracticeSync() {
   renderIpadCard(); renderGoal(); renderToday();
   // (found by itself on the same Wi-Fi: no button to press)
   setTimeout(() => getIpadPractice(true), 1500);
-  window.__phs = initPhoneScores({ askIpad: (q, ms) => (window.__askIpadTest || askIpad)(q, ms), toast, connected: (fn) => directWatch((n) => { if (n) fn(); }) });
+  window.__phs = initPhoneScores({ askIpad: (q, ms) => (window.__askIpadTest || askIpad)(q, ms), toast, connected: (fn) => directWatch((n) => { if (n) fn(); }), share: (b, n) => shareBlob(b, n) });
 }
 $('#icConnect').addEventListener('click', async () => { if (await needLink()) getIpadPractice(false); });
 $('#icRefresh').addEventListener('click', () => getIpadPractice(false));
