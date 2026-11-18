@@ -231,3 +231,13 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
 .st-share-name { font-weight: 600; font-size: 15px; }
 .st-share-tip { font-size: 12px; opacity: .65; }
 @media (max-width: 420px) { .st-share-grid { grid-template-columns: 1fr; } }
+/* the bars on the line, put right by hand */
+.st-bars-view { cursor: crosshair; }
+.st-bars-rm { position: absolute; transform: translate(-50%, -100%); padding: 7px 14px; border: 0; border-radius: 999px; background: var(--rec, #d33); color: #fff; font-size: 13px; font-weight: 600; font-family: inherit; box-shadow: 0 4px 14px rgba(0,0,0,.22); z-index: 2; white-space: nowrap; }
+.st-bars-rm::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 10px; height: 10px; background: inherit; transform: translateX(-50%) rotate(45deg); border-radius: 2px; z-index: -1; }
+.st-bars-rm[hidden] { display: none; }
+.st-bars-foot { justify-content: space-between; }
+.st-bars-count { font: 600 14px var(--font-num, system-ui); color: var(--ink); font-variant-numeric: tabular-nums; }
+.st-bars-view.nope { animation: st-nope .28s ease; }
+@keyframes st-nope { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+@media (prefers-reduced-motion: reduce) { .st-bars-view.nope { animation: none; } }

@@ -2347,6 +2347,10 @@ function renderScoreTab(side) {
   place.append(el('p', 'hint', 'Or drag the score on the picture.'));
   side.append(place);
   const line = sec('The line of music');
+  const bb = el('button', 'btn'); bb.append(el('span', '', o.layout.bars0 ? 'Edit the bars (changed)' : 'Edit the bars'));
+  bb.addEventListener('click', () => openBars(o));
+  line.append(bb);
+  line.append(el('p', 'hint', 'See where each bar begins on the line, and add, move or remove a barline.'));
   const er = el('button', 'btn'); er.append(el('span', '', (o.erase && o.erase.length) ? 'Edit what is shown (changed)' : 'Edit what is shown'));
   er.addEventListener('click', () => openEraser(o));
   line.append(er);
@@ -2435,6 +2439,8 @@ function renderTimingTab(side) {
   atLine.addEventListener('click', () => { const T = o.times; const v = clamp(nowT(), k > 0 ? T[k - 1] + 0.08 : -1, k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur); nudgeBar(o, k, v - T[k], { stay: true }); });
   bs.append(atLine);
   bs.append(el('p', 'hint', 'Tap a bar on the timeline to choose it, or drag its start there. Hold still a moment on it to look closer.'));
+  const eb = el('button', 'btn small ghost'); eb.append(el('span', '', 'A bar missing, or one too many? Edit the bars'));
+  eb.addEventListener('click', () => openBars(o)); bs.append(eb);
   if (show('bar')) side.append(bs);
 }
 const fmt2 = (s) => { const neg = s < 0; s = Math.abs(s); const m = Math.floor(s / 60), r = s - m * 60; return (neg ? '−' : '') + m + ':' + r.toFixed(2).padStart(5, '0'); };
@@ -2686,6 +2692,293 @@ async function openEraser(o) {
     close2(); saveSoon(); frame(); renderSide();
     D.toast(o.erase.length ? 'The video shows the line as you left it.' : 'The line is shown as it was read.', 2200);
   });
+}
+
+// =====================================================================
+// The bars: where each one is on the line (when one was missed, or seen where there is none)
+// =====================================================================
+// The bars changed by hand: the new bars (each its start and end on the line, and the line of music it
+// is on) take the times of the old ones wherever they stand where they were; a new barline gets the
+// moment the music passed that place; a barline taken away leaves that moment in the bar (the line still
+// moves through it as it did). The notes go with the bar they are now in.
+export function rebar(o, nb) {
+  const L = o.layout, ob = L.bars, T = o.times, ok = o.knots;
+  const same = (p, q) => p.seg === q.seg && Math.abs(p.x0 - q.x0) < 0.5 && Math.abs(p.x1 - q.x1) < 0.5;
+  // (the music's place against its time in an old bar: through the notes heard in it, when there are)
+  const pts = (k) => [[0, 0], ...((ok && ok[k]) || []), [1, 1]];
+  const timeAt = (x, seg) => {
+    let k = ob.findIndex((b) => b.seg === seg && x >= b.x0 - 0.5 && x <= b.x1 + 0.5);
+    if (k < 0) { let best = Infinity; ob.forEach((b, i) => { const d = (b.seg === seg ? 0 : 1e6) + Math.min(Math.abs(x - b.x0), Math.abs(x - b.x1)); if (d < best) { best = d; k = i; } }); }
+    const b = ob[k], fx = clamp((x - b.x0) / Math.max(1, b.x1 - b.x0), 0, 1), P = pts(k);
+    let ft = fx;
+    for (let i = 1; i < P.length; i++) if (fx <= P[i][1]) { const [t0, x0] = P[i - 1], [t1, x1] = P[i]; ft = t0 + ((fx - x0) / Math.max(1e-6, x1 - x0)) * (t1 - t0); break; }
+    return T[k] + ft * (T[k + 1] - T[k]);
+  };
+  const bars = nb.map((q) => { const old = ob.find((b) => same(b, q)); return old ? { ...old } : { x0: q.x0, x1: q.x1, seg: q.seg, rests: 0, restFirst: false }; });
+  const barOf = (x) => { let k = bars.findIndex((b) => x >= b.x0 - 0.5 && x < b.x1); if (k < 0) { let best = Infinity; bars.forEach((b, i) => { const d = Math.min(Math.abs(x - b.x0), Math.abs(x - b.x1)); if (d < best) { best = d; k = i; } }); } return k; };
+  const notes = L.notes.map((n) => ({ ...n, bar: barOf(n.x) }));
+  const events = (L.events || []).map((e) => ({ ...e, bar: barOf(e.x) }));
+  // (a new bar begins with a rest when nothing is played in its first part)
+  bars.forEach((b, k) => { if (ob.some((p) => same(p, b))) return; const ns = notes.filter((n) => n.bar === k); const first = ns.length ? Math.min(...ns.map((n) => n.x)) : Infinity; b.restFirst = first > b.x0 + (b.x1 - b.x0) * 0.4; b.rests = ns.length ? 0 : 1; });
+  let times = null, knots = null;
+  if (T && T.length === ob.length + 1 && o.synced !== 'even') {
+    times = bars.map((b) => timeAt(b.x0, b.seg)); times.push(timeAt(bars[bars.length - 1].x1, bars[bars.length - 1].seg));
+    for (let i = 1; i < times.length; i++) if (times[i] <= times[i - 1] + 0.02) times[i] = times[i - 1] + 0.02;
+    // the way through each bar: the old one's where the bar is the same; else every place known inside
+    // it (notes heard, a barline taken away), as parts of the new bar
+    const abs = [];
+    ob.forEach((b, k) => { if (k > 0) abs.push({ t: T[k], x: b.x0, seg: b.seg }); for (const [ft, fx] of (ok && ok[k]) || []) abs.push({ t: T[k] + ft * (T[k + 1] - T[k]), x: b.x0 + fx * (b.x1 - b.x0), seg: b.seg }); });
+    knots = bars.map((b, k) => {
+      const old = ob.findIndex((p) => same(p, b)); if (old >= 0) return ((ok && ok[old]) || []).map((q) => q.slice());
+      const T0 = times[k], T1 = times[k + 1], out = []; let lt = 0, lx = 0;
+      for (const p of abs.filter((p) => p.seg === b.seg && p.x > b.x0 + 0.5 && p.x < b.x1 - 0.5).sort((p, q) => p.x - q.x)) {
+        const ft = (p.t - T0) / Math.max(0.01, T1 - T0), fx = (p.x - b.x0) / Math.max(1, b.x1 - b.x0);
+        if (ft > lt + 0.01 && fx > lx + 0.01 && ft < 0.99 && fx < 0.99) { out.push([+ft.toFixed(4), +fx.toFixed(4)]); lt = ft; lx = fx; }
+      }
+      return out;
+    });
+  }
+  return { bars, notes, events, times, knots };
+}
+// what was read at first, kept the first time the bars are changed (to go back to it)
+function barsRead(o) { return o.layout.bars0 || o.layout.bars; }
+// The bars on the line, to put right: every barline shown over the music. A tap where a bar begins
+// adds one (it finds the barline printed there), a line is dragged to where it belongs, a tap on a
+// line chooses it and it can be taken away. One finger elsewhere moves along the line, two fingers
+// move and come closer.
+async function openBars(o) {
+  pause();
+  const box = $('#stEraser'); box.textContent = ''; box.hidden = false; box.classList.add('bars');
+  let strip = ST.strips.get(o.id), own = false;
+  if (!strip) {
+    busy('Getting the line ready…', '', 0.4);
+    try { strip = await buildStrip(o); own = true; } catch (e) { console.warn(e); busy(null); box.hidden = true; D.toast('The line could not be opened.'); return; }
+    busy(null);
+  }
+  const L = o.layout, sp = L.sp || 10, K = strip.k || 1, src = strip.canvas, W = src.width, H = src.height;
+  const minW = sp * 0.9;
+  const copy = (bs) => bs.map((b) => ({ x0: b.x0, x1: b.x1, seg: b.seg, ...(b.mm ? { mm: b.mm } : {}) }));
+  const read = copy(barsRead(o)), start = copy(L.bars);
+  let B = copy(L.bars); const hist = [];
+  const key = (bs) => bs.map((b) => `${b.seg}:${Math.round(b.x0)}-${Math.round(b.x1)}`).join(',');
+  let sel = -1;   // (the line chosen: the one after bar sel)
+  // the bar over everything
+  const top = el('div', 'st-er-top');
+  const cancel = el('button', 'btn small ghost', 'Cancel');
+  const title = el('b', '', 'Bars');
+  const undo = el('button', 'icon-btn'); undo.innerHTML = '<svg><use href="#i-undo"/></svg>'; undo.setAttribute('aria-label', 'Undo');
+  const done = el('button', 'btn small primary', 'Done');
+  top.append(cancel, title, undo, done);
+  const view = el('div', 'st-er-view st-bars-view'); const vc = el('canvas');
+  const rm = el('button', 'st-bars-rm', 'Remove'); rm.hidden = true; rm.setAttribute('aria-label', 'Remove this barline');
+  view.append(vc, rm);
+  const map = el('div', 'st-er-map'); const mc = el('canvas'); const win = el('div', 'st-er-win'); map.append(mc, win);
+  const hint = el('p', 'st-er-hint', 'Tap where a bar begins to add a barline. Drag a line to move it, or tap it to remove it.');
+  const foot = el('div', 'st-er-tools st-bars-foot');
+  const count = el('span', 'st-bars-count');
+  const asRead = el('button', 'btn small ghost', 'Back to as read');
+  foot.append(count, asRead);
+  box.append(top, view, map, hint, foot);
+  if (scoreLines().length > 1) hint.textContent = 'Tap where a bar begins to add a barline. Drag a line to move it, or tap it to remove it. Each line of music has its own bars.';
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const E = { s: 1, ox: 0 }; let VW = 0, VH = 0;
+  const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; vc.width = Math.round(VW * dpr); vc.height = Math.round(VH * dpr); vc.style.width = VW + 'px'; vc.style.height = VH + 'px'; };
+  // (closest: the line as high as the view; farthest: a staff space still a few pixels; at first,
+  // about four bars across, large enough to touch a line)
+  const sMax = () => Math.min(VH / H, VW / Math.min(W, H * 2.2)) * 0.98 * 3;
+  const sMin = () => Math.min(sMax() / 3, Math.max(5 / (sp * K), VW / W));
+  const sFirst = () => clamp(VW / ((L.width / Math.max(1, B.length)) * K * 4.2), sMin(), sMax() / 3);
+  const clampView = () => { E.s = clamp(E.s, sMin(), sMax()); const vis = VW / E.s; E.ox = W <= vis ? (W - vis) / 2 : clamp(E.ox, 0, W - vis); };
+  const oy = () => (VH - H * E.s) / 2;
+  const sx = (x) => (x * K - E.ox) * E.s;                 // (a place on the line, on the screen)
+  const lx = (cx) => { const r = view.getBoundingClientRect(); return ((cx - r.left) / E.s + E.ox) / K; };
+  // (the staves of a line of music, top to bottom, in the strip's pixels)
+  const rows = (seg) => { const s = L.segs[seg] || L.segs[0], dy = s.dy ?? 0; const a = (dy + s.staff) * K, b = Math.max(a + sp * 4 * K, (dy + s.h - sp * 3.6) * K); return [a, b]; };
+  const lines = () => { const out = []; for (let j = 0; j + 1 < B.length; j++) if (B[j].seg === B[j + 1].seg) out.push(j); return out; };
+  const accent = css('--accent') || '#3b6fd8';
+  const draw = () => {
+    const g = vc.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = getComputedStyle(view).backgroundColor || '#ddd'; g.fillRect(0, 0, vc.width, vc.height);
+    g.setTransform(E.s * dpr, 0, 0, E.s * dpr, -E.ox * E.s * dpr, oy() * dpr);
+    g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const y0 = oy();
+    // (each bar: a light wash, every other one, so where one ends and the next begins is plain)
+    B.forEach((b, k) => {
+      const a = sx(b.x0), c = sx(b.x1); if (c < -40 || a > VW + 40) return;
+      const [ra, rb] = rows(b.seg);
+      if (k % 2) { g.fillStyle = 'rgba(70,110,200,0.07)'; g.fillRect(a, y0 + ra * E.s - sp * K * E.s * 0.9, c - a, (rb - ra) * E.s + sp * K * E.s * 1.8); }
+      // the bar's number, over its start
+      const label = String(k + 1); g.font = `600 11px ${css('--font-num') || 'system-ui'}`;
+      const w = g.measureText(label).width + 10, ty = Math.max(4, y0 + ra * E.s - sp * K * E.s * 0.9 - 22);
+      g.fillStyle = 'rgba(255,255,255,0.92)'; rr(g, a + 3, ty, w, 18, 9); g.fill();
+      g.fillStyle = 'rgba(20,30,60,0.75)'; g.fillText(label, a + 8, ty + 13);
+    });
+    // the barlines: a clear line over the printed one, with a round handle under the staff
+    for (const j of lines()) {
+      const x = sx(B[j].x1); if (x < -20 || x > VW + 20) continue;
+      const [ra, rb] = rows(B[j].seg), ya = y0 + ra * E.s - sp * K * E.s * 0.9, yb = y0 + rb * E.s + sp * K * E.s * 0.9;
+      const on = j === sel;
+      g.strokeStyle = accent; g.globalAlpha = on ? 1 : 0.8; g.lineWidth = on ? 3 : 2;
+      // (inside bars of rest counted together: a dashed line, a bar counted, not printed)
+      const mmIn = B[j].mm && B[j + 1].mm && B[j].mm.n === B[j + 1].mm.n && B[j + 1].mm.i === B[j].mm.i + 1;
+      g.setLineDash(mmIn ? [5, 4] : []);
+      g.beginPath(); g.moveTo(x, ya); g.lineTo(x, yb); g.stroke(); g.setLineDash([]);
+      g.beginPath(); g.arc(x, yb + 9, on ? 8 : 6, 0, Math.PI * 2); g.fillStyle = on ? accent : '#fff'; g.fill(); g.lineWidth = 2; g.stroke();
+      g.globalAlpha = 1;
+    }
+    placeRm();
+    const mr = map.getBoundingClientRect(); const vis = VW / E.s;
+    win.style.left = (Math.max(0, E.ox) / W * mr.width) + 'px'; win.style.width = Math.min(mr.width, vis / W * mr.width) + 'px';
+    const n0 = read.length, n = B.length;
+    count.textContent = n === n0 ? `${n} bars` : `${n} bars (read: ${n0})`;
+    undo.disabled = !hist.length; asRead.disabled = key(B) === key(read);
+  };
+  const placeRm = () => {
+    if (sel < 0 || sel + 1 >= B.length) { rm.hidden = true; return; }
+    const x = sx(B[sel].x1), [ra] = rows(B[sel].seg), y = oy() + ra * E.s - sp * K * E.s * 0.9;
+    rm.hidden = !(x > 0 && x < VW); rm.style.left = x + 'px'; rm.style.top = Math.max(26, y - 8) + 'px';
+  };
+  const drawMap = () => {
+    const r = map.getBoundingClientRect(); mc.width = Math.round(r.width * dpr); mc.height = Math.round(r.height * dpr);
+    const g = mc.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, mc.width, mc.height);
+    const k = Math.min(mc.width / W, mc.height / H); g.drawImage(src, 0, (mc.height - H * k) / 2, W * k, H * k);
+    g.fillStyle = accent; for (const j of lines()) g.fillRect(Math.round(B[j].x1 * K * k), 0, Math.max(1, dpr), mc.height);
+  };
+  const redraw = () => { draw(); drawMap(); };
+  fit(); E.s = sFirst(); E.ox = 0; clampView(); redraw();
+  // (where the barline printed near a place is: a dark column standing through the staves)
+  let px = null;
+  const snap = (x, seg) => {
+    const [ra] = rows(seg), r0 = Math.max(0, Math.round(ra)), r1 = Math.min(H - 1, Math.round(ra + sp * 4 * K)), nr = r1 - r0 + 1;
+    // (as far as a fingertip may miss, on the screen, or most of a space)
+    const reach = Math.max(sp * 0.8, 16 / (E.s * K));
+    const xa = Math.max(0, Math.floor((x - reach) * K)), xb = Math.min(W - 1, Math.ceil((x + reach) * K));
+    if (nr < 4 || xb <= xa) return x;
+    try { px = src.getContext('2d', { willReadFrequently: true }).getImageData(xa, r0, xb - xa + 1, nr); } catch { return x; }
+    const w = xb - xa + 1, d = px.data; let best = -1, bx = null;
+    // (through every staff line and the spaces between, from the top line to the bottom one: a stem
+    // is shorter; a column either side counts, for a line printed a little slanted)
+    const ink = (c, y) => { if (c < 0 || c >= w) return false; const i = (y * w + c) * 4; return d[i + 3] > 0 && d[i] < 150; };
+    for (let c = 0; c < w; c++) {
+      let n = 0; for (let y = 0; y < nr; y++) if (ink(c, y) || ink(c - 1, y) || ink(c + 1, y)) n++;
+      const near = 1 - Math.abs(xa + c - x * K) / (reach * K + 1) * 0.15;
+      if (n >= nr * 0.93 && n * near > best) { best = n * near; bx = xa + c; }
+    }
+    let at = bx == null ? x : bx / K;
+    // (where a barline was read at first, it goes back exactly there: its bar keeps its time)
+    for (const b of read) if (b.seg === seg && Math.abs(b.x0 - at) < Math.max(sp * 0.35, 6 / (E.s * K)) && Math.abs(b.x0 - at) > 0) { at = b.x0; break; }
+    return at;
+  };
+  const push = () => { hist.push(copy(B)); if (hist.length > 60) hist.shift(); };
+  const addAt = (x) => {
+    const j = B.findIndex((b) => x > b.x0 + minW && x < b.x1 - minW);
+    if (j < 0) return false;
+    const b = B[j], s = snap(x, b.seg), at = s > b.x0 + minW && s < b.x1 - minW ? s : x;
+    push(); B.splice(j, 1, { x0: b.x0, x1: at, seg: b.seg }, { x0: at, x1: b.x1, seg: b.seg }); sel = j; redraw(); return true;
+  };
+  const removeLine = (j) => { if (j < 0 || j + 1 >= B.length || B[j].seg !== B[j + 1].seg) return; push(); B.splice(j, 2, { x0: B[j].x0, x1: B[j + 1].x1, seg: B[j].seg }); sel = -1; redraw(); };
+  const moveLine = (j, x) => { const lo = B[j].x0 + minW, hi = B[j + 1].x1 - minW; if (hi <= lo) return; x = clamp(x, lo, hi); B[j].x1 = B[j + 1].x0 = x; };
+  const hitLine = (cx, cy) => {
+    const r = view.getBoundingClientRect(), x = cx - r.left; let best = -1, bd = 18;
+    for (const j of lines()) { const d = Math.abs(sx(B[j].x1) - x); if (d < bd) { bd = d; best = j; } }
+    void cy; return best;
+  };
+  rm.addEventListener('click', (e) => { e.stopPropagation(); removeLine(sel); });
+  rm.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // touches
+  const P = new Map(); let g2 = null, one = null;
+  view.addEventListener('pointerdown', (e) => {
+    if (e.target === rm) return;
+    e.preventDefault(); try { view.setPointerCapture(e.pointerId); } catch {}
+    P.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (P.size === 2) {
+      if (one && one.drag && one.moved) { B = one.before; hist.pop(); }
+      one = null;
+      const [a, b] = [...P.values()]; g2 = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx0: (a.x + b.x) / 2, s0: E.s, ox0: E.ox }; redraw(); return;
+    }
+    if (P.size > 2) return;
+    const j = hitLine(e.clientX, e.clientY);
+    one = { x: e.clientX, y: e.clientY, t: performance.now(), j, moved: false, ox0: E.ox, drag: j >= 0, before: null };
+  });
+  view.addEventListener('pointermove', (e) => {
+    const p = P.get(e.pointerId); if (!p) return;
+    p.x = e.clientX; p.y = e.clientY;
+    if (g2 && P.size >= 2) {
+      const [a, b] = [...P.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, cx = (a.x + b.x) / 2;
+      const r = view.getBoundingClientRect(); const at = g2.ox0 + (g2.cx0 - r.left) / g2.s0;
+      E.s = g2.s0 * (d / g2.d0); clampView(); E.ox = at - (cx - r.left) / E.s; clampView();
+      onceAFrame('bars', draw); return;
+    }
+    if (!one) return;
+    if (!one.moved && Math.hypot(e.clientX - one.x, e.clientY - one.y) < 7) return;
+    if (!one.moved) { one.moved = true; if (one.drag) { one.before = copy(B); push(); sel = one.j; } }
+    if (one.drag) { moveLine(one.j, lx(e.clientX)); onceAFrame('bars', draw); }
+    else { E.ox = one.ox0 - (e.clientX - one.x) / E.s; clampView(); onceAFrame('bars', draw); }
+  });
+  const up = (e) => {
+    const had = P.has(e.pointerId); P.delete(e.pointerId); if (P.size < 2) g2 = null;
+    if (!had || !one || P.size) { if (!P.size) one = null; return; }
+    const u = one; one = null;
+    if (e.type === 'pointercancel') { if (u.drag && u.moved) { B = u.before; hist.pop(); redraw(); } return; }
+    if (u.drag && u.moved) { const j = u.j; moveLine(j, snap(B[j].x1, B[j].seg)); redraw(); return; }
+    if (u.moved) { drawMap(); return; }
+    // a tap: on a line, it is chosen (again: no longer); elsewhere, a new barline there
+    if (u.j >= 0) { sel = sel === u.j ? -1 : u.j; draw(); return; }
+    if (sel >= 0) { sel = -1; draw(); return; }
+    if (!addAt(lx(e.clientX))) { view.classList.remove('nope'); void view.offsetWidth; view.classList.add('nope'); }
+  };
+  view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up);
+  view.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) { const r = view.getBoundingClientRect(); const at = E.ox + (e.clientX - r.left) / E.s; E.s *= Math.exp(-e.deltaY * 0.01); clampView(); E.ox = at - (e.clientX - r.left) / E.s; } else E.ox += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / E.s; clampView(); onceAFrame('bars', draw); }, { passive: false });
+  const goMap = (cx) => { const r = map.getBoundingClientRect(); E.ox = ((cx - r.left) / r.width) * W - VW / E.s / 2; clampView(); onceAFrame('bars', draw); };
+  let mapDown = false;
+  map.addEventListener('pointerdown', (e) => { mapDown = true; try { map.setPointerCapture(e.pointerId); } catch {} goMap(e.clientX); });
+  map.addEventListener('pointermove', (e) => { if (mapDown) goMap(e.clientX); });
+  map.addEventListener('pointerup', () => { mapDown = false; }); map.addEventListener('pointercancel', () => { mapDown = false; });
+  undo.addEventListener('click', () => { if (!hist.length) return; B = hist.pop(); sel = -1; redraw(); });
+  asRead.addEventListener('click', () => { if (key(B) === key(read)) return; push(); B = copy(read); sel = -1; redraw(); });
+  // (keys: Delete takes the chosen line away, the arrows move it a little)
+  const onKey = (e) => {
+    if (box.hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); close2(); }
+    else if (sel >= 0 && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); removeLine(sel); }
+    else if (sel >= 0 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); push(); moveLine(sel, B[sel].x1 + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? sp : 1) / (E.s * K)); redraw(); }
+  };
+  document.addEventListener('keydown', onKey, true);
+  const ro = new ResizeObserver(() => { fit(); clampView(); redraw(); }); ro.observe(view);
+  const close2 = () => { document.removeEventListener('keydown', onKey, true); ro.disconnect(); box.hidden = true; box.textContent = ''; box.classList.remove('bars'); if (own) { src.width = src.height = 0; if (strip.mask) strip.mask.width = 0; } };
+  cancel.addEventListener('click', close2);
+  done.addEventListener('click', () => {
+    const changed = key(B) !== key(start);
+    close2();
+    if (!changed) return;
+    applyBars(o, B);
+    D.toast(`${B.length} bars now. The times of the bars you left as they were are kept.`, 2600);
+  });
+  ST.barsEditor = { get bars() { return B; }, addAt, removeLine, moveLine, snap, lines, sx,
+    center: (j) => { const b = B[clamp(j, 0, B.length - 1)]; E.ox = b.x1 * K - VW / E.s / 2; clampView(); draw(); }, choose: (j) => { sel = j; draw(); }, px: () => sp * K * E.s };
+}
+// the new bars taken into the line: for the line of music and its timing
+export function applyBars(o, nb) {
+  const L = o.layout, r = rebar(o, nb);
+  const same = (a, b) => a && b && a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 1e-9);
+  const key = (bs) => bs.map((b) => `${b.seg}:${Math.round(b.x0 * 10)}-${Math.round(b.x1 * 10)}`).join(',');
+  // (the first change: what was read is kept, the bars and their timing, to go back to it whole)
+  if (!L.bars0) { L.bars0 = L.bars.map((b) => ({ ...b })); L.read0 = { notes: L.notes, events: L.events, times: o.times && o.times.slice(), knots: o.knots && o.knots.map((k) => k.map((q) => q.slice())) }; }
+  const back = key(nb) === key(L.bars0) && L.read0 && same(o.times, L.timed);
+  if (back) {
+    L.bars = L.bars0.map((b) => ({ ...b })); L.notes = L.read0.notes; L.events = L.read0.events;
+    o.times = L.read0.times ? L.read0.times.slice() : evenTimes(L.bars.length); o.knots = L.read0.knots ? L.read0.knots.map((k) => k.map((q) => q.slice())) : null;
+  } else {
+    L.bars = r.bars; L.notes = r.notes; L.events = r.events;
+    if (r.times) { o.times = r.times; o.knots = r.knots; }
+    else { o.times = evenTimes(r.bars.length); o.knots = null; }
+  }
+  // (the timing as these bars left it: if it is not changed since, going back to the bars as read
+  // gives back their times as they were)
+  L.timed = o.times.slice();
+  o.perView = Math.min(o.perView || 2, Math.max(1, r.bars.length));
+  ST.selBar = null; ST._joint = null; if (ST.tapFromFor === o.id) ST.tapFrom = null;
+  saveSoon(); renderSide(); renderTimeline(); frame();
 }
 
 // =====================================================================
