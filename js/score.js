@@ -7,7 +7,7 @@ import { pixGet, pixPut, pixHas, pixDel, lightGet, lightPut, lightKeys, lightDel
 // heavy scans, for the whole app: their pages are drawn one at a time, wherever they are drawn
 const HEAVY = { chain: Promise.resolve(), active: 0, fids: new Set(), lightening: new Set(), bg: null };
 import { db } from './db.js';
-import { drawNotebookPage, drawCover, PAGE_W as NB_W, PAGE_H as NB_H } from './notebook.js';
+import { drawNotebookPage, drawNotebookNumber, drawCover, PAGE_W as NB_W, PAGE_H as NB_H } from './notebook.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 // drawn pages kept as pictures: up to this size, and only those slower than this to draw (ms)
@@ -176,6 +176,7 @@ async function openDocumentOne(file, known) {
   const useKnown = (n) => (known && known.k && known.k === sizesKey(file) && Array.isArray(known.v) && (known.v.length === n || (known.prefix && known.v.length > n)) ? known.v.slice(0, n).map((x) => [x[0], x[1]]) : null);
   if (file.kind === 'paper') {
     await loadMusicFont();
+    const paperKeep = new Map();   // (the paper of a page, by its look and size)
     const cover = file.cover ? 1 : 0;
     const pages = (file.pages || 1) + cover;
     return {
@@ -183,8 +184,24 @@ async function openDocumentOne(file, known) {
       async render(i, canvas, w, h) {
         canvas.width = Math.round(w); canvas.height = Math.round(h);
         const g = canvas.getContext('2d');
-        if (cover && i === 0) await paintCover(g, file, canvas.width, canvas.height);
-        else drawNotebookPage(g, file, i - cover, canvas.width, canvas.height);
+        if (cover && i === 0) { await paintCover(g, file, canvas.width, canvas.height); return; }
+        const pi = i - cover, W = canvas.width, H = canvas.height;
+        // every page after the first is the same paper (only its number differs): drawn once and kept,
+        // so a page coming in while the pages are moved is a picture copied, not lines drawn again
+        if (pi >= 1 && W <= H * 1.05) {
+          const key = [(file.pagesTpl && file.pagesTpl[pi]) || file.template, JSON.stringify(file.opts || {}), file.paperColor || '', W, H].join('|');
+          const c = paperKeep.get(key);
+          if (c && c.width) { g.drawImage(c, 0, 0); drawNotebookNumber(g, file, pi, W, H); return; }
+          // (the first page of this paper: drawn as before; kept a moment later, when nothing is happening)
+          drawNotebookPage(g, file, pi, W, H, true);
+          if (!paperKeep.has(key)) {
+            paperKeep.set(key, null);
+            setTimeout(() => { try { const k2 = document.createElement('canvas'); k2.width = W; k2.height = H; k2.getContext('2d').drawImage(canvas, 0, 0); paperKeep.set(key, k2); while (paperKeep.size > 4) { const [k0, c0] = paperKeep.entries().next().value; if (c0) c0.width = c0.height = 0; paperKeep.delete(k0); } } catch { paperKeep.delete(key); } }, 700);
+          }
+          drawNotebookNumber(g, file, pi, W, H);
+          return;
+        }
+        drawNotebookPage(g, file, pi, W, H);
       },
       // Zoomed in: just the part of the page on screen (view: fractions of the page), drawn w × h,
       // so the paper's lines are as sharp as the screen at any zoom (the whole page can't be that big)

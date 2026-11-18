@@ -3243,6 +3243,9 @@ function applyZoom() {
   zoomPill.textContent = Math.round(Z.s * 100) + '%  ·  Reset';
   if (!$('#zoomPop').hidden) syncZoomPop();
   if (Sel.entry) placeSelection();
+  // (words being typed stay on their place on the page, at its size, as it is zoomed or moved)
+  if (typeof tbEdit !== 'undefined' && tbEdit) placeTextBox(true);
+  if (typeof textEdit !== 'undefined' && textEdit && textEdit.place) textEdit.place();
 }
 function scheduleSharpen() {
   clearTimeout(Z.sharpT);
@@ -3439,6 +3442,15 @@ function sharpDraw() {
   };
   SHARP.raf = requestAnimationFrame(watch);
 }
+// Pages coming in while the pages fly past: each one's markings drawn in a frame of its own (several
+// in one frame held the moving pages up)
+const INKQ = { q: [], raf: 0 };
+inkHooks.defer = (L) => {
+  if (!(SCROLL() && (SC.mom || (GS && GS.kind === 'nav')))) return false;
+  INKQ.q.push(L);
+  if (!INKQ.raf) { const go = () => { INKQ.raf = 0; const L2 = INKQ.q.shift(); if (L2 && L2.canvas && L2.canvas.width > 1) try { L2.redraw(); } catch {} if (INKQ.q.length) INKQ.raf = requestAnimationFrame(go); }; INKQ.raf = requestAnimationFrame(go); }
+  return true;
+};
 // markings changed: a new thing is added at once; anything else, the layer drawn again
 inkHooks.changed = (L, item, area) => {
   if (!SHARP.on) return;
@@ -6042,14 +6054,18 @@ function startText(entry, p, e) {
   const r = entry.inner.getBoundingClientRect();
   const input = el('input', 'ink-text');
   input.value = item.txt || ''; input.placeholder = 'Type, or write here with the Pencil'; input.autocapitalize = 'off'; input.spellcheck = false;
-  const PS = pageSize(r), at = screenOf(item.x, item.y, r);
-  input.style.font = textFont(item.s * PS[0], item.b); input.style.color = item.c;
-  input.style.left = at[0] + 'px'; input.style.top = at[1] + 'px';
   document.body.append(input);
   textEdit = { entry, item, hit, input, before: items.slice() };
   if (hit >= 0) entry.layer.redraw(new Set([hit]));
+  // (on its place on the page, at the page's size: again whenever the page is zoomed or moved)
   // roomy while empty, so there is space to write in it with the Pencil (the iPad turns it into type)
-  const fit = () => { input.style.width = Math.max(input.value ? 60 : 260, (input.value.length + 2) * item.s * PS[0] * 0.42) + 'px'; input.style.minHeight = input.value ? '' : '46px'; };
+  const fit = () => {
+    const r2 = entry.inner.getBoundingClientRect(), PS = pageSize(r2), at = screenOf(item.x, item.y, r2);
+    input.style.font = textFont(item.s * PS[0], item.b); input.style.color = item.c;
+    input.style.left = at[0] + 'px'; input.style.top = at[1] + 'px';
+    input.style.width = Math.max(input.value ? 60 : 260, (input.value.length + 2) * item.s * PS[0] * 0.42) + 'px'; input.style.minHeight = input.value ? '' : '46px';
+  };
+  textEdit.place = fit;
   fit();
   input.addEventListener('input', fit);
   input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); finishText(); } else if (ev.key === 'Escape') finishText(true); });
@@ -6684,7 +6700,10 @@ window.addEventListener('pointermove', (e) => {
       // moves of the finger come in; the column starts from where the finger is, without a jump)
       if (GS.sy0 == null) { const hh = Math.hypot(dx, dy) || 1; GS.sy0 = (dy * 8) / hh; GS.sx0 = (dx * 8) / hh; }
       GS.want = { dx: dx - GS.sx0, dy: dy - GS.sy0 };
-      GS.vs.push([e.timeStamp || now(), e.clientY]); if (GS.vs.length > 12) GS.vs.shift();
+      // (every point the finger went through, with its own time: when Stand is busy for a moment the
+      // iPad hands several over at once, and the speed of a flick is read from all of them)
+      { const ce = e.getCoalescedEvents ? e.getCoalescedEvents() : []; const evs = ce && ce.length ? ce : [e];
+        for (const q of evs) GS.vs.push([q.timeStamp || e.timeStamp || now(), q.clientY]); while (GS.vs.length > 24) GS.vs.shift(); }
       if (GS.vs.length > 1) { const d = GS.vs[GS.vs.length - 1][1] - GS.vs[GS.vs.length - 2][1]; if (Math.abs(d) > 0.5) SC.dir = d < 0 ? 1 : -1; }
       if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); }); }
       return;
@@ -6746,9 +6765,12 @@ function pointerEnd(e) {
       // let go: it runs on as fast as it was moving (the finger's speed over its last tenth of a second,
       // fitted through all the moves in it), or, pulled past an end, springs back
       // (a finger lifted a moment after its last move still flicks: iOS waits as long)
-      const tEnd = e.timeStamp || now(), lastT = g.vs.length ? g.vs[g.vs.length - 1][0] : 0, vs = g.vs.filter((q) => lastT - q[0] < 100);
+      // (busy a moment, few moves come in: the last two are used, if they are recent enough)
+      const tEnd = e.timeStamp || now(), lastT = g.vs.length ? g.vs[g.vs.length - 1][0] : 0;
+      let vs = g.vs.filter((q) => lastT - q[0] < 120);
+      if (vs.length < 2 && g.vs.length >= 2 && lastT - g.vs[g.vs.length - 2][0] < 220) vs = g.vs.slice(-2);
       let v = 0;
-      if (vs.length >= 2 && tEnd - lastT < 90) {
+      if (vs.length >= 2 && tEnd - lastT < 140) {
         const mt = vs.reduce((a, q) => a + q[0], 0) / vs.length, my = vs.reduce((a, q) => a + q[1], 0) / vs.length;
         let num = 0, den = 0; for (const q of vs) { num += (q[0] - mt) * (q[1] - my); den += (q[0] - mt) * (q[0] - mt); }
         v = den > 0 ? num / den : 0;

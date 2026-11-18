@@ -449,7 +449,7 @@ export function liveInk(key) { const e = LIVE.get(key); return e ? e.items : nul
 
 // Told whenever a page's markings are drawn again (the whole page, a part, or one new thing added):
 // zoomed in, Stand shows the markings on a layer of its own lined up with the screen (see main.js).
-export const inkHooks = { changed: null };
+export const inkHooks = { changed: null, defer: null };
 const told = (L, item, area) => { if (inkHooks.changed) try { inkHooks.changed(L, item, area); } catch {} };
 export class InkLayer {
   constructor(ink, scoreId, page) {
@@ -467,6 +467,8 @@ export class InkLayer {
     this.items = this.touched ? [...stored, ...this.items] : stored;
     if (this.items.some((s) => s.t === 'stamp')) await loadMusicFont();
     this.ready = true;
+    // (pages coming in while the pages are moved quickly: their markings are drawn one page a frame)
+    if (this.items.length && inkHooks.defer && inkHooks.defer(this)) return;
     this.redraw();
   }
   save() {

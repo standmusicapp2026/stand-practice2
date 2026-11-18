@@ -88,7 +88,13 @@ function layoutSystems(t, staffMm, first, header = true) {
 }
 
 // One page of paper. `pi` counts paper pages from 0 (the cover is not counted).
-export function drawNotebookPage(ctx, file, pi, w, h) {
+// (the page's number alone, in its corner: for a page drawn from the paper kept before)
+export function drawNotebookNumber(ctx, file, pi, w, h) {
+  const o = nbOpts(file); if (!(o.numbers && pi > 0) || w > h * 1.05) return;
+  const k = w / PAGE_W, left = 15 * MM, right = PAGE_W - 15 * MM;
+  ctx.save(); ctx.scale(k, k); ctx.fillStyle = '#6b6f78'; ctx.font = '9px "Iowan Old Style", Georgia, serif'; ctx.textAlign = pi % 2 ? 'right' : 'left'; ctx.fillText(String(pi + 1), pi % 2 ? right : left, PAGE_H - 8 * MM); ctx.restore();
+}
+export function drawNotebookPage(ctx, file, pi, w, h, noNumber = false) {
   // a page can have its own paper (pages added later)
   if (file.pagesTpl && file.pagesTpl[pi]) file = { ...file, template: file.pagesTpl[pi] };
   const t = PAPER_TYPES[file.template] || PAPER_TYPES.treble;
@@ -104,7 +110,7 @@ export function drawNotebookPage(ctx, file, pi, w, h) {
   ctx.scale(k, k);
   const ink = '#1a1b1f';
   const left = 15 * MM, right = PAGE_W - 15 * MM;
-  if (o.numbers && pi > 0) { ctx.fillStyle = '#6b6f78'; ctx.font = '9px "Iowan Old Style", Georgia, serif'; ctx.textAlign = pi % 2 ? 'right' : 'left'; ctx.fillText(String(pi + 1), pi % 2 ? right : left, PAGE_H - 8 * MM); }
+  if (o.numbers && pi > 0 && !noNumber) { ctx.fillStyle = '#6b6f78'; ctx.font = '9px "Iowan Old Style", Georgia, serif'; ctx.textAlign = pi % 2 ? 'right' : 'left'; ctx.fillText(String(pi + 1), pi % 2 ? right : left, PAGE_H - 8 * MM); }
   if (t.kind) { drawPlain(ctx, t.kind, o, pi); ctx.restore(); return; }
   const sp = (o.staffMm / 4) * MM;
   // first page: the title, like a printed part
