@@ -298,7 +298,7 @@ export function cleanPage(c, { contrast = 55, grey = true, sharpen = 1.4, white 
     Ls[y * sw + x] = m;
   }
   const r = Math.max(3, Math.round(Math.max(sw, sh) / 150));
-  const Psm = paperOf(Ls, sw, sh, r);
+  const Psm = refinePaper(Ls, paperOf(Ls, sw, sh, r), sw, sh, r);
   const P = new Float32Array(N);
   for (let y = 0; y < h; y++) {
     const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / f - 0.5)), y0 = Math.floor(fy), y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
@@ -327,7 +327,9 @@ export function cleanPage(c, { contrast = 55, grey = true, sharpen = 1.4, white 
   const Dk = gaussOf(runMin(n0, sw, sh, r * 3), sw, sh, r * 2);
   const black0 = (j) => { const y = Math.floor(j / w), x = j - y * w; const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / f - 0.5)), fx = Math.min(sw - 1, Math.max(0, (x + 0.5) / f - 0.5)); const y0 = Math.floor(fy), x0 = Math.floor(fx), y1 = Math.min(sh - 1, y0 + 1), x1 = Math.min(sw - 1, x0 + 1), ty = fy - y0, tx = fx - x0; return (Dk[y0 * sw + x0] * (1 - tx) + Dk[y0 * sw + x1] * tx) * (1 - ty) + (Dk[y1 * sw + x0] * (1 - tx) + Dk[y1 * sw + x1] * tx) * ty; };
   for (let j = 0, i = 0; j < N; j++, i += 4) {
-    const v = L[j] + sharpen * (L[j] - Bl[j]);
+    // (in a deep shadow the photo's grain is as strong as the ink's edge: sharpened less there)
+    const sk = P[j] >= 170 ? 1 : P[j] <= 60 ? 0.35 : 0.35 + 0.65 * (P[j] - 60) / 110;
+    const v = L[j] + sharpen * sk * (L[j] - Bl[j]);
     let n = v / Math.max(30, P[j]); n = n < 0 ? 0 : n > 1 ? 1 : n;
     // (ink seen no darker than b here: b becomes black, the paper stays white)
     const b = Math.min(0.42, black0(j));
@@ -338,6 +340,29 @@ export function cleanPage(c, { contrast = 55, grey = true, sharpen = 1.4, white 
   }
   g.putImageData(img, 0, 0);
   return c;
+}
+// The paper measured again from the paper itself: the closing above (the ink taken away by spreading
+// the light around it) runs a few points too far into a shadow, so a shadow's edge, a crease's step
+// or a fold's light stays on the page as a grey band. Here only what is paper (not ink) is averaged,
+// close around each point, and holes the ink leaves are filled from the paper around them; where
+// there is too little paper nearby (a beam, a title), the closing is kept.
+function refinePaper(L, P, w, h, r) {
+  const N = w * h; let cur = P;
+  const s = Math.max(1.5, r / 2.5);
+  for (let pass = 0; pass < 2; pass++) {
+    const A = new Float32Array(N), M = new Float32Array(N);
+    for (let i = 0; i < N; i++) { if (L[i] >= cur[i] * 0.8) { A[i] = L[i]; M[i] = 1; } }
+    const GA = gaussOf(A, w, h, s), GM = gaussOf(M, w, h, s), out = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const m = GM[i];
+      if (m < 0.08) { out[i] = cur[i]; continue; }
+      const v = GA[i] / m, k = Math.min(1, (m - 0.08) / 0.25);
+      // (never brighter than the closing said: that one is the paper's ceiling)
+      out[i] = Math.min(cur[i], v) * k + cur[i] * (1 - k);
+    }
+    cur = out;
+  }
+  return cur;
 }
 // The darkest ink and the paper, from the histogram of a whitened page.
 export function inkLevels(c) {
