@@ -512,7 +512,9 @@ const JUNK = /(©|copyright|imslp|public domain|edition|verlag|publish|printed|a
 // lines that are never the title: tempo marks, an instrument on its own, editors and arrangers
 const TEMPO = /^\(?\s*(tempo|allegr\w*|andant\w*|adagi\w*|moderato|presto|prestissimo|largo|larghetto|lento|vivace|vivo|grave|maestoso|sostenuto|cantabile|con moto|tranquillo|animato|risoluto|scherzando|rubato|a tempo)\b[^]{0,40}$/i;
 const NOT_TITLE = /^(((solo\s+)?(violoncello|cello|violino|violin|viola|contrabass\w*|double bass|kontrabass|flute|flauto|fl[oö]te|oboe|clarinet\w*|klarinette|fagott\w*|bassoon|horn|corno|trumpet|tromba|trombone|piano|pianoforte|klavier|organ|orgel|soprano|alto|tenor|bass|basso|voice|guitar|gitarre|harp|arpa)(\s+(i{1,3}|\d|solo|principale|and piano|e pianoforte|und klavier|et piano))?\s*\.?)|(edited|edition|ed\.|herausgegeben|hrsg|revised|revidiert|arr\.?|arranged|arrangement|bearbeitet|bearb\.|transcri\w+|fingered|fingering|fingersatz|doigt\w*)\b.*)$/i;
-const looksLikeName = (s) => /^(\p{Lu}[\p{L}'’.-]*\s+){0,3}\p{Lu}[\p{L}'’-]+$/u.test(s) && !/\d/.test(s) && s.length < 36;
+// ("Var. II", "II", "3.", "Mvt. 2": which movement or variation, never the piece's title)
+const MOVEMENT_NO = /^(var\.?|variation|variazione|mvt\.?|movement|satz|no\.?|nr\.?)?\s*([ivxlc]{1,5}|\d{1,2})\.?$/i;
+const looksLikeName = (s) => !MOVEMENT_NO.test(s.trim()) && /\p{L}{3}/u.test(s) && /^(\p{Lu}[\p{L}'’.-]*\s+){0,3}\p{Lu}[\p{L}'’-]+$/u.test(s) && !/\d/.test(s) && s.length < 36;
 const GENERIC = /^(sonat[ae]n?|sonatin[ae]|suite|concert[oe]?|konzert|etude|étude|studie|study|caprice|capriccio|fantasi[ae]|fantaisie|nocturne|prelude|prélude|präludium|romance|romanze|serenade|sérénade|variations?|variationen|partita|trio|quartet|quartett|duo|rondo|scherzo|menuet|minuet|waltz|valse|walzer|march|marsch|marche|élégie|elegie|elegy|air|aria|lied|song|dance|danse|tanz)$/i;
 const tidy = (s) => s.replace(/\s+/g, ' ').replace(/^[\s.,:;-]+|[\s.,:;-]+$/g, '').trim();
 // (a line all in capitals in ordinary letters; catalogue letters and Roman numbers stay capitals: "SONATA IV, BWV 1017" → "Sonata IV, BWV 1017")
@@ -544,8 +546,11 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
         s: it.str, x: it.transform[4], y: vp.height - it.transform[5], size: Math.hypot(it.transform[2], it.transform[3]) || it.height || 10,
       }));
       items.sort((a, b) => a.y - b.y || a.x - b.x);
+      // (words at one height but far apart — "Violoncello" on the left, "Max Bruch, Op. 47" on the
+      // right — are separate lines: a gap wider than a fifth of the page)
+      const ends = (l) => Math.max(...l.parts.map((q) => q.x + q.s.length * q.size * 0.5));
       for (const it of items) {
-        const L = lines.find((l) => Math.abs(l.y - it.y) < Math.max(2.5, it.size * 0.35));
+        const L = lines.find((l) => Math.abs(l.y - it.y) < Math.max(2.5, it.size * 0.35) && !(it.x - ends(l) > vp.width * 0.2 || Math.min(...l.parts.map((q) => q.x)) - (it.x + it.s.length * it.size * 0.5) > vp.width * 0.2));
         if (L) { L.parts.push(it); L.size = Math.max(L.size, it.size); }
         else lines.push({ y: it.y, size: it.size, parts: [it] });
       }
@@ -564,9 +569,13 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
   }
   if (lines.length || meta) {
     try {
-      let topLines = lines.filter((l) => l.y < l.H * 0.42 && !JUNK.test(l.text) && !NOT_TITLE.test(l.text) && /\p{L}{2}/u.test(l.text) && l.text.length < 90);
+      let topLines = lines.filter((l) => l.y < l.H * 0.42 && !JUNK.test(l.text) && !NOT_TITLE.test(l.text) && !MOVEMENT_NO.test(l.text.trim()) && /\p{L}{2}/u.test(l.text) && l.text.length < 90);
       // a tempo mark is not the title, unless it is clearly the biggest words on the page ("Allegro appassionato")
-      { const mx = Math.max(0, ...topLines.map((l) => l.size)); topLines = topLines.filter((l) => !TEMPO.test(l.text) || l.size >= mx * 0.98 && topLines.filter((o) => o.size >= mx * 0.8).length === 1); }
+      // (and only when it is set larger than the words of the music itself: a tempo alone at the top
+      // of a later page or of a part, "Allegro con brio", is the movement, not the piece)
+      { const mx = Math.max(0, ...topLines.map((l) => l.size));
+        const body = lines.filter((l) => l.y > l.H * 0.2).map((l) => l.size).sort((a, b) => a - b), med = body.length ? body[body.length >> 1] : 0;
+        topLines = topLines.filter((l) => !TEMPO.test(l.text) || l.size >= mx * 0.98 && topLines.filter((o) => o.size >= mx * 0.8).length === 1 && topLines.length > 1 && (!med || l.size >= med * 1.5)); }
       // the biggest line is sometimes the composer's name: that is the composer, and the title is the next
       const nameOnly = (l) => { const c = findComposer(l.text, composers); return c && l.text.length < 40 && fold(l.text).split(' ').length <= 4 ? c : null; };
       if (topLines.length) {
@@ -597,6 +606,12 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
       const c = findComposer(allTop, composers) || findComposer((meta && meta.info && meta.info.Author) || '', composers);
       if (c) out.composer = c.n;
       else {
+        // "Music by …", "Words and Music by …", "Composed by …" (not "Arranged by …")
+        if (!out.composer) for (const l of lines) {
+          if (l.y > l.H * 0.42) continue;
+          const m = l.text.match(/\b(?:words and music|music and words|music|composed|komponiert|musique|musica|música)\s+(?:by|von|de|di|par)\s+(.+)$/i);
+          if (m) { const nm = tidy(m[1].replace(/\(.*?\)|\d{4}\s*[-–]\s*\d{0,4}/g, '').split(/\s*(?:,|;|\barr\.|\barranged\b)\s*/i)[0]); if (looksLikeName(nm)) { out.composer = titleCase(nm); break; } }
+        }
         // a name on the right above the music ("Carl Davidoff (1838-1889)"), but only if it looks like a name
         if (!out.composer) for (const l of lines) {
           if (!(l.y < l.H * 0.42 && l.x > l.W * 0.45) || JUNK.test(l.text) || NOT_TITLE.test(l.text) || TEMPO.test(l.text) || out.title.includes(l.text)) continue;
@@ -609,6 +624,8 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
   if (!out.composer) { const c = findComposer(fileName.replace(/[_-]+/g, ' '), composers); if (c) out.composer = c.n; }
   // a title that is only a composer's name, a number or a generic word is no title
   if (out.title && (findComposer(out.title, composers) && fold(out.title).split(' ').length <= 3 || !/\p{L}{3}/u.test(out.title))) out.title = '';
+  // ("1. Prayer", "I. Prélude": the number of the piece in its set is not part of its name)
+  if (out.title) { const t = out.title.replace(/^(\d{1,2}|[IVX]{1,4})\.\s+(?=\p{L}{3})/u, ''); if (t !== out.title && /\p{L}{3}/u.test(t)) out.title = t; }
   if (out.title.length > 80) out.title = out.title.slice(0, 80).replace(/\s+\S*$/, '') + '…';
   return out;
 }
