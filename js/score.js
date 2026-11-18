@@ -205,6 +205,7 @@ async function openDocumentOne(file, known) {
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(file.data.slice(0)), ...PDF_OPTS }).promise;
     // all pages are asked for at once (one after another took a long time on long scores)
     const sizes = useKnown(pdf.numPages) || await Promise.all(Array.from({ length: pdf.numPages }, (_, k) => pdf.getPage(k + 1).then((p) => { const vp = p.getViewport({ scale: 1 }); return [vp.width, vp.height]; })));
+
     // PDF.js keeps everything it read for a page (its pictures above all: a scanned page holds
     // tens of MB) until told to let go. Only the last few pages drawn keep theirs; the others
     // are cleaned up, or a long score (the Pages panel draws every page) runs the iPhone out
@@ -225,7 +226,10 @@ async function openDocumentOne(file, known) {
         const nextK = () => { for (let d = 0; d < pdf.numPages; d++) { const k = (cur + d) % pdf.numPages; if (!lightHave.has(k)) return k; } return -1; };
         for (let k = nextK(); k >= 0 && !gone; k = nextK()) {
           // (only when nothing else is being drawn: never two of these pages at once)
-          for (let w8 = 0; (HEAVY.active > 0 || globalThis.__busyUntil > performance.now()) && w8 < 600 && !gone; w8++) await new Promise((r) => setTimeout(r, 250));
+          // (and only once Stand has drawn nothing for a while: slipped in between the pages being drawn
+          // ahead, it was stopped each time and the work thrown away, and the next pages came late)
+          const busyNow = () => HEAVY.active > 0 || globalThis.__busyUntil > performance.now() || (globalThis.__rqBusy && globalThis.__rqBusy());
+          for (let w8 = 0, quiet = 0; quiet < 6 && w8 < 1200 && !gone; w8++) { await new Promise((r) => setTimeout(r, 250)); quiet = busyNow() ? 0 : quiet + 1; }
           if (gone) break;
           const pg = await pdf.getPage(k + 1); const v1 = pg.getViewport({ scale: 1 });
           const sc = LIGHT_LONG / Math.max(v1.width, v1.height);
@@ -265,7 +269,8 @@ async function openDocumentOne(file, known) {
         // (not when the page is wanted sharp, bigger than the light copy: the music cut out for a video)
         if (fid && !opts.sharp && (heavy || lightHave === null || lightHave.size)) {
           if (lightHave === null) lightHave = await lightKeys(fid);
-          if (lightHave.size) heavy = true;
+          // (a heavy scan: light copies of more than its first page — that one is made when it is brought in)
+          if ([...lightHave].some((k) => k > 0)) heavy = true;
           const lb = lightHave.has(i) ? await lightGet(fid, i) : null;
           if (lb) {
             try {
@@ -348,6 +353,29 @@ async function openDocumentOne(file, known) {
         if (performance.now() - t0 > HEAVY_MS && !heavy && fid && scanLike) { heavy = true; HEAVY.fids.add(fid); setTimeout(lightenAll, 1500); }
         else if (heavy && !lightening) setTimeout(lightenAll, 1500);
         } finally { HEAVY.active--; if (release) release(); done(i, page); }
+      },
+      // The first page of a scan, drawn for the library's picture when the score is brought in: drawn at
+      // the light copy's size, and, a heavy scan (slow to draw), kept as its light copy. The score then
+      // opens at once the first time (its first page would otherwise be read from the file again).
+      async thumbLight(tw) {
+        if (!fid || !scanLike || gone) return null;
+        const pg = await pdf.getPage(1); const v1 = pg.getViewport({ scale: 1 });
+        const sc = LIGHT_LONG / Math.max(v1.width, v1.height);
+        const c = document.createElement('canvas'); c.width = Math.round(v1.width * sc); c.height = Math.round(v1.height * sc);
+        const t0 = performance.now();
+        HEAVY.active++;
+        try { await pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }).promise; }
+        catch { c.width = c.height = 0; return null; } finally { HEAVY.active--; }
+        if (looksBlack(c) || looksBlank(c)) { c.width = c.height = 0; return null; }
+        if (performance.now() - t0 > HEAVY_MS * 0.6) {
+          const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+          if (b && !gone) { await lightPut(fid, 0, b); if (lightHave) lightHave.add(0); }
+        }
+        const t = document.createElement('canvas'); t.width = tw; t.height = Math.round((tw * c.height) / c.width);
+        const g = t.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, t.width, t.height); c.width = c.height = 0;
+        const out = await new Promise((r) => t.toBlob(r, 'image/jpeg', 0.82)); t.width = t.height = 0;
+        pg.cleanup();
+        return out;
       },
       pixHas: (i, w, h) => { const W = Math.round(w), H = Math.round(h); return fid && W * H <= PIX_MAX ? pixHas(`${fid}|${i}|${W}x${H}`) : Promise.resolve(true); },
       // Zoomed in: just the part on screen, drawn from the PDF itself at the screen's sharpness. (Not
@@ -449,6 +477,7 @@ export function looksBlack(src, w = 24, h = 32) {
 export async function makeThumb(doc, { dark = false } = {}) {
   const [pw, ph] = doc.sizes[0];
   const w = 360, h = Math.round((w * ph) / pw);
+  if (doc.thumbLight && !dark) try { const b = await doc.thumbLight(w); if (b) return b; } catch {}
   for (let attempt = 0; attempt < 2; attempt++) {
     const c = document.createElement('canvas');
     try { await doc.render(0, c, w, h); } catch { c.width = c.height = 0; await new Promise((r) => setTimeout(r, 800)); continue; }

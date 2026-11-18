@@ -162,8 +162,25 @@ export function findMarks(items) {
     if (t.dance) m.dance = true;
     out.push(m);
   }
+  // A tempo word and a metronome mark printed apart, one over the other or side by side ("Andante"
+  // with "♩ = 55" under it): one mark, and the number printed is what the metronome follows. (Read
+  // apart, the word could win, at its usual speed.)
+  const near = (a, b) => {
+    const dy = Math.abs((a.y + a.h / 2) - (b.y + b.h / 2)), gapX = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w));
+    return dy < Math.max(0.045, (a.h + b.h) * 1.6) && gapX < 0.16;
+  };
+  for (const w of out) {
+    if (w.exact || w.rel || w.gone) continue;
+    const n = out.filter((o) => o !== w && o.exact && !o.gone && near(o, w)).sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
+    if (!n) continue;
+    if (!n.word && w.word) n.word = w.word;
+    const x0 = Math.min(n.x, w.x), y0 = Math.min(n.y, w.y), x1 = Math.max(n.x + n.w, w.x + w.w), y1 = Math.max(n.y + n.h, w.y + w.h);
+    Object.assign(n, { x: +x0.toFixed(4), y: +y0.toFixed(4), w: +(x1 - x0).toFixed(4), h: +(y1 - y0).toFixed(4) });
+    w.gone = true;
+  }
+  const kept = out.filter((m) => !m.gone);
   // (a dance's name with the tempo printed next to it, "Siciliano. Largo.": the tempo is the mark)
-  return out.filter((m) => !m.dance || !out.some((o) => o !== m && !o.dance && Math.abs(o.y - m.y) < 0.06 && Math.abs(o.x - m.x) < 0.2));
+  return kept.filter((m) => !m.dance || !kept.some((o) => o !== m && !o.dance && Math.abs(o.y - m.y) < 0.06 && Math.abs(o.x - m.x) < 0.2));
 }
 
 // The tempo each mark makes, in reading order (pages one after another, each page top to bottom):

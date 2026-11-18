@@ -90,7 +90,7 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor"/></symbol>
     <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 13.5V9.5 M9.5 2.8h5 M12 2.8v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
-    <symbol id="i-moment" viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-4-6 4V5.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-keep" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol><symbol id="i-kept" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol><symbol id="i-moment" viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-4-6 4V5.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-back5" viewBox="0 0 24 24"><path d="M5.6 8.2A8 8 0 1 1 4 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M5.3 3.9v4.5h4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="12.2" y="16.3" text-anchor="middle" font-size="8.6" font-weight="700" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">5</text></symbol>
     <symbol id="i-fwd5" viewBox="0 0 24 24"><path d="M18.4 8.2A8 8 0 1 0 20 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18.7 3.9v4.5h-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text x="11.8" y="16.3" text-anchor="middle" font-size="8.6" font-weight="700" fill="currentColor" font-family="-apple-system,system-ui,sans-serif">5</text></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
@@ -589,14 +589,14 @@
   </div>
   <!-- a YouTube video over the score: the picture alone floats; its buttons stay here -->
   <div class="pill media-pill wait" id="mediaPill" hidden>
-    <div class="scrub mp-scrub" id="mpScrub" role="slider" aria-label="Where in the video" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0" hidden><i class="sc-fill"></i><b class="sc-knob"></b><span class="sc-tip num"></span></div>
     <button class="mp-play" id="mpPlay" type="button" aria-label="Play"><svg><use href="#i-play"/></svg></button>
     <button class="icon-btn small" id="mpBack" type="button" aria-label="Back 5 seconds"><svg><use href="#i-back5"/></svg></button>
     <button class="icon-btn small" id="mpFwd" type="button" aria-label="On 5 seconds"><svg><use href="#i-fwd5"/></svg></button>
-    <span class="num mp-time" id="mpTime"><span id="mpNow">0:00</span><span class="mp-dur" id="mpDur"></span></span>
+    <div class="mp-line" id="mpLine"><span class="num mp-now" id="mpNow">0:00</span><div class="scrub mp-scrub" id="mpScrub" role="slider" aria-label="Where in the video" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0"><i class="sc-fill"></i><b class="sc-knob"></b><span class="sc-tip num"></span></div><span class="num mp-dur" id="mpDur"></span></div>
     <span class="mp-sep"></span>
     <button class="mp-speed" id="mpSpeed" type="button" aria-label="Speed"><span class="num" id="mpSpeedV">100</span><span class="mp-pc">%</span></button>
     <button class="icon-btn small" id="mpLoop" type="button" aria-label="Repeat a passage: tap where it starts"><svg><use href="#i-loop"/></svg></button>
+    <button class="icon-btn small mp-keep" id="mpKeep" type="button" aria-label="Save in My recordings" title="Save in My recordings"><svg><use href="#i-keep"/></svg></button>
     <button class="icon-btn small mp-marks" id="mpMarks" type="button" aria-label="Moments" aria-haspopup="dialog" aria-expanded="false"><svg><use href="#i-moment"/></svg><span class="mp-n num" id="mpMarksN" hidden></span></button>
     <button class="icon-btn small mp-x" id="mpClose" type="button" aria-label="Close"><svg><use href="#i-close"/></svg></button>
   </div>
@@ -908,7 +908,7 @@
         <canvas id="wave"></canvas>
         <div class="wave-busy" id="waveBusy" hidden>Preparing the slower version…</div>
       </div>
-      <div class="times num"><span id="tPos">0:00.0</span><span class="muted" id="tLoop">Drag across the waveform to loop a passage</span><span id="tDur">0:00.0</span></div>
+      <div class="times num"><span id="tPos">0:00.0</span><span class="muted" id="tLoop">Drag along the waveform to move through it</span><span id="tDur">0:00.0</span></div>
       <div class="transport">
         <button class="icon-btn" id="loopBtn" aria-label="Loop"><svg><use href="#i-loop"/></svg></button>
         <button class="round-btn play" id="playBtn" aria-label="Play"><svg><use href="#i-play"/></svg></button>

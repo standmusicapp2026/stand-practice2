@@ -311,7 +311,7 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         // (a video as small as it may be without black bands: 356 × 200; above Stand's bar of
         // buttons at the bottom of the page)
         let w = min(b.width - 32, 356), h = picHeight(w)
-        return CGRect(x: b.maxX - w - 16, y: b.maxY - h - 116, width: w, height: h)
+        return CGRect(x: b.maxX - w - 16, y: b.maxY - h - (b.width < 600 ? 150 : 116), width: w, height: h)
     }
     // (on the screen, but for as much as half of it beyond the left, the right or the bottom edge)
     private func fitPic(_ r: CGRect, in host: UIView) -> CGRect {

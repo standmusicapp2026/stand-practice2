@@ -1971,6 +1971,7 @@ const maxPx = () => (document.body.classList.contains('phone') ? MAX_PX_PHONE : 
 // and margin measuring, wait until nothing urgent is being drawn, and go one at a time, so they
 // never hold up the page you are looking at. One asked for urgently jumps the queue.
 const RQ = { busy: 0, q: [], seq: 0, t: 0, running: new Set() };
+globalThis.__rqBusy = () => RQ.busy > 0 || RQ.q.length > 0;   // (for the quiet work of score.js)
 function rqPump() {
   RQ.q.sort((a, b) => a.prio - b.prio || a.t - b.t);
   // urgent work stops drawing that is no longer needed or not urgent (it is asked for again later)
@@ -2753,10 +2754,9 @@ function turn(dir) {
       if (V.half) { V.turnDir = 1; goTo(V.page + 1); return; }
       return;
     }
+    // back: from a half page, the page whole again; from a whole page, the page before it whole (never
+    // a half page going back: you go back to read a page again from its top)
     if (V.half) { V.turnDir = -1; V.half = false; layout(true); return; }
-    // back by halves too, the way it came: the previous page's half first, then the whole of it
-    const first = rr ? rr[0] : 0;
-    if (V.page - 1 >= first) { V.turnDir = -1; V.page -= 1; V.score.lastPage = V.page; rememberPlace(); V.half = true; layout(true); return; }
   }
   const next = clamp(V.page + dir * V.spread, rr ? rr[0] : 0, rr ? rr[1] : Math.max(0, V.doc.pages - 1));
   if (next === V.page) return;
@@ -3217,7 +3217,7 @@ function clampZoom() {
 }
 function applyZoom() {
   if (!Z.el) return;
-  sharpOff();
+  Z.movedAt = performance.now();
   const turn = TURN();
   Z.el.style.transformOrigin = turn ? '50% 50%' : '';
   const turnCss = turn ? ' rotate(-90deg)' : '';
@@ -3238,6 +3238,7 @@ function applyZoom() {
   else { clampZoom(); Z.el.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})${turnCss}`; }
   zoomPill.hidden = Z.s === 1;
   }
+  if (SHARP.on) sharpFollow();
   if (Z.s > 1.05 || V.pages.some((p) => p.layer && p.layer.view)) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 260); }
   zoomPill.textContent = Math.round(Z.s * 100) + '%  ·  Reset';
   if (!$('#zoomPop').hidden) syncZoomPop();
@@ -3281,6 +3282,8 @@ async function sharpen() {
 setInterval(() => {
   // (only while a line is being drawn or the page pinched: a touch left over must not stop this)
   if (!V.doc || Z.s <= 1.05 || TURN() || (GS && /^(ink|erase|smart|lasso|tape|pinch)$/.test(GS.kind)) || $('#score').hidden) return;
+  // (zoomed in and still, the sharp layer is always there: whatever took it away, it comes back)
+  if (!SHARP.on && !GS && sharpCan() && performance.now() - (Z.movedAt || 0) > 400) { sharpenInk(); return; }
   // (nothing moved since the markings were last made sharp: they are as sharp as they can be; very
   // zoomed in, the memory limit keeps them a little under the screen's sharpness, and drawing them
   // again every second made the iPad work for nothing)
@@ -3348,11 +3351,33 @@ function sharpOff() {
   if (!SHARP.on) return;
   SHARP.on = false; cancelAnimationFrame(SHARP.raf); SHARP.raf = 0; cancelAnimationFrame(SHARP.full); SHARP.full = 0;
   document.body.classList.remove('ink-over-on');
-  inkOver.hidden = true;
+  inkOver.hidden = true; inkOver.style.transform = ''; SHARP.moved = false;
 }
-function sharpCan() {
+// (may it show at all: zoomed in, a score on the screen, not turned sideways or as half pages)
+function sharpBase() {
   // (not over a half page: its two halves have markings layers of their own)
-  return !!(V.doc && Z.s > 1.05 && !TURN() && !V.half && !stage.querySelector('.half-clip') && !$('#score').hidden && !(GS && /^(pinch|nav)$/.test(GS.kind)) && V.pages.some((p) => p.layer && p.ink));
+  return !!(V.doc && Z.s > 1.05 && !TURN() && !V.half && !stage.querySelector('.half-clip') && !$('#score').hidden && V.pages.some((p) => p.layer && p.ink));
+}
+// (may it be drawn now: and not while two fingers move the page)
+function sharpCan() { return sharpBase() && !(GS && /^(pinch|nav)$/.test(GS.kind)); }
+// The page moving under it (two fingers, a drag, a zoom): the layer moves with the page, as one
+// picture, so the writing never jumps between sharp and soft while it moves. Drawn again, sharp, once
+// the page is still. Only if the page has moved beyond what the layer holds does the page's own
+// layer show meanwhile.
+function sharpFollow() {
+  if (!SHARP.on) return;
+  if (!sharpBase()) { sharpOff(); return; }
+  const p0 = SHARP.pages[0], ref = SHARP.ref; if (!p0 || !ref || !p0.inner.isConnected) { sharpOff(); return; }
+  const r = p0.inner.getBoundingClientRect(), k = r.width / ref.width, B = SHARP.box;
+  const tx = r.left - B.left + (B.left - ref.left) * k - 0, ty = r.top - B.top + (B.top - ref.top) * k;
+  // what the moved layer covers, and what of the pages is on the screen: all of it must be covered
+  const cov = { l: B.left + tx, t: B.top + ty, r: B.left + tx + B.width * k, b: B.top + ty + B.height * k };
+  const sr = stage.getBoundingClientRect();
+  let need = null; for (const p of SHARP.pages) { const q = p.inner.getBoundingClientRect(); const l = Math.max(q.left, sr.left), t = Math.max(q.top, sr.top), rr = Math.min(q.right, sr.right), bb = Math.min(q.bottom, sr.bottom); if (rr <= l || bb <= t) continue; need = need ? { l: Math.min(need.l, l), t: Math.min(need.t, t), r: Math.max(need.r, rr), b: Math.max(need.b, bb) } : { l, t, r: rr, b: bb }; }
+  if (!need || cov.l > need.l + 0.5 || cov.t > need.t + 0.5 || cov.r < need.r - 0.5 || cov.b < need.b - 0.5 || k > 1.6 || k < 0.6) { sharpOff(); return; }
+  inkOver.style.transformOrigin = '0 0';
+  inkOver.style.transform = Math.abs(k - 1) < 1e-4 && Math.abs(tx) < 0.01 && Math.abs(ty) < 0.01 ? '' : `translate(${tx}px, ${ty}px) scale(${k})`;
+  SHARP.moved = !!inkOver.style.transform;
 }
 // one page's markings onto the layer (or only one new thing)
 function sharpPaint(g, p, k, sr, only, area) {
@@ -3380,25 +3405,38 @@ function sharpPaint(g, p, k, sr, only, area) {
 }
 function sharpDraw() {
   SHARP.full = 0;
-  if (!sharpCan()) { sharpOff(); return; }
+  if (!sharpCan()) { if (!sharpBase()) sharpOff(); return; }
   const sr = stage.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 3);
+  // the screen and a margin round it (so a little move of the page is covered), as big as the memory allows
+  const M = clamp((Math.sqrt(9e6 / Math.max(1, sr.width * sr.height * dpr * dpr)) - 1) / 2, 0, 0.18);
   // (cut on the screen's own pixels: the layer starts on a whole pixel)
-  const L = Math.round(sr.left * dpr) / dpr, T = Math.round(sr.top * dpr) / dpr;
-  const w = Math.round(sr.width * dpr), h = Math.round(sr.height * dpr);
-  Object.assign(inkOver.style, { left: L + 'px', top: T + 'px', width: w / dpr + 'px', height: h / dpr + 'px' });
+  // (and of a whole number of points each way: a layer a half point wide was shown a little soft)
+  const L = M ? Math.round(sr.left - sr.width * M) : Math.round(sr.left * dpr) / dpr, T = M ? Math.round(sr.top - sr.height * M) : Math.round(sr.top * dpr) / dpr;
+  const w = M ? Math.round(sr.width * (1 + 2 * M)) * dpr : Math.round(sr.width * dpr), h = M ? Math.round(sr.height * (1 + 2 * M)) * dpr : Math.round(sr.height * dpr);
+  Object.assign(inkOver.style, { left: L + 'px', top: T + 'px', width: w / dpr + 'px', height: h / dpr + 'px', transform: '' });
+  SHARP.moved = false;
   if (inkOver.width !== w || inkOver.height !== h) { inkOver.width = w; inkOver.height = h; }
   const box = { left: L, top: T, right: L + w / dpr, bottom: T + h / dpr, width: w / dpr, height: h / dpr };
+  // (the layer reaches past the screen; it shows only over the score's own area)
+  inkOver.style.clipPath = `inset(${Math.max(0, sr.top - T)}px ${Math.max(0, box.right - sr.right)}px ${Math.max(0, box.bottom - sr.bottom)}px ${Math.max(0, sr.left - L)}px)`;
   const g = inkOver.getContext('2d');
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
   SHARP.pages = V.pages.filter((p) => p.layer && p.ink && p.inner);
   SHARP.box = box; SHARP.k = dpr;
   for (const p of SHARP.pages) sharpPaint(g, p, dpr, box);
+  SHARP.ref = SHARP.pages[0] ? (() => { const r = SHARP.pages[0].inner.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width }; })() : null;
   SHARP.sig = sharpSig();
   if (!SHARP.on) { SHARP.on = true; inkOver.hidden = false; document.body.classList.add('ink-over-on'); }
-  // every frame while it shows: has the page moved under it? Then it goes at once (in that same
-  // frame, before the screen is drawn), and the page's own markings show
+  // every frame while it shows: has the page moved under it? Then the layer moves with it (in that
+  // same frame, before the screen is drawn), and is drawn sharp again once the page is still
   cancelAnimationFrame(SHARP.raf);
-  const watch = () => { SHARP.raf = 0; if (!SHARP.on) return; if (!sharpCan() || sharpSig() !== SHARP.sig) { sharpOff(); clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 260); return; } SHARP.raf = requestAnimationFrame(watch); };
+  const watch = () => {
+    SHARP.raf = 0; if (!SHARP.on) return;
+    if (!sharpBase()) { sharpOff(); return; }
+    const sg = sharpSig();
+    if (sg !== SHARP.sig) { SHARP.sig = sg; sharpFollow(); clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 260); if (!SHARP.on) return; }
+    SHARP.raf = requestAnimationFrame(watch);
+  };
   SHARP.raf = requestAnimationFrame(watch);
 }
 // markings changed: a new thing is added at once; anything else, the layer drawn again
@@ -3406,6 +3444,7 @@ inkHooks.changed = (L, item, area) => {
   if (!SHARP.on) return;
   const p = SHARP.pages.find((q) => q.layer === L);
   if (!p) return;
+  if (SHARP.moved) { if (!SHARP.full) SHARP.full = requestAnimationFrame(sharpDraw); return; }
   if (item && !SHARP.full) { sharpPaint(inkOver.getContext('2d'), p, SHARP.k, SHARP.box, item); return; }
   if (area && !SHARP.full) { sharpPaint(inkOver.getContext('2d'), p, SHARP.k, SHARP.box, null, area); return; }
   if (!SHARP.full) SHARP.full = requestAnimationFrame(sharpDraw);
@@ -10472,7 +10511,7 @@ player.onState = () => {
   const p = $('#playBtn'); p.innerHTML = player.playing ? '<svg><use href="#i-pause"/></svg>' : '<svg><use href="#i-play"/></svg>';
   p.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
   $('#loopBtn').classList.toggle('on', player.loop);
-  $('#tLoop').textContent = player.loop && player.b > player.a ? `Looping ${fmtTime(player.a, true)} – ${fmtTime(player.b, true)}` : 'Drag across the waveform to loop a passage';
+  $('#tLoop').textContent = player.loop && player.b > player.a ? `Looping ${fmtTime(player.a, true)} – ${fmtTime(player.b, true)}` : player.loop ? 'Drag across the waveform to choose what repeats' : 'Drag along the waveform to move through it';
   $('#tDur').textContent = fmtTime(player.duration, true);
   if (player.playing) animateWave(); else drawWave();
   if (VF.on) vfSync();
@@ -10494,9 +10533,10 @@ function scrubber(root, src) {
     const { d } = src.get(); if (!d) return;
     e.preventDefault(); e.stopPropagation(); try { root.setPointerCapture(e.pointerId); } catch {}
     drag = { id: e.pointerId, f: at(e), d }; root.classList.add('on'); put(drag.f); tip.textContent = mpFmt(drag.f * d);
+    if (src.start) src.start(); if (src.preview) src.preview(drag.f * d);
   });
-  root.addEventListener('pointermove', (e) => { if (!drag || e.pointerId !== drag.id) return; e.stopPropagation(); drag.f = at(e); put(drag.f); tip.textContent = mpFmt(drag.f * drag.d); });
-  const up = (e) => { if (!drag || e.pointerId !== drag.id) return; e.stopPropagation(); const g = drag; drag = null; root.classList.remove('on'); if (e.type === 'pointerup') { src.seek(g.f * g.d); root.dataset.held = String(performance.now()); } };
+  root.addEventListener('pointermove', (e) => { if (!drag || e.pointerId !== drag.id) return; e.stopPropagation(); drag.f = at(e); put(drag.f); tip.textContent = mpFmt(drag.f * drag.d); if (src.preview) src.preview(drag.f * drag.d); });
+  const up = (e) => { if (!drag || e.pointerId !== drag.id) return; e.stopPropagation(); const g = drag; drag = null; root.classList.remove('on'); if (e.type === 'pointerup') { src.seek(g.f * g.d); root.dataset.held = String(performance.now()); } else if (src.cancel) src.cancel(); };
   root.addEventListener('pointerup', up); root.addEventListener('pointercancel', up);
   root.addEventListener('keydown', (e) => { const { t, d } = src.get(); if (!d) return; if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); src.seek(clamp(t + (e.key === 'ArrowRight' ? 5 : -5), 0, d)); } });
   return {
@@ -10529,7 +10569,14 @@ function vfApply() {
   $('#vfZoom').hidden = VF.z < 1.05; $('#vfZoom').textContent = VF.z.toFixed(1) + '×';
 }
 // (its line: where the recording is, drag to go anywhere in it)
-const vfScrub = scrubber($('#vfScrub'), { get: () => ({ t: player.currentPos(), d: player.duration }), seek: (t) => { player.seek(t); vfSync(); } });
+const vfScrub = scrubber($('#vfScrub'), {
+  get: () => ({ t: player.currentPos(), d: player.duration }),
+  // (dragged: paused, and the picture follows the finger one look at a time; let go: it plays on from there if it was playing)
+  start: () => { VF.scrubWas = player.playing; if (player.playing) player.pause(); },
+  preview: (t) => { player.pos = t; scrubVideo(t); },
+  seek: (t) => { const was = VF.scrubWas; VF.scrubWas = false; player.pos = t; player.seek(t).then(() => { if (was && !player.playing) player.play(); vfSync(); }).catch(() => {}); },
+  cancel: () => { if (VF.scrubWas) player.play(); VF.scrubWas = false; },
+});
 function vfLine() { cancelAnimationFrame(VF.lineRaf); const go = () => { VF.lineRaf = 0; if (!VF.on) return; vfScrub.show(); if (player.playing || vfScrub.dragging) VF.lineRaf = requestAnimationFrame(go); }; go(); }
 function vfSync() {
   vfLine();
@@ -10683,6 +10730,8 @@ for (const b of vfEl.querySelectorAll('.vf-btn')) b.addEventListener('pointerdow
   window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
 }
 
+// the loop: on, it repeats the passage chosen before (or the whole recording) and a drag across the
+// waveform chooses another; off, the waveform is for moving through the recording again
 $('#loopBtn').addEventListener('click', () => {
   if (player.loop) player.setLoop(false);
   else if (player.b > player.a) player.setLoop(true);
@@ -10809,26 +10858,53 @@ function drawWave() {
   g.globalAlpha = 1; g.fillStyle = ink; g.fillRect(px - 1, 4, 2, Hh - 8);
   $('#tPos').textContent = fmtTime(pos, true);
 }
+// A finger on the waveform moves through the recording: where it is, the picture and the line follow,
+// and it plays from there when let go (as it was: playing or paused). Only with the loop on does a
+// drag across it choose the passage that repeats (a tap still goes to a place).
 let wdown = null;
+const waveT = (e) => { const r = wave.getBoundingClientRect(); return clamp(((e.clientX - r.left) / Math.max(1, r.width)) * player.duration, 0, player.duration); };
+// (the picture follows the finger, one look at a time: never a queue of seeks that makes it lag)
+function scrubVideo(t) {
+  const v = player.video; if (!v || !currentTake || currentTake.kind !== 'video') return;
+  scrubVideo.want = t;
+  if (scrubVideo.busy) return;
+  const go = () => {
+    const w = scrubVideo.want; if (w == null) { scrubVideo.busy = false; return; }
+    scrubVideo.want = null; scrubVideo.busy = true;
+    let done = false; const next = () => { if (done) return; done = true; v.removeEventListener('seeked', next); requestAnimationFrame(go); };
+    v.addEventListener('seeked', next); setTimeout(next, 250);
+    try { if (v.fastSeek && Math.abs(v.currentTime - w) > 2) v.fastSeek(w); else v.currentTime = w; } catch { next(); }
+  };
+  go();
+}
 wave.addEventListener('pointerdown', (e) => {
   if (!currentTake) return;
-  wave.setPointerCapture(e.pointerId);
-  const r = wave.getBoundingClientRect();
-  wdown = { x: e.clientX, t: ((e.clientX - r.left) / r.width) * player.duration, sel: false };
+  e.preventDefault(); try { wave.setPointerCapture(e.pointerId); } catch {}
+  const t = waveT(e);
+  wdown = { id: e.pointerId, x: e.clientX, t, at: t, sel: false, was: player.playing, moved: false };
+  if (!player.loop) { if (player.playing) player.pause(); wave.classList.add('scrubbing'); scrubTo(t); }
 });
+function scrubTo(t) { player.pos = t; drawWave(); scrubVideo(t); if (TRIM) TRIM.head(t); }
 wave.addEventListener('pointermove', (e) => {
-  if (!wdown) return;
-  if (Math.abs(e.clientX - wdown.x) > 8) wdown.sel = true;
-  if (wdown.sel) {
-    const r = wave.getBoundingClientRect(); const t = clamp(((e.clientX - r.left) / r.width) * player.duration, 0, player.duration);
-    player.a = Math.min(wdown.t, t); player.b = Math.max(wdown.t, t); drawWave();
+  if (!wdown || e.pointerId !== wdown.id) return;
+  const t = waveT(e);
+  if (Math.abs(e.clientX - wdown.x) > 8) wdown.moved = true;
+  if (player.loop) {
+    if (wdown.moved) { wdown.sel = true; player.a = Math.min(wdown.t, t); player.b = Math.max(wdown.t, t); drawWave(); }
+  } else { wdown.at = t; scrubTo(t); }
+});
+const waveUp = (e) => {
+  if (!wdown || (e && e.pointerId !== wdown.id)) return; const d = wdown; wdown = null; wave.classList.remove('scrubbing');
+  if (player.loop) {
+    if (d.sel && player.b - player.a > 0.25) { player.setLoop(true, player.a, player.b); return; }
+    if (d.sel) { player.a = player.b = 0; player.setLoop(false); }
+    player.seek(d.t); return;
   }
-});
-wave.addEventListener('pointerup', () => {
-  if (!wdown) return; const d = wdown; wdown = null;
-  if (d.sel && player.b - player.a > 0.25) player.setLoop(true, player.a, player.b);
-  else { if (d.sel) player.a = player.b = 0; player.seek(d.t); }
-});
+  if (e && e.type === 'pointercancel') return;
+  player.pos = d.at;
+  player.seek(d.at).then(() => { if (d.was && !player.playing) player.play(); }).catch(() => {});
+};
+wave.addEventListener('pointerup', waveUp); wave.addEventListener('pointercancel', waveUp);
 window.addEventListener('resize', () => requestAnimationFrame(() => { drawWave(); drawHarmonics(); drawTrace(); }));
 
 // =====================================================================
@@ -10995,6 +11071,8 @@ function playMusic(it) {
   if (MEDIA.kind) { if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) NATIVE.standMedia.postMessage({ op: 'close' }); else if (MEDIA.closeIt) MEDIA.closeIt(); }
   mediaPillShow(false); MP.kind = 'music'; mediaPillShow(true); MP.kind = 'music'; $('#mediaPill').classList.add('music');
   NATIVE.standMedia.postMessage({ op: 'music', id: String(it.id), title: it.title });
+  MEDIA.cur = { url: it.url, name: [it.title, it.by].filter(Boolean).join(' · ') };
+  keepSync();
 }
 function musicFailed(m) {
   mediaPillShow(false);
@@ -11088,7 +11166,7 @@ function ytPicks(state) {
     t.append(el('span', 'yp-title', it.title), el('span', 'yp-by', (yt ? [it.by, it.views] : [it.by, it.album]).filter(Boolean).join(' · ')));
     b.append(t);
     if (!yt && it.len) b.append(el('span', 'yp-dur num', it.len));
-    if (yt) b.addEventListener('click', () => { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title); });
+    if (yt) b.addEventListener('click', () => { hidePanel(); openMedia('https://www.youtube.com/watch?v=' + it.id, it.title, it.by); });
     // Spotify: opens in Spotify at that recording (its title and who plays it)
     else if (sp) { b.setAttribute('aria-label', it.title + ' — Spotify'); b.addEventListener('click', () => openApp(['spotify:search:' + encodeURIComponent(it.title + ' ' + it.by), serviceLinks(it.title + ' ' + it.by)[1][2]])); }
     // Apple Music: plays here (with the bar at the bottom); or, beside it, in the Music app
@@ -11162,8 +11240,9 @@ function mediaOf(url) {
 function ytStart(u) { const t = u.searchParams.get('t') || u.searchParams.get('start') || ''; const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(t); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; }
 const MEDIA = { box: null, kind: '' };
 const MEDIA_WORDS = ['Loading…', 'Loading the video…', 'YouTube could not be reached. Check the internet connection, then try again.', 'This link is not a video YouTube knows.', 'This video cannot play here.', 'This video is no longer on YouTube, or it is private.', 'Whoever put this video on YouTube does not let it play outside YouTube.', 'YouTube did not accept where this player is shown.', 'Open it in YouTube', 'This link cannot play here.', 'Play', 'Pause', 'Back 5 seconds', 'On 5 seconds', 'Speed', 'Repeat a passage: tap where it starts', 'Tap where the passage ends', 'Stop repeating', 'Tap again where it ends', 'Open in its app', 'Close'];
-function openMedia(url, name) {
+function openMedia(url, name, by) {
   const o = mediaOf(url); if (!o) { window.open(url, '_blank', 'noopener'); return; }
+  MEDIA.cur = { url, name: [name, by].filter(Boolean).join(' · ') || '' };
   o.url = url; o.title = name || '';
   // (the little player speaks the language of the app)
   o.tr = {}; for (const x of MEDIA_WORDS) { const t = globalThis.__tr ? globalThis.__tr(x) : x; if (t && t !== x) o.tr[x] = t; }
@@ -11186,7 +11265,7 @@ const MP = { on: false, kind: '' };   // kind: 'youtube' (the video over the sco
 const MOM = { all: null, open: false };   // the moments kept (below, "Moments")
 const mpFmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function mediaPillShow(on) {
-  MP.on = on; if (!on) { MP.kind = ''; MP.key = ''; MP.d = 0; MP.t = 0; MP.playing = false; cancelAnimationFrame(MP.lineRaf); const sc = $('#mpScrub'); if (sc) { sc.hidden = true; $('#mediaPill').classList.remove('has-scrub'); } if (typeof momentsOpen === 'function' && MOM.open) momentsOpen(false); }
+  MP.on = on; document.body.classList.toggle('media-on', !!on); if (!on) { MEDIA.curWas = MEDIA.cur; MP.kind = ''; MP.key = ''; MP.d = 0; MP.t = 0; MP.playing = false; cancelAnimationFrame(MP.lineRaf); if (typeof momentsOpen === 'function' && MOM.open) momentsOpen(false); }
   if (on) momentsAll().then(() => momentsSync()).catch(() => {}); const p = $('#mediaPill'); if (!p) return;
   p.hidden = !on;
   if (!on) { p.classList.add('wait'); p.classList.remove('playing'); $('#mpNow').textContent = '0:00'; $('#mpDur').textContent = ''; $('#mpSpeedV').textContent = '100'; $('#mpSpeed').classList.remove('on'); $('#mpLoop').classList.remove('on', 'arm'); }
@@ -11194,8 +11273,35 @@ function mediaPillShow(on) {
 // (the bar's line: where the video or recording is; between the player's reports, a playing one
 // moves on smoothly by the clock)
 const mpNowT = () => { const t = MP.t || 0; if (!MP.playing || !MP.at) return t; return Math.min(MP.d || Infinity, t + ((performance.now() - MP.at) / 1000) * (MP.speed || 1)); };
-const mpScrub = scrubber($('#mpScrub'), { get: () => ({ t: mpNowT(), d: MP.d || 0 }), seek: (t) => { mediaCmd({ cmd: 'seek', value: Math.round(t * 10) / 10, play: !!MP.playing }); MP.t = t; MP.at = performance.now(); } });
-function mpLine() { cancelAnimationFrame(MP.lineRaf); const go = () => { MP.lineRaf = 0; if (!MP.on) return; mpScrub.show(); if (MP.playing || mpScrub.dragging) MP.lineRaf = requestAnimationFrame(go); }; go(); }
+const mpScrub = scrubber($('#mpScrub'), { preview: (t) => { $('#mpNow').textContent = mpFmt(t); }, get: () => ({ t: mpNowT(), d: MP.d || 0 }), seek: (t) => { mediaCmd({ cmd: 'seek', value: Math.round(t * 10) / 10, play: !!MP.playing }); MP.t = t; MP.at = performance.now(); } });
+function mpLine() { cancelAnimationFrame(MP.lineRaf); const go = () => { MP.lineRaf = 0; if (!MP.on) return; mpScrub.show(); if (!mpScrub.dragging) { const tx = mpFmt(mpNowT()); const n = $('#mpNow'); if (n.textContent !== tx) n.textContent = tx; } if (MP.playing || mpScrub.dragging) MP.lineRaf = requestAnimationFrame(go); }; go(); }
+// "Save in My recordings": the video or recording playing is kept in this score's own list (Listen ›
+// My recordings), with its name, to play again from there; tapped again, it is taken out.
+const keptIdx = () => {
+  const c = MEDIA.cur; if (!c || !c.url || !V.score) return -1;
+  const o = mediaOf(c.url), same = (u) => { const q = mediaOf(u); return o && q ? q.kind === o.kind && String(q.id) === String(o.id) : u === c.url; };
+  return (V.score.listen || []).findIndex((r) => same(r.url));
+};
+function keepSync() {
+  const b = $('#mpKeep'); if (!b) return;
+  const can = !!(V.score && MEDIA.cur && MEDIA.cur.url), on = can && keptIdx() >= 0;
+  b.hidden = !can;
+  b.classList.toggle('on', on);
+  const ico = on ? '#i-kept' : '#i-keep'; if (b.dataset.ico !== ico) { b.dataset.ico = ico; b.innerHTML = `<svg><use href="${ico}"/></svg>`; }
+  const lab = on ? 'In My recordings: tap to take it out' : 'Save in My recordings'; if (b.dataset.en !== lab) { b.dataset.en = lab; b.setAttribute('aria-label', lab); b.title = lab; }
+}
+$('#mpKeep').addEventListener('click', () => {
+  const c = MEDIA.cur; if (!c || !V.score) return;
+  const i = keptIdx();
+  if (i >= 0) { V.score.listen.splice(i, 1); toast('Taken out of My recordings.', 1800); }
+  else {
+    const kind = MP.kind === 'music' ? 'Apple Music recording' : 'YouTube video';
+    V.score.listen = [...(V.score.listen || []), { name: c.name || kind, url: c.url, at: Date.now() }];
+    toast('Saved in My recordings (Listen): it plays from there any time.', 2600);
+  }
+  db.put('scores', V.score); keepSync();
+  if (!$('#panel-listen').hidden) renderListen();
+});
 function mediaStatus(s) {
   if (!s || (s.kind !== 'youtube' && s.kind !== 'music')) return;
   if (!MP.on) mediaPillShow(true);
@@ -11203,9 +11309,8 @@ function mediaStatus(s) {
   // (where it is now, and which video or recording: for its moments)
   MP.t = s.t || 0; MP.key = s.id ? (s.kind === 'music' ? 'am:' : 'yt:') + s.id : '';
   MP.d = s.d || 0; MP.playing = !!s.playing; MP.speed = s.speed || 1; MP.at = performance.now();
-  { const sc = $('#mpScrub'), has = !!(s.ready && MP.d); if (sc.hidden === has) { sc.hidden = !has; $('#mediaPill').classList.toggle('has-scrub', has); } }
   mpLine();
-  momentsSync();
+  momentsSync(); keepSync();
   const p = $('#mediaPill');
   // (Apple Music plays at its own speed: no speed button for it)
   p.classList.toggle('music', s.kind === 'music');
@@ -11214,7 +11319,7 @@ function mediaStatus(s) {
   const pb = $('#mpPlay'), want = s.playing ? '#i-pause' : '#i-play';
   if (pb.dataset.ico !== want) { pb.dataset.ico = want; pb.innerHTML = `<svg><use href="${want}"/></svg>`; pb.setAttribute('aria-label', s.playing ? 'Pause' : 'Play'); }
   const arm = s.a != null && s.b == null, loop = s.a != null && s.b != null;
-  $('#mpNow').textContent = mpFmt(s.t);
+  if (!mpScrub.dragging && performance.now() - (+$('#mpScrub').dataset.held || 0) > 700) $('#mpNow').textContent = mpFmt(s.t);
   $('#mpDur').textContent = s.d ? mpFmt(s.d) : '';
   const sp = Math.round((s.speed || 1) * 100);
   $('#mpSpeedV').textContent = String(sp); $('#mpSpeed').classList.toggle('on', sp !== 100);
@@ -11384,7 +11489,7 @@ function mediaFrame(o) {
   MEDIA.kind = o.kind;
   box.classList.remove('tucked'); box.querySelector('.mf-tab').hidden = true;
   // (a video above its buttons at the bottom of the page)
-  Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: Math.max(8, H - h - (yt ? 116 : 16)) + 'px' });
+  Object.assign(box.style, { width: w + 'px', height: h + 'px', left: W - w - 16 + 'px', top: Math.max(8, H - h - (yt ? (W < 600 ? 150 : 116) : 16)) + 'px' });
   box.querySelector('.mf-frame').src = 'media.html#' + encodeURIComponent(JSON.stringify(o));
 }
 document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="listen"]')) openListen(); });
