@@ -1830,24 +1830,41 @@
 </div>
 
 <!-- the first time Stand opens -->
-<section class="welcome" id="welcome" hidden aria-label="Welcome">
-  <div class="wel-card">
-    <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-    <h1>Welcome to Stand</h1>
-    <p class="hint">Your scores, your markings and your practice, on one stand. Two quick choices and you are ready.</p>
-    <ul class="wel-wow">
-      <li><svg><use href="#i-eye"/></svg><span><b>Turn the page with a wink</b> of your right eye, hands on your instrument.</span></li>
-      <li><svg><use href="#i-ear"/></svg><span><b>Stand listens</b> and turns the page as you reach the end of it.</span></li>
-      <li><svg><use href="#i-drone"/></svg><span><b>A drone that follows the music</b>, and a tuner that learns your intonation.</span></li>
-    </ul>
-    <label class="field"><span>What do you play?</span><select id="welInst"></select></label>
-    <div class="ctl-head"><span>Tools on your home screen</span></div>
-    <div class="chips tool-chips" id="welTools"></div>
-    <p class="hint">You can change both any time in Settings.</p>
-    <div class="wel-actions">
-      <button class="btn ghost" id="welRestore"><svg><use href="#i-cloud"/></svg><span>Bring back a backup</span></button>
-      <button class="btn primary big" id="welGo">Start</button>
+<section class="welcome" id="welcome" hidden aria-label="Welcome" data-step="0">
+  <button class="wel-back" id="welBack" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+  <div class="wel-pages">
+    <div class="wel-page wel-hello" data-p="0">
+      <div class="wel-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <h1 class="wel-title">Stand</h1>
+      <p class="wel-lede">Your scores, your markings and your practice, on one stand.</p>
     </div>
+    <div class="wel-page" data-p="1">
+      <h2 class="wel-h">Hands on your instrument</h2>
+      <ul class="wel-feats" id="welFeats">
+        <li data-for="ipad"><span class="wel-ic"><svg><use href="#i-eye"/></svg></span><span><b>Turn the page with a wink</b>Wink your right eye and the page turns.</span></li>
+        <li data-for="ipad"><span class="wel-ic"><svg><use href="#i-ear"/></svg></span><span><b>Stand listens</b>It turns the page as you reach the end of it.</span></li>
+        <li data-for="ipad"><span class="wel-ic"><svg><use href="#i-drone"/></svg></span><span><b>A drone that follows the music</b>And a tuner that learns your intonation.</span></li>
+        <li data-for="phone"><span class="wel-ic"><svg><use href="#i-lib"/></svg></span><span><b>Your iPad’s scores, in your pocket</b>Read them, mark them, share them as a PDF.</span></li>
+        <li data-for="phone"><span class="wel-ic"><svg><use href="#i-video"/></svg></span><span><b>A camera for your iPad</b>Film yourself playing; the video goes to the iPad.</span></li>
+        <li data-for="phone"><span class="wel-ic"><svg><use href="#i-fork"/></svg></span><span><b>Tuner, drone and metronome</b>Always with you, one tap away.</span></li>
+      </ul>
+    </div>
+    <div class="wel-page" data-p="2">
+      <h2 class="wel-h">What do you play?</h2>
+      <p class="wel-sub">Stand sets up the tuner, the drone and your tools for it.</p>
+      <div class="wel-group">
+        <label class="wel-pick"><span class="sr-only">Your instrument</span><select id="welInst"></select><svg aria-hidden="true"><use href="#i-down"/></svg></label>
+        <button class="wel-tools-row" id="welToolsBtn" aria-expanded="false"><span>Home screen tools</span><span class="wel-tools-sum" id="welToolsSum"></span><svg aria-hidden="true"><use href="#i-down"/></svg></button>
+      </div>
+      <div class="chips tool-chips wel-chips" id="welTools" hidden></div>
+      <p class="wel-foot">You can change both any time in Settings.</p>
+    </div>
+  </div>
+  <div class="wel-bottom">
+    <button class="btn primary wel-next" id="welNext">Continue</button>
+    <button class="btn primary wel-next" id="welGo" hidden>Start</button>
+    <button class="wel-link" id="welRestore"><svg><use href="#i-cloud"/></svg><span>Bring back a backup</span></button>
+    <div class="wel-dots" aria-hidden="true"><i></i><i></i><i></i></div>
   </div>
 </section>
 

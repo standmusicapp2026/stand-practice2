@@ -18,8 +18,9 @@ const PHONE_STEPS = [
   { title: 'A camera for the iPad', text: 'Film yourself playing: the iPhone becomes the iPad’s camera and sends it the video.', at: '#phoneCamTile' },
   { title: 'Settings', text: 'Your instrument, colours and backups to iCloud Drive.', at: '[data-panel="app"]' },
 ];
-export function startTour({ onDone, phone, steps } = {}) {
-  const STEPS = steps || (phone ? PHONE_STEPS : DESK_STEPS);
+export function startTour({ onDone, phone, steps, skipFirst } = {}) {
+  // (after the welcome, its own hello is not said twice)
+  const STEPS = steps || (phone ? PHONE_STEPS : DESK_STEPS).slice(skipFirst ? 1 : 0);
   let i = 0;
   const back = document.createElement('div'); back.className = 'tour';
   const hole = document.createElement('div'); hole.className = 'tour-hole';

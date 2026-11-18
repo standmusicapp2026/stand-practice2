@@ -13012,18 +13012,49 @@ $('#tourAgain').addEventListener('click', () => {
   hidePanel(); setTimeout(() => startTour({ phone: PHONE }), 200);
 });
 function showWelcome() {
-  const w = $('#welcome'); w.hidden = false;
+  const w = $('#welcome'); w.hidden = false; w.classList.toggle('phone', PHONE);
   const sel = $('#welInst'); sel.textContent = '';
   // (nothing is chosen for you: the list starts on "Choose your instrument")
   { const o = el('option', '', 'Choose your instrument'); o.value = ''; o.disabled = true; sel.append(o); }
   fillInstrumentOptions(sel);
   sel.value = S.welcomed && S.instrument ? S.instrument : '';
   let chosen = toolsFor(sel.value || 'other'), touched = false;
-  const draw = () => toolChips($('#welTools'), () => chosen, (v) => { chosen = v; touched = true; });
-  sel.onchange = () => { if (!touched) chosen = toolsFor(sel.value || 'other'); draw(); };
+  const NAMES = Object.fromEntries(TOOLS.map(([k, v]) => [k, tr(v)]));
+  // the tools are a sensible set for the instrument; shown as a short line, opened to change them
+  const sum = () => { const n = chosen.length; $('#welToolsSum').textContent = n ? (n <= 2 ? chosen.map((k) => NAMES[k]).join(', ') : `${NAMES[chosen[0]]}, ${NAMES[chosen[1]]} and ${n - 2} more`) : 'None'; };
+  const draw = () => { toolChips($('#welTools'), () => chosen, (v) => { chosen = v; touched = true; sum(); }); sum(); };
+  sel.onchange = () => { sel.classList.toggle('empty', !sel.value); if (!touched) chosen = toolsFor(sel.value || 'other'); draw(); };
+  sel.classList.toggle('empty', !sel.value);
   draw();
+  $('#welTools').hidden = true; $('#welToolsBtn').setAttribute('aria-expanded', 'false');
+  $('#welToolsBtn').onclick = () => { const open = $('#welTools').hidden; $('#welTools').hidden = !open; $('#welToolsBtn').setAttribute('aria-expanded', String(open)); };
+  // three calm pages: hello, what it does, your instrument
+  const pages = $$('#welcome .wel-page'); let step = 0;
+  const go = (n) => {
+    step = clamp(n, 0, pages.length - 1); w.dataset.step = step;
+    pages.forEach((p, i) => { p.classList.toggle('on', i === step); p.classList.toggle('gone', i < step); });
+    $('#welNext').hidden = step === pages.length - 1; $('#welGo').hidden = step !== pages.length - 1;
+    setTimeout(() => { const f = step === pages.length - 1 ? sel : $('#welNext'); if (document.activeElement && document.activeElement !== document.body && w.contains(document.activeElement)) f.focus({ preventScroll: true }); }, 60);
+  };
+  go(0);
+  $('#welNext').onclick = () => go(step + 1);
+  $('#welBack').onclick = () => go(step - 1);
+  w.onkeydown = (e) => { if (e.key === 'Escape' && step) { e.preventDefault(); go(step - 1); } };
+  // a swipe moves between the pages, as on a new iPhone
+  let sx = null, sy = 0;
+  // (touches as touches: a scrolling page cancels a pointer, never a touch)
+  const sStart = (x, y, t) => { sx = t.closest('select, .chips') ? null : x; sy = y; };
+  const sEnd = (x, y) => { if (sx == null) return; const dx = x - sx, dy = y - sy; sx = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(step + (dx < 0 ? 1 : -1)); };
+  w.ontouchstart = (e) => { const t = e.touches[0]; if (e.touches.length === 1) sStart(t.clientX, t.clientY, e.target); else sx = null; };
+  w.ontouchend = (e) => { const t = e.changedTouches[0]; if (t) sEnd(t.clientX, t.clientY); };
+  w.onpointerdown = (e) => { if (e.pointerType === 'mouse') sStart(e.clientX, e.clientY, e.target); };
+  w.onpointerup = (e) => { if (e.pointerType === 'mouse') sEnd(e.clientX, e.clientY); };
   const done = () => { setInstrument(sel.value || 'other'); S.tools = chosen; S.welcomed = true; saveSettings(); applyTools(); w.hidden = true; };
-  $('#welGo').onclick = () => { done(); if (!S.toured) setTimeout(() => startTour({ onDone: () => { S.toured = true; saveSettings(); } }), 250); };
+  $('#welGo').onclick = () => {
+    done();
+    if (PHONE) { if (!S.phoneToured) setTimeout(() => startTour({ phone: true, skipFirst: true, onDone: () => { S.phoneToured = true; saveSettings(); } }), 250); }
+    else if (!S.toured) setTimeout(() => startTour({ skipFirst: true, onDone: () => { S.toured = true; saveSettings(); } }), 250);
+  };
   $('#welRestore').onclick = () => { done(); showPanel('backup'); $('#bkFiles').hidden = true; renderBackup(); };
 }
 
@@ -13080,8 +13111,10 @@ function showWelcome() {
   // the first time: a short welcome (people who already have scores have been here before)
   // a preview left open when Stand was closed is kept (nothing is ever lost by surprise)
   for (const sc of scores.filter((x) => x.preview)) { delete sc.preview; db.put('scores', sc).catch(() => {}); }
-  if (!S.welcomed) { if (scores.length) { S.welcomed = true; saveSettings(); } else if (!PHONE) showWelcome(); }
-  if (PHONE && !S.phoneToured && !window.__noTour) setTimeout(() => startTour({ phone: true, onDone: () => { S.phoneToured = true; saveSettings(); } }), 700);
+  // (on the iPhone the same welcome, the first time; its tour follows it)
+  const phoneWelcome = PHONE && !S.welcomed && !S.phoneToured && !window.__noTour;
+  if (!S.welcomed) { if (scores.length) { S.welcomed = true; saveSettings(); } else if (!PHONE || phoneWelcome) showWelcome(); }
+  if (PHONE && !phoneWelcome && !S.phoneToured && !window.__noTour) setTimeout(() => startTour({ phone: true, onDone: () => { S.phoneToured = true; saveSettings(); } }), 700);
   renderGoal(); syncWinkUI(); syncTapUI(); initPracticeSync();
   setHomeTab(scores.length ? (S.hometab || 'mine') : 'mine');
   // the home screen is laid out: shown (on the next frame, drawn whole)
