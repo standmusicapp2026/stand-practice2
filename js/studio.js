@@ -1024,7 +1024,7 @@ async function autoSync(o, { from = 0 } = {}) {
     const frames = await pitchTrack(ST.pcm, ST.sr, A, B, (f) => busy('Following your playing…', 'Listening to the recording.', f * 0.45));
     if (cancelled) return;
     const played = notesFrom(frames);
-    let best = null;
+    let best = null; ST._lastCh = ST._lastHm = null;
     if (played.length >= 3) {
       // the page does not say which clef or instrument: try each and keep the best fit
       const clefs = L.clef ? [L.clef, ...['treble', 'bass', 'alto', 'tenor'].filter((c) => c !== L.clef)] : ['treble', 'bass', 'alto', 'tenor'];
@@ -1047,7 +1047,7 @@ async function autoSync(o, { from = 0 } = {}) {
       const ch = alignChords(L.events, ons);
       // a page with chords is better followed chord by chord, unless that clearly fails
       const chordy = L.events.filter((e) => e.pcs.length > 1).length > L.events.length * 0.2;
-      if (ch) ch.alt = best ? best.good : null;
+      if (ch) { ch.alt = best ? best.good : null; ST._lastCh = ch; }
       if (ch && (!best || (chordy ? ch.good > 0.45 || ch.good > best.good : ch.good > best.good + 0.05))) best = ch;
     }
     // neither fits well (a piano or an orchestra behind the soloist): follow the harmony heard
@@ -1057,6 +1057,7 @@ async function autoSync(o, { from = 0 } = {}) {
       if (cancelled) return;
       const hm = alignFrames(L.events, fr);
       try { window.__studioHarmony = hm ? { good: hm.good, shift: hm.shift, events: L.events.length } : { none: true, events: L.events.length }; } catch {}
+      if (hm) ST._lastHm = hm;
       if (hm && (!best || hm.good > best.good + 0.1)) { hm.alt = best ? best.good : null; best = hm; }
     }
     // (for the tests: how well each way of listening fitted; and one may be asked for)
@@ -1066,53 +1067,32 @@ async function autoSync(o, { from = 0 } = {}) {
     busy('Following your playing…', 'Lining them up with the score.', 0.9);
     await new Promise((r) => setTimeout(r, 30));
     const nb = L.bars.length;
-    const byBar = Array.from({ length: nb }, () => []);
-    for (const e of best.evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
-    // the bar times: every note heard, where it stands in its bar, against when it was heard, with
-    // the pace allowed to change only gradually (a slowing down, a speeding up) — see fitBarTimes
-    let fitT = fitBarTimes(best.evs, L.bars, L.notes);
-    // and the whole playing against the whole page in time (see pacedAlign): note by note, music that
-    // repeats itself (a tremolo, the same bar again) can be matched a bar or two out, the page squeezed
-    // into the first part of the playing; in time it cannot. Of the two, the one under which more of
-    // what was heard is what the page says at that moment is kept.
-    // (a line of single notes: the pitches heard are the soloist's. With an orchestra or a piano
-    // behind, or notes the pitch could not be heard clearly in, this is tried too, in the keys the
-    // instrument most likely sounds in, and kept only when it clearly fits better)
-    if (L.notes.length >= 4) {
-      try {
-        const clef = (notesBest && notesBest.clef) || L.clef || 'treble';
-        const solo = best.how === 'notes';
-        const kinds = [obsOfPitches(frames)];
-        // (with something behind the soloist: what sounds as a whole, too)
-        if (!solo) kinds.push(obsOfChroma(await chromaFrames(ST.pcm, ST.sr, A, B)));
-        if (cancelled) return;
-        const shifts = solo ? [notesBest.shift || 0] : [...new Set([notesBest ? notesBest.shift || 0 : 0, best.shift !== undefined && best.how !== 'notes' ? best.shift : 0, -2, 0, -9, 2])];
-        const ref = fitT ? medianDur(fitT) : null;
-        const paces = ref && solo ? [ref] : [ref, 1.2, 1.8, 2.6].filter((q) => q > 0.2);
-        let pick = null;
-        for (const obs of kinds) for (const sh of shifts) {
-          const sn = pitchSamples(L, clef, sh);
-          const a0 = fitT ? frameAgreement(sn, L.bars.length, fitT, obs) : -1;
-          for (const pc of paces) {
-            const T = pacedAlign(sn, L.bars.length, obs, pc, A, B);
-            if (!T) continue;
-            const a = frameAgreement(sn, L.bars.length, T, obs);
-            if (!pick || a - a0 > pick.gain) pick = { T, a, a0, gain: a - a0 };
-            if (globalThis.__fitDbg) (globalThis.__fitDbg.cands ||= []).push({ kind: obs === kinds[0] ? 'p' : 'c', sh, pc: Math.round(pc * 100) / 100, a: Math.round(a * 1000) / 1000, a0: Math.round(a0 * 1000) / 1000, T: T.map((x) => Math.round(x * 10) / 10) });
-          }
-          await new Promise((r) => setTimeout(r, 0));
-        }
-        const a1 = pick ? pick.a0 : -1, a2 = pick ? pick.a : -1, paced = pick && pick.T;
-        if (globalThis.__fitDbg) Object.assign(globalThis.__fitDbg, { a1, a2 });
-        if (paced && a2 > a1 + (best.how === 'notes' ? 0.02 : 0.1) && a2 > 0.3) {
-          fitT = paced;
-          // (the notes matched far from where the page now puts them were matched wrongly: left out)
-          for (const e of best.evs) { if (e.t === null) continue; const b = L.bars[e.bar], f = clamp((e.x - b.x0) / Math.max(1, b.x1 - b.x0), 0, 1), want = fitT[e.bar] + f * (fitT[e.bar + 1] - fitT[e.bar]); if (Math.abs(e.t - want) > (fitT[e.bar + 1] - fitT[e.bar]) * 0.3) e.t = null; }
-          for (let k = 0; k < nb; k++) byBar[k] = [];
-          for (const e of best.evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
-        }
-      } catch (err) { console.warn('paced', err); }
+    // each way of listening that fitted at all is taken to the end (its bar times, in time with the
+    // whole playing); of these, the one under which more of what is heard is what the page has at
+    // that moment is kept — judged the same way for all (the pitches heard and all that sounds)
+    const cands = [best];
+    if (globalThis.__judgeFinal ?? 1) for (const c of [notesBest, ST._lastCh, ST._lastHm]) if (c && !cands.includes(c) && c.good > 0.3 && globalThis.__studioHow !== 'notes') cands.push(c);
+    ST._lastCh = ST._lastHm = null;
+    const cache = {};
+    const chromaOf = async () => cache.c || (cache.c = obsOfChroma(await chromaFrames(ST.pcm, ST.sr, A, B)));
+    let fin = null;
+    for (const c of cands) {
+      const r = await finishTimes(c, notesBest, frames, L, A, B, chromaOf, () => cancelled);
+      if (cancelled) return;
+      if (!r) continue;
+      if (cands.length > 1) {
+        const sn = pitchSamples(L, (notesBest && notesBest.clef) || L.clef || 'treble', (notesBest && notesBest.shift) || 0);
+        cache.p ||= obsOfPitches(frames);
+        r.judge = frameAgreement(sn, nb, r.fitT, cache.p) + frameAgreement(sn, nb, r.fitT, await chromaOf()) + (c === best ? 0.045 : 0);
+      }
+      if (globalThis.__fitDbg) (globalThis.__fitDbg.judge ||= []).push({ how: c.how, good: c.good, judge: r.judge });
+      if (!fin || r.judge > fin.judge) fin = { ...r, c };
     }
+    if (fin) best = fin.c;
+    try { if (window.__studioPick) window.__studioPick.final = best.how; } catch {}
+    let fitT = fin && fin.fitT;
+    const byBar = fin ? fin.byBar : [];
+    if (fin) best.evs = fin.evs;
     if (!fitT) { busy(null); D.toast('Your playing could not be matched with the score. Use Tap along.', 5000); return; }
     const times = fitT.slice(0, nb);
     // (the end of the last bar: where the pace puts it, not past the last note heard by much)
@@ -1136,6 +1116,61 @@ async function autoSync(o, { from = 0 } = {}) {
     saveSoon(); renderSide(); renderTimeline(); frame();
     D.toast(best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
+}
+// One way of listening taken to the end: the bar times from the notes it matched (fitBarTimes),
+// then, against the whole playing in time (pacedAlign), kept when that fits clearly better. Returns
+// { fitT, evs, byBar } (its own copy of the notes matched), or null.
+async function finishTimes(best, notesBest, frames, L, A, B, chromaOf, stop) {
+  const nb = L.bars.length;
+  const evs = best.evs.map((e) => ({ ...e }));
+  const byBar = Array.from({ length: nb }, () => []);
+  for (const e of evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
+  // the bar times: every note heard, where it stands in its bar, against when it was heard, with
+  // the pace allowed to change only gradually (a slowing down, a speeding up) — see fitBarTimes
+  let fitT = fitBarTimes(evs, L.bars, L.notes);
+  // and the whole playing against the whole page in time (see pacedAlign): note by note, music that
+  // repeats itself (a tremolo, the same bar again) can be matched a bar or two out, the page squeezed
+  // into the first part of the playing; in time it cannot. Of the two, the one under which more of
+  // what was heard is what the page says at that moment is kept.
+  // (a line of single notes: the pitches heard are the soloist's. With an orchestra or a piano
+  // behind, or notes the pitch could not be heard clearly in, this is tried too, in the keys the
+  // instrument most likely sounds in, and kept only when it clearly fits better)
+  if (L.notes.length >= 4) {
+    try {
+      const clef = (notesBest && notesBest.clef) || L.clef || 'treble';
+      const solo = best.how === 'notes';
+      const kinds = [obsOfPitches(frames)];
+      // (with something behind the soloist: what sounds as a whole, too)
+      if (!solo) kinds.push(await chromaOf());
+      if (stop()) return null;
+      const shifts = solo ? [notesBest.shift || 0] : [...new Set([notesBest ? notesBest.shift || 0 : 0, best.shift !== undefined && best.how !== 'notes' ? best.shift : 0, -2, 0, -9, 2])];
+      const ref = fitT ? medianDur(fitT) : null;
+      const paces = ref && solo ? [ref] : [ref, 1.2, 1.8, 2.6].filter((q) => q > 0.2);
+      let pick = null;
+      for (const obs of kinds) for (const sh of shifts) {
+        const sn = pitchSamples(L, clef, sh);
+        const a0 = fitT ? frameAgreement(sn, L.bars.length, fitT, obs) : -1;
+        for (const pc of paces) {
+          const T = pacedAlign(sn, L.bars.length, obs, pc, A, B);
+          if (!T) continue;
+          const a = frameAgreement(sn, L.bars.length, T, obs);
+          if (!pick || a - a0 > pick.gain) pick = { T, a, a0, gain: a - a0 };
+          if (globalThis.__fitDbg) (globalThis.__fitDbg.cands ||= []).push({ how: best.how, kind: obs === kinds[0] ? 'p' : 'c', sh, pc: Math.round(pc * 100) / 100, a: Math.round(a * 1000) / 1000, a0: Math.round(a0 * 1000) / 1000, T: T.map((x) => Math.round(x * 10) / 10) });
+        }
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const a1 = pick ? pick.a0 : -1, a2 = pick ? pick.a : -1, paced = pick && pick.T;
+      if (globalThis.__fitDbg) Object.assign(globalThis.__fitDbg, { a1, a2 });
+      if (paced && a2 > a1 + (best.how === 'notes' ? 0.02 : 0.1) && a2 > 0.3) {
+        fitT = paced;
+        // (the notes matched far from where the page now puts them were matched wrongly: left out)
+        for (const e of evs) { if (e.t === null) continue; const b = L.bars[e.bar], f = clamp((e.x - b.x0) / Math.max(1, b.x1 - b.x0), 0, 1), want = fitT[e.bar] + f * (fitT[e.bar + 1] - fitT[e.bar]); if (Math.abs(e.t - want) > (fitT[e.bar + 1] - fitT[e.bar]) * 0.3) e.t = null; }
+        for (let k = 0; k < nb; k++) byBar[k] = [];
+        for (const e of evs) byBar[e.bar].push({ x: e.x, t: e.t, rep: e.rep });
+      }
+    } catch (err) { console.warn('paced', err); }
+  }
+  return fitT ? { fitT, evs, byBar, judge: 0 } : null;
 }
 // ---- following in time ----
 // The page as pitches through time: each bar cut into small steps, each step with the pitch classes

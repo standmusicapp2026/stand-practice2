@@ -3313,6 +3313,8 @@ function sharpenInk() {
   if (!V.pages.length) { sharpOff(); return; }
   if (GS && (GS.kind === 'ink' || GS.kind === 'erase' || GS.kind === 'smart')) { Z.inkT = setTimeout(sharpenInk, 300); return; }
   Z.sharpWhere = Z.s + ':' + Z.x + ':' + Z.y + ':' + V.pages.length + ':' + (V.pages[0] && V.pages[0].art && V.pages[0].art.width);
+  clearTimeout(Z.putT); Z.putFn = null;
+  const views = [];
   const dpr = Math.min(window.devicePixelRatio || 1, 3), sr = stage.getBoundingClientRect();
   for (const p of V.pages) {
     if (!p.layer || !p.ink || !p.art) continue;
@@ -3337,10 +3339,18 @@ function sharpenInk() {
     sharpArtTile(p, r, sr, dpr);
     // the whole page is already as sharp as the screen: nothing to gain
     if (Math.abs(pw / (x1 - x0) - p.art.width) < 2 && Math.abs(r.width * dpr - p.art.width) < 2) { full(); continue; }
-    Object.assign(p.ink.style, { inset: 'auto', left: x0 * 100 + '%', top: y0 * 100 + '%', width: (x1 - x0) * 100 + '%', height: (y1 - y0) * 100 + '%' });
-    p.layer.setView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pw, ph);
+    views.push([p, x0, y0, x1, y1, pw, ph]);
   }
-  if (Z.s > 1.05 && !TURN()) sharpDraw(); else sharpOff();
+  const put = () => { for (const [p, x0, y0, x1, y1, pw, ph] of views) { Object.assign(p.ink.style, { inset: 'auto', left: x0 * 100 + '%', top: y0 * 100 + '%', width: (x1 - x0) * 100 + '%', height: (y1 - y0) * 100 + '%' }); p.layer.setView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pw, ph); } };
+  if (Z.s > 1.05 && !TURN()) {
+    // the layer over the score first (what shows); the pages' own markings layers, hidden under it
+    // meanwhile, are drawn again just after, in a moment of their own (both at once held the screen
+    // up for a frame or more just after a zoom)
+    sharpDraw();
+    // (should the layer over the score go before then, they are drawn at that moment: see sharpOff)
+    if (SHARP.on && views.length && (globalThis.__inkLater ?? 1)) { const fn = () => { if (Z.putFn !== fn) return; Z.putFn = null; clearTimeout(Z.putT); put(); }; Z.putFn = fn; Z.putT = setTimeout(fn, 0); }
+    else put();
+  } else { put(); sharpOff(); }
 }
 // Zoomed in and still, the markings are shown on a layer of their own over the score, lined up
 // with the screen's own pixels and outside the zoom, exactly as a line is drawn while the Pencil is
@@ -3351,6 +3361,7 @@ function sharpSig() {
   return SHARP.pages.map((p) => { const r = p.inner.getBoundingClientRect(); return r.left.toFixed(2) + ',' + r.top.toFixed(2) + ',' + r.width.toFixed(2); }).join(';');
 }
 function sharpOff() {
+  if (Z.putFn) Z.putFn();
   if (!SHARP.on) return;
   SHARP.on = false; cancelAnimationFrame(SHARP.raf); SHARP.raf = 0; cancelAnimationFrame(SHARP.full); SHARP.full = 0;
   document.body.classList.remove('ink-over-on');
@@ -6702,6 +6713,9 @@ window.addEventListener('pointermove', (e) => {
   if (!GS) return;
   if ((GS.kind === 'ink' || GS.kind === 'smart' || GS.kind === 'erase' || GS.kind === 'lasso' || GS.kind === 'tape') && GS.id === e.pointerId) { moveInk(e); return; }
   if (GS.kind === 'pinch') {
+    // (the markings' slower redraws — the whole page under the sharp part, the save — wait while the
+    // fingers move, as they do while the Pencil writes)
+    inkActive();
     const t = touches(); if (t.length < 2) return;
     const [a, b] = t;
     const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;

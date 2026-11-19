@@ -968,21 +968,27 @@ function readStaff(s, ctx, header) {
     // the hole of a head stacked just above or below (a chord) is not 'beside' this one
     const others = heads.filter((q) => q !== hd && Math.abs(q.cx - hd.cx) < sp * 1.6 && Math.abs(q.cy - hd.cy) < sp * 1.6);
     // (the pieces of the head's own hole, a staff line across it, count as inside wherever they reach)
-    // (only for a head on a staff line: the line splits its hole in two, above and below it)
-    const onLine = ((hd.p % 2) + 2) % 2 === 0 && hd.p >= 0 && hd.p <= 8, lineY = onLine ? yAt(s, hd.p, hd.cx) : 0;
+    // (only for a head on a staff line, or on a ledger line above or below: the line splits its hole
+    // in two, above and below it)
+    const onLine = ((hd.p % 2) + 2) % 2 === 0 && ((hd.p >= 0 && hd.p <= 8) || ((globalThis.__ledgerHole ?? 1) && hd.p >= -8 && hd.p <= 16)), lineY = onLine ? yAt(s, hd.p, hd.cx) : 0;
     const own = new Set(), HLab = onLine ? ctx.holeLab : null, HC = ctx.holeComps;
     if (HLab) for (let dy = -Math.round(ry); dy <= Math.round(ry); dy++) for (let dx = -Math.round(rx); dx <= Math.round(rx); dx++) {
       const x = Math.round(hd.cx) + dx, y = Math.round(hd.cy) + dy; if (x < 0 || y < 0 || x >= w || y >= h) continue;
       const id = HLab[y * w + x]; if (id < 0 || own.has(id)) continue;
       const c = HC[id]; if (!c) continue;
       const ccx = (c.x0 + c.x1) / 2, ccy = (c.y0 + c.y1) / 2;
-      if (((ccx - hd.cx) / (rx * 0.9)) ** 2 + ((ccy - hd.cy) / (ry * 1.3)) ** 2 <= 1 && c.w <= rx * 1.7 && c.h <= ry * 1.7 && c.x0 >= hd.cx - rx * 1.1 && c.x1 <= hd.cx + rx * 1.1 && c.y0 >= hd.cy - ry * 1.6 && c.y1 <= hd.cy + ry * 1.6 && (Math.abs(c.y1 - lineY) <= T + 2 || Math.abs(c.y0 - lineY) <= T + 2)) own.add(id);
+      // (on a ledger line, the head's middle is read off the line sticking out beside it: the hole
+      // may sit further to one side, as far as a whole note is wide)
+      const kx = hd.p < 0 || hd.p > 8 ? 1.45 : 1;
+      if (((ccx - hd.cx) / (rx * 0.9 * kx)) ** 2 + ((ccy - hd.cy) / (ry * 1.3)) ** 2 <= 1 && c.w <= rx * 1.7 && c.h <= ry * 1.7 && c.x0 >= hd.cx - rx * 1.1 * kx && c.x1 <= hd.cx + rx * 1.1 * kx && c.y0 >= hd.cy - ry * 1.6 && c.y1 <= hd.cy + ry * 1.6 && (Math.abs(c.y1 - lineY) <= T + 2 || Math.abs(c.y0 - lineY) <= T + 2)) own.add(id);
     }
     // (both halves, one each side of the line)
     if (own.size) { const cs = [...own].map((id) => HC[id]); if (!(cs.some((c) => Math.abs(c.y1 - lineY) <= T + 2 && c.y0 < lineY) && cs.some((c) => Math.abs(c.y0 - lineY) <= T + 2 && c.y1 > lineY))) own.clear(); }
+    // (a head as wide as a whole note: its hole is wider too)
+    const kw = (globalThis.__wideHole ?? 1) && hd.wRow > sp * 1.6 && !hd.stem ? 1.4 : 1;
     for (let dy = -Math.round(sp * 0.9); dy <= Math.round(sp * 0.9); dy++) for (let dx = -Math.round(sp * 1.0); dx <= Math.round(sp * 1.0); dx++) {
       const x = Math.round(hd.cx) + dx, y = Math.round(hd.cy) + dy; if (x < 0 || y < 0 || x >= w || y >= h || !holes[y * w + x]) continue;
-      if ((dx / (rx * 0.85)) ** 2 + (dy / (ry * 1.1)) ** 2 <= 1 || (HLab && own.has(HLab[y * w + x]))) inn++;
+      if ((dx / (rx * 0.85 * kw)) ** 2 + (dy / (ry * 1.1)) ** 2 <= 1 || (HLab && own.has(HLab[y * w + x]))) inn++;
       else if (!others.some((q) => ((x - q.cx) / (rx * 0.85)) ** 2 + ((y - q.cy) / (ry * 1.1)) ** 2 <= 1)) out++;
     }
     if (TR && Math.abs(hd.cx - TR.x) < sp * 0.8) TR.log.push(['holeAt', inn, out, Math.round(hd.cx), Math.round(hd.cy), rx, ry]);
@@ -1347,6 +1353,9 @@ function readStaff(s, ctx, header) {
   }
   // the dots of a repeat sign are not the dot of the note before them
   for (const hd of heads) if (hd.dots && merged.some((b) => b.endRepeat && b.x > hd.cx && b.x - hd.right < sp * 1.9)) hd.dots = 0;
+  // a stemless 'whole note' on a barline is no note: the barline and the curl of a rest just after it
+  // (a semiquaver rest) close in a little white space that reads as a hollow head
+  if (globalThis.__wholeOnBar ?? 1) heads = heads.filter((hd) => hd.stem || !hd.hollow || !merged.some((b) => b.x >= hd.left - sp * 0.15 && b.x - (b.w || 0) <= hd.right + sp * 0.15));
   // ---- the start of the line: clef, key, time
   // (a barline-like stroke can be part of a C clef, so the header is read without them)
   const firstBar = merged.find((b) => b.x > s.x0 + sp * 5.5);
@@ -1473,12 +1482,18 @@ function readStaff(s, ctx, header) {
     if (heads.some((hd) => real(hd) && hd.cx > c.x0 - sp * 0.3 && hd.cx < c.x1 + sp * 0.3 && hd.cy > c.y0 - sp * 0.6 && hd.cy < c.y1 + sp * 0.6)) { why('c6'); continue; }
     if (heads.some((hd) => real(hd) && hd.stem && hd.stem.x >= c.x0 - 1 && hd.stem.x <= c.x1 + 1 && ((hd.stem.top <= c.y1 && hd.stem.bot >= c.y0)))) { why('c7'); continue; }
     if (c.w > sp * 1.8 || c.h > sp * 4.2 || c.h < sp * 0.3) { why('c8'); continue; }
-    let t = null;
+    let t = null, breve = false;
     if (ctx.dbg && c.h > sp * 1.3) (ctx.restTrace = ctx.restTrace || []).push({ x0: c.x0, w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2), pc: +pc.toFixed(1), k: classify(shapeOf(img, w, c.x0, c.y0, c.x1, c.y1, sp, lab, c.id), ['r4', 'r8', 'r16', 'r32', 'sharp', 'flat', 'natural', 'treble', 'bass', 'alto', 'd2', 'd3', 'd4', 'd6', 'd8']) });
     if (c.h < sp * 0.95 && c.w > sp * 0.8 && c.w < sp * 1.7 && c.n > c.w * c.h * 0.7) {
       // a block: hanging from the 4th line is a whole rest, sitting on the middle line a half rest
       const l6 = yAt(s, 6, c.x0), l4 = yAt(s, 4, c.x0);
       if (Math.abs(c.y0 - (l6 - T / 2)) < sp * 0.3) t = 1; else if (Math.abs(c.y1 - (l4 + T / 2)) < sp * 0.3) t = 2;
+    } else if ((globalThis.__breveRest ?? 1) && c.h >= sp * 0.75 && c.h <= sp * 1.2 && c.w >= sp * 0.3 && c.w < sp * 0.8 && c.n > c.w * c.h * 0.8) {
+      // the breve rest (old music in 4/2, a whole bar of rest): a block filling the space between the
+      // 3rd and 4th lines, narrower than a whole rest. Alone in its bar it fills the bar, as a whole
+      // rest does
+      const l6 = yAt(s, 6, c.x0), l4 = yAt(s, 4, c.x0);
+      if (Math.abs(c.y0 - (l6 - T / 2)) < sp * 0.3 && Math.abs(c.y1 - (l4 + T / 2)) < sp * 0.3) { t = 1; breve = true; }
     } else if (c.h > sp * 1.05) {
       const k = classify(shapeOf(img, w, c.x0, c.y0, c.x1, c.y1, sp, lab, c.id), ['r4', 'r8', 'r16', 'r32', 'sharp', 'flat', 'natural', 'treble', 'bass', 'alto', 'd2', 'd3', 'd4', 'd6', 'd8']);
       if (k.d < 0.36 && k.cls[0] === 'r') t = { r4: 4, r8: 8, r16: 16, r32: 32 }[k.cls];
@@ -1492,7 +1507,7 @@ function readStaff(s, ctx, header) {
     if (t) {
       // a dot just after the rest
       const dot = compsC.some((q) => q !== c && q.x0 > c.x1 && q.x0 < c.x1 + sp * 1.0 && q.w < sp * 0.7 && q.h < sp * 0.7 && q.w > sp * 0.17 && q.h > sp * 0.17 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, q.x0) - 5) < 2.2);
-      rests.push({ x: c.x0, t, cx: (c.x0 + c.x1) / 2, w: c.w, dots: dot ? 1 : 0 });
+      rests.push({ x: c.x0, t, cx: (c.x0 + c.x1) / 2, w: c.w, dots: dot ? 1 : 0, ...(breve ? { breve } : {}) });
     }
   }
   // ---- clef and time changes along the line (a clef in the middle of a line is drawn smaller)
@@ -1890,7 +1905,8 @@ function readStaff(s, ctx, header) {
   // over the rest and close above the staff count — a fingering, a bar number or a triplet's 3 belong
   // to notes, a clef or a barline, never stand over a rest)
   for (const r of rests) {
-    if (r.multi || r.t !== 1) continue;
+    // (a breve rest's number is the group's: see below)
+    if (r.multi || r.t !== 1 || r.breve) continue;
     const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return Math.abs(qc - r.cx) < sp * 1.3 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 4.5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 2.2; }).sort((a, b2) => a.x0 - b2.x0);
     if (!ds.length || ds.length > 2) continue;
     if (heads.some((hd) => Math.abs(hd.cx - r.cx) < sp * 2.5)) continue;
@@ -1900,6 +1916,16 @@ function readStaff(s, ctx, header) {
       if (k && k.d < 0.4) n = n * 10 + +k.cls.slice(1); else okAll = false;
     }
     if (okAll && n >= 2 && n <= 99) { r.multi = n; if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ multi: n, x: r.x, whole: true }); }
+  }
+  // (old church rests side by side — a block for four bars, a whole rest for one — under one number:
+  // the bar is that many bars of rest, and its other blocks are no rests of their own)
+  if (globalThis.__multiOnly ?? 1) {
+    const xs = [startX, ...merged.map((b) => b.x).filter((x) => x > startX + sp), s.x1 + sp];
+    for (const r of rests.filter((q) => q.multi)) {
+      let i = 0; while (i + 1 < xs.length && xs[i + 1] <= r.cx) i++;
+      const a = xs[i], z = xs[i + 1] ?? s.x1 + sp;
+      for (let k = rests.length - 1; k >= 0; k--) if (rests[k] !== r && !rests[k].multi && rests[k].cx > a && rests[k].cx < z && rests[k].t <= 2) rests.splice(k, 1);
+    }
   }
   // (any bar with no note in it and a number over its middle, above the staff: as many bars of rest,
   // whatever stands for them — a thick bar, a whole rest, or old church rests, blocks for two and four
@@ -3166,7 +3192,13 @@ function chooseTime(st, bars) {
     return t;
   };
   // how many bars add up in a time (with their tuplets, without other repairs)
-  const inner = bars.length > 2 ? bars.slice(1, -1) : bars;
+  // (a bar of a whole rest alone — or a bar of rests given by a number — says nothing: it fills a bar
+  // of any time. Counted as a whole note's length, a page beginning with bars of rest was read in
+  // 2/2 or 4/4 whatever its digits said)
+  const restBar = (b) => (globalThis.__restBarNone ?? 1) && b.length === 1 && b[0].rest && (b[0].t === 1 || b[0].multi);
+  const inner0 = bars.length > 2 ? bars.slice(1, -1) : bars;
+  // (only bars of rest: nothing to weigh, the digits as read are kept)
+  const inner = inner0.filter((b) => !restBar(b));
   const sums = inner;
   const fit = (t) => {
     const tot = (WHOLE * t[0]) / t[1];
@@ -3185,6 +3217,8 @@ function chooseTime(st, bars) {
     if (st.timeAlt && st.timeAlt.u) {
       for (const u of st.timeAlt.u[0] || []) for (const l of (st.timeAlt.l && st.timeAlt.l[0]) || []) if (u.d < 0.45 && l.d < 0.45 && [2, 4, 8].includes(l.v) && u.v > 0) alts.push([u.v, l.v]);
     }
+    // (one or two bars to weigh are not enough to doubt the digits)
+    if ((globalThis.__timeFew ?? 1) && inner.length < 3) return pick(read);
     const best = alts.map((t) => ({ t, f: fit(t) + (t === read ? 0.15 : 0) })).sort((a, b) => b.f - a.f)[0];
     return pick(best.t);
   }

@@ -387,15 +387,19 @@ export class KeyFollower {
         // (no attack just before, and not just out of silence: the same note sounding on, misread)
         const fresh = !(globalThis.__kfOnset ?? 1) || now - (this.onsetAt ?? -1e9) < 220 || now - (this.quietAt ?? -1e9) < 220;
         const RUN = globalThis.__kfRun ?? 1;
-        if (this.pcRun === RUN && !fresh && this.lastNotePc !== undefined) { this.pcRun = 0; this.prevPc = -1; return; }
+        // (a slurred note — no attack, the bow going on — a step or two from the last: a note too. A
+        // note sounding on and fading, misread, is read the same note, its octave or its fifth, not that)
+        const iv = this.lastMidi !== undefined ? Math.abs(Math.round(midi) - this.lastMidi) : 0;
+        const slur = G('__kfSlur', 1) && iv >= 1 && iv <= G('__kfSlurMax', 4) && now - (this.lastNoteAt ?? -1e9) < G('__kfSlurGap', 600);
+        if (this.pcRun === RUN && !fresh && !slur && this.lastNotePc !== undefined) { this.pcRun = 0; this.prevPc = -1; return; }
         if (this.pcRun < RUN) return;
         if (this.pcRun === RUN && V2()) this._noteOn(pc, now - 40 * (RUN + 1));
-        if (this.pcRun === RUN) { this.lastNotePc = pc; this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); const ra = this.recentAt || (this.recentAt = []); ra.push(now); if (ra.length > 24) ra.shift(); }
+        if (this.pcRun === RUN) { this.lastNotePc = pc; this.lastMidi = Math.round(midi); this.lastNoteAt = now; this.onsets++; this.noteW = 0; (this.recent || (this.recent = [])).push(midi); if (this.recent.length > 24) this.recent.shift(); const ra = this.recentAt || (this.recentAt = []); ra.push(now); if (ra.length > 24) ra.shift(); }
         // each note counts once: a little for being played, then for as long as it sounds, up to a cap
         const add = (this.pcRun === RUN ? 0.15 : 0) + (this.noteW < NOTE_CAP ? Math.min(dt, NOTE_CAP - this.noteW) : 0);
         this.noteW += dt;
         const w = add * (midi < 57 ? 1.15 : 1); this.h[pc] += w; this.r[pc] += w; this.ev[pc] += w;
-        heard = true;
+        heard = true; this.lastNoteAt = now;
       } else { this.prevPc = pc; this.pcRun = 0; }
     } else {
       this.prevPc = -1; this.pcRun = 0;

@@ -577,7 +577,9 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 /* zoomed in and still: the markings on a layer lined up with the screen (the page's own hidden under it) */
 .ink-over { position: fixed; z-index: 7; pointer-events: none; }
 .ink-over[hidden] { display: none; }
-body.ink-over-on #stage canvas.ink { visibility: hidden; }
+/* (hidden by opacity, not visibility: kept ready on the GPU, so the first frame of a pinch, when they
+   show again, does not wait for them) */
+body.ink-over-on #stage canvas.ink { opacity: 0; }
 .zoom-pill { position: absolute; z-index: 9; right: max(14px, env(safe-area-inset-right)); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); min-height: 34px; padding: 0 14px; border-radius: 17px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); font-size: 13px; font-weight: 600; color: var(--ink); }
 .sel-box { position: absolute; z-index: 5; border: 1px dashed color-mix(in srgb, var(--accent-text) 70%, transparent); border-radius: 3px; background: transparent; touch-action: none; cursor: move; }
 .sel-handle { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); transform: scale(var(--inv, 1)); cursor: nwse-resize; }
