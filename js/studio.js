@@ -417,6 +417,84 @@ async function prepareOverlay(o) {
   ST.strips.set(o.id, st);
 }
 async function buildStrip(o) {
+  const st = await buildStripRaw(o);
+  // the music made clean for the video: deep black ink, white paper, smooth sharp edges, enough pixels
+  if ((globalThis.__cleanStrip ?? 1) && o.layout.sp) try { cleanStrip(st, o.layout.sp); } catch (e) { console.warn('clean strip', e); }
+  return st;
+}
+// The line of music cleaned, as an engraver's print looks: drawn bigger where its staff is small (so it
+// stays sharp in the video), the paper's light made even (the shadow of a photo, a grey scan), then the
+// ink made solid black and the paper pure white, the edge between them kept smooth but narrow — thin
+// lines (staff lines, stems, slurs) helped a little first, so they do not fade.
+function cleanStrip(st, sp0) {
+  const src = st.canvas, W0 = src.width, H0 = src.height, k0 = st.k || 1;
+  const sp = sp0 * k0;
+  const LIMIT = /iPhone|iPod/.test(navigator.userAgent) ? 8e6 : 14e6;
+  let f = Math.min(2.5, Math.max(1, 24 / sp));
+  f = Math.min(f, Math.sqrt(LIMIT / (W0 * H0)), 32000 / W0);
+  if (f < 1.08) f = 1;
+  const W = Math.round(W0 * f), H = Math.round(H0 * f);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d', { willReadFrequently: true }); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.drawImage(src, 0, 0, W, H);
+  const id = g.getImageData(0, 0, W, H), d = id.data, N = W * H;
+  const Lm = new Uint8ClampedArray(N);
+  for (let i = 0, j = 0; i < N; i++, j += 4) Lm[i] = (d[j] * 299 + d[j + 1] * 587 + d[j + 2] * 114) / 1000;
+  // the paper's own light, in blocks of a few spaces: the brightest of each block (its 90th per cent)
+  const B = Math.max(16, Math.round(sp * f * 4)), bx = Math.ceil(W / B), by = Math.ceil(H / B), bg = new Float32Array(bx * by);
+  const hist = new Uint32Array(256);
+  for (let yb = 0; yb < by; yb++) for (let xb = 0; xb < bx; xb++) {
+    hist.fill(0); let n = 0;
+    for (let y = yb * B; y < Math.min(H, (yb + 1) * B); y += 2) for (let x = xb * B; x < Math.min(W, (xb + 1) * B); x += 2) { hist[Lm[y * W + x]]++; n++; }
+    let k = 255, acc = 0; const want = n * 0.1; while (k > 0 && acc + hist[k] < want) acc += hist[k--];
+    bg[yb * bx + xb] = Math.max(120, k);
+  }
+  const bgAt = (x, y) => { const fx = Math.min(bx - 1, Math.max(0, x / B - 0.5)), fy = Math.min(by - 1, Math.max(0, y / B - 0.5)), x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(bx - 1, x0 + 1), y1 = Math.min(by - 1, y0 + 1), ax = fx - x0, ay = fy - y0;
+    return (bg[y0 * bx + x0] * (1 - ax) + bg[y0 * bx + x1] * ax) * (1 - ay) + (bg[y1 * bx + x0] * (1 - ax) + bg[y1 * bx + x1] * ax) * ay; };
+  // darkness against the paper (0 paper … 1 ink); the ink's own level: its darkest few per cent
+  const dk = new Float32Array(N);
+  for (let y = 0; y < H; y++) { for (let x = 0; x < W; x++) { const i = y * W + x; dk[i] = Math.max(0, 1 - Lm[i] / bgAt(x, y)); } }
+  { const hs = new Uint32Array(256); let n = 0; for (let i = 0; i < N; i += 3) { const v = Math.round(dk[i] * 255); if (v > 40) { hs[v]++; n++; } }
+    let k = 255, acc = 0; const want = Math.max(1, n * 0.08); while (k > 40 && acc + hs[k] < want) acc += hs[k--];
+    const top = Math.max(0.25, k / 255); for (let i = 0; i < N; i++) dk[i] = Math.min(1, dk[i] / top); }
+  // thin lines helped: a light unsharp mask (the pixel against the mean of its neighbours)
+  const r = Math.max(1, Math.round(f)), sh = new Float32Array(N);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, xa = Math.max(0, x - r), xz = Math.min(W - 1, x + r), ya = Math.max(0, y - r), yz = Math.min(H - 1, y + r);
+    const m = (dk[ya * W + x] + dk[yz * W + x] + dk[y * W + xa] + dk[y * W + xz]) / 4;
+    sh[i] = dk[i] + 0.6 * (dk[i] - m);
+  }
+  // the staff's lines whole: a row that is ink along most of the line is a staff line; its short
+  // breaks (where a photo's line was faint, or where the lines of the page were joined) are filled
+  {
+    const cov = new Float32Array(H);
+    for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x += 2) if (sh[y * W + x] > 0.45) n++; cov[y] = n / Math.ceil(W / 2); }
+    const gmax = Math.max(3, Math.round(sp * f * 0.6));
+    for (let y = 0; y < H; y++) {
+      if (cov[y] < 0.5) continue;
+      let last = -1;
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (sh[i] > 0.45) {
+          if (last >= 0 && x - last > 1 && x - last <= gmax) { const v = Math.min(sh[y * W + last], sh[i]); for (let q = last + 1; q < x; q++) if (sh[y * W + q] < v) sh[y * W + q] = v; }
+          last = x;
+        }
+      }
+    }
+  }
+  // solid ink, white paper, a narrow smooth edge
+  const lo = 0.26, hi = 0.6;
+  for (let i = 0, j = 0; i < N; i++, j += 4) {
+    let a = (sh[i] - lo) / (hi - lo); a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
+    const v = 255 - a * (255 - 18); d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255;
+  }
+  g.putImageData(id, 0, 0);
+  src.width = src.height = 0;
+  st.canvas = c; st.k = k0 * f;
+  if (st.mask) st.mask.width = st.mask.height = 0;
+  st.mask = inkMask(c); st.tinted && st.tinted.clear();
+}
+async function buildStripRaw(o) {
   const bmp = await createImageBitmap(o.img);
   const L = o.layout;
   if (L.staffs && L.segs.every((q) => q.sys !== undefined)) {
@@ -596,8 +674,11 @@ function straightStrip(L, bmp) {
     // (averaged over about four spaces each side: the staff's own gentle curve kept, the jitter gone)
     const R = Math.max(6, Math.round(spS * 2)), pre = new Float64Array(w + 1); for (let x = 0; x < w; x++) pre[x + 1] = pre[x] + cen[x];
     const sm = (x) => { const a0 = Math.max(0, x - R), a1 = Math.min(w, x + R + 1); return (pre[a1] - pre[a0]) / (a1 - a0); };
-    // (in whole pixels: a part of a pixel would blend each staff line over two rows, greyer and softer)
-    const d = new Float32Array(w); { const c0 = sm(Math.floor(w / 2)); for (let x = 0; x < w; x++) d[x] = Math.round(c0 - sm(x)); }
+    // (in whole pixels a staff line steps up or down a pixel where the shift changes: seen in a video
+    // as dashes along it. By parts of a pixel it runs on smoothly; its edges, softer for it, are made
+    // crisp again when the line is cleaned — without that, whole pixels)
+    const exact = globalThis.__cleanStrip ?? 1;
+    const d = new Float32Array(w); { const c0 = sm(Math.floor(w / 2)); for (let x = 0; x < w; x++) d[x] = exact ? c0 - sm(x) : Math.round(c0 - sm(x)); }
     let dmin = 0, dmax = 0; for (let x = 0; x < w; x++) { if (d[x] < dmin) dmin = d[x]; if (d[x] > dmax) dmax = d[x]; }
     if (dmax - dmin < 0.75) { d.fill(0); dmin = dmax = 0; }
     // the rows its ink reaches
