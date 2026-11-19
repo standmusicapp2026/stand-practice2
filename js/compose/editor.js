@@ -2426,6 +2426,7 @@ function wireKeys() {
     if ((k === 'ArrowRight' || k === 'ArrowLeft') && C.sel.size) {
       e.preventDefault();
       const evs = selEvents(); const f = k === 'ArrowRight' ? evs[evs.length - 1] : evs[0];
+      if (!f) return;
       const nx = k === 'ArrowRight' ? M.nextEvent(C.score, f.st, f.m, f.i) : M.prevEvent(C.score, f.st, f.m, f.i);
       if (!nx) return;
       if (e.shiftKey) C.sel.add(nx.ev.id); else { C.sel.clear(); C.sel.add(nx.ev.id); }
