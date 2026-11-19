@@ -3239,7 +3239,7 @@ function applyZoom() {
   zoomPill.hidden = Z.s === 1;
   }
   if (SHARP.on) sharpFollow();
-  if (Z.s > 1.05 || V.pages.some((p) => p.layer && p.layer.view)) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 260); }
+  if (Z.s > 1.05 || V.pages.some((p) => p.layer && p.layer.view)) { clearTimeout(Z.inkT); Z.inkT = setTimeout(() => sharpenInk(true), 260); }
   zoomPill.textContent = Math.round(Z.s * 100) + '%  ·  Reset';
   if (!$('#zoomPop').hidden) syncZoomPop();
   if (Sel.entry) placeSelection();
@@ -3256,7 +3256,7 @@ async function sharpen() {
   const want = Z.s > 1.15 ? Math.min(Z.s, 4) : 1;
   // (pages scrolled down, zoomed in: only the part on screen is drawn sharp, as a piece over the page —
   // the whole page drawn again four times bigger held everything up after each pinch)
-  if (want > 1 && SCROLL() && Z.el === SC.spread && V.doc && V.doc.renderView && !SC.noTile) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 30); return; }
+  if (want > 1 && SCROLL() && Z.el === SC.spread && V.doc && V.doc.renderView && !SC.noTile) { clearTimeout(Z.inkT); Z.inkT = setTimeout(() => sharpenInk(true), 30); return; }
   if (Math.abs(want - Z.sharp) < 0.2 && !(want === 1 && Z.sharp !== 1)) return;
   Z.sharp = want;
   const token = layoutToken;
@@ -3275,7 +3275,7 @@ async function sharpen() {
       inkFollowsArt(p);
     }
   }
-  sharpenInk();
+  sharpenInk(true);
 }
 // Zoomed in, the markings are drawn again for just the part of the page on screen, at the full
 // sharpness of the screen, so writing stays crisp at any zoom (the page itself can't be that big).
@@ -3308,7 +3308,7 @@ function inkFollowsArt(p) {
   p.layer.resize(p.art.width, p.art.height);
   if (Z.s > 1.05) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 60); }
 }
-function sharpenInk() {
+function sharpenInk(afterZoom) {
   clearTimeout(Z.inkT);
   if (!V.pages.length) { sharpOff(); return; }
   if (GS && (GS.kind === 'ink' || GS.kind === 'erase' || GS.kind === 'smart')) { Z.inkT = setTimeout(sharpenInk, 300); return; }
@@ -3340,7 +3340,14 @@ function sharpenInk() {
     Object.assign(p.ink.style, { inset: 'auto', left: x0 * 100 + '%', top: y0 * 100 + '%', width: (x1 - x0) * 100 + '%', height: (y1 - y0) * 100 + '%' });
     p.layer.setView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pw, ph);
   }
-  if (Z.s > 1.05 && !TURN()) sharpDraw(); else sharpOff();
+  // (the layer over the page in the next frame, not in this one: the markings drawn again at the new
+  // size and then once more on that layer, both at once, held the page still for a moment after each
+  // pinch on an iPad)
+  cancelAnimationFrame(Z.sharpRaf); clearTimeout(Z.sharpDT);
+  if (Z.s > 1.05 && !TURN()) {
+    if (afterZoom !== true || (globalThis.__sharpNow ?? 0)) sharpDraw();
+    else Z.sharpRaf = requestAnimationFrame(() => { Z.sharpDT = setTimeout(() => { if (Z.s > 1.05 && !TURN() && !(GS && GS.kind === 'pinch')) sharpDraw(); }, 0); });
+  } else sharpOff();
 }
 // Zoomed in and still, the markings are shown on a layer of their own over the score, lined up
 // with the screen's own pixels and outside the zoom, exactly as a line is drawn while the Pencil is
