@@ -527,7 +527,34 @@ export class Player {
     return buf;
   }
 
+  // A video slowed down (or sped up) plays its own sound, kept at its pitch by iOS: at once. (Its whole
+  // sound stretched here first took many seconds on a phone, and again at every change of speed.)
+  _vidSlow() { return !!this.video && Math.abs(this.rate - 1) > 1e-3 && !!(globalThis.__vidSlow ?? 1); }
+  async _playVid(me) {
+    const v = this.video;
+    let from = this.pos;
+    if (this.loop && this.b > this.a && (from < this.a || from >= this.b - 0.05)) from = this.a;
+    if (!this.loop && from >= this.duration - 0.05) from = 0;
+    this._stopSource();
+    const wait = (evs, ms) => new Promise((r) => { const done = () => { for (const e of evs) v.removeEventListener(e, done); clearTimeout(t); r(); }; const t = setTimeout(done, ms); for (const e of evs) v.addEventListener(e, done); });
+    try {
+      v.preservesPitch = true; v.webkitPreservesPitch = true; v.mozPreservesPitch = true;
+      v.playbackRate = this.rate; v.muted = false; v.volume = Math.min(1, this.levelGain());
+      if (v.readyState < 2) { try { v.readyState === 0 && v.load && v.load(); } catch {} await wait(['canplay', 'loadeddata'], 1500); }
+      if (Math.abs(v.currentTime - from) > 0.03) { const sk = wait(['seeked'], 900); v.currentTime = from; await sk; }
+      if (me !== this._playTok) return;
+      const pr = v.play(); if (pr && pr.catch) await pr.catch(() => {});
+    } catch {}
+    if (me !== this._playTok) { try { v.pause(); v.muted = true; } catch {} return; }
+    this.vidMode = true; this.playing = true; wantAudio(true, 'player');
+    this._emit();
+  }
   currentPos() {
+    if (this.vidMode && this.playing && this.video) {
+      let t = this.video.currentTime;
+      if (this.loop && this.b > this.a && t >= this.b) t = this.a;
+      return Math.min(t, this.duration);
+    }
     if (!this.playing) return this.pos;
     const ctx = getCtx();
     // (the sound system replaced while playing: the time goes by the clock on the wall)
@@ -545,6 +572,7 @@ export class Player {
     // (paused or stopped while the sound was being prepared: it does not start after all)
     const me = this._playTok = (this._playTok || 0) + 1;
     const rate = this.rate;
+    if (this._vidSlow()) return this._playVid(me);
     const buf = await this._buffer(rate);
     if (rate !== this.rate || me !== this._playTok || !buf) return; // speed changed, or stopped, while preparing
     const ctx = getCtx();
@@ -587,14 +615,22 @@ export class Player {
     this._emit();
   }
   _stopSource() { if (this.src) { const s = this.src; this.src = null; try { s.onended = null; s.stop(); } catch {} } }
-  pause() { this._playTok = (this._playTok || 0) + 1; if (!this.playing) return; this.pos = this.currentPos(); this._stopSource(); this.playing = false; wantAudio(false, 'player'); this._videoTo(this.pos, true); this._emit(); }
-  stop() { this._playTok = (this._playTok || 0) + 1; this._stopSource(); this.playing = false; wantAudio(false, 'player'); if (this.video) try { this.video.pause(); } catch {} this._emit(); }
+  pause() { this._playTok = (this._playTok || 0) + 1; if (!this.playing) return; this.pos = this.currentPos(); this._stopSource(); this.playing = false; wantAudio(false, 'player'); this._vidOff(); this._videoTo(this.pos, true); this._emit(); }
+  stop() { this._playTok = (this._playTok || 0) + 1; this._stopSource(); this.playing = false; wantAudio(false, 'player'); this._vidOff(); if (this.video) try { this.video.pause(); } catch {} this._emit(); }
+  // (back to the picture without its own sound: the prepared sound plays at the usual speed)
+  _vidOff() { if (!this.vidMode) return; this.vidMode = false; const v = this.video; if (v) try { v.pause(); v.muted = true; v.playbackRate = this.rate; } catch {} }
   async seek(t) { const was = this.playing; this.pause(); this.pos = Math.max(0, Math.min(this.duration, t)); this._videoTo(this.pos, true); if (was) await this.play(); else this._emit(); }
   attachVideo(el) { this.video = el; }
   _videoTo(t, pause) { const v = this.video; if (!v) return; try { if (pause) v.pause(); if (Math.abs(v.currentTime - t) > 0.02) v.currentTime = t; } catch {} }
   // Keep the picture locked to the (time-stretched) sound. Call every frame while playing.
   syncVideo() {
     const v = this.video; if (!v || !this.playing) return;
+    if (this.vidMode) {
+      // (its own sound: only the passage repeated, and the end)
+      if (this.loop && this.b > this.a && v.currentTime >= this.b - 0.02) { v.currentTime = this.a; return; }
+      if (v.ended || v.currentTime >= this.duration - 0.03) { this.pos = this.loop ? this.a : 0; this.playing = false; wantAudio(false, 'player'); this._vidOff(); this._videoTo(this.pos, true); this._emit(); }
+      return;
+    }
     const t = this.currentPos();
     if (v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
     // A small drift is corrected by speeding up or slowing down the picture a little: jumping the
@@ -633,7 +669,7 @@ export class Player {
     if (Math.abs(r - this.rate) < 1e-4) return;
     const was = this.playing; const p = this.currentPos();
     this.pause(); this.rate = r; this.pos = p;
-    if (was) await this.play(); else { this._emit(); this._buffer(r).catch(() => {}); }
+    if (was) await this.play(); else { this._emit(); if (!this._vidSlow()) this._buffer(r).catch(() => {}); }
   }
   async setLoop(on, a = this.a, b = this.b) {
     const was = this.playing; const p = this.currentPos();

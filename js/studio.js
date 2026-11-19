@@ -198,7 +198,7 @@ async function addScore(opt = {}) {
   pause();
   // (drawn bigger than for the page: the music is shown large on the video, and must stay sharp)
   const hi = /iPhone|iPod/.test(navigator.userAgent) ? 2600 : 3400;
-  const region = await (globalThis.__studioPick || D.pickRegion)(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video', long: hi });
+  const region = await (typeof globalThis.__studioPick === 'function' ? globalThis.__studioPick : D.pickRegion)(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video', long: hi });
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
@@ -422,21 +422,61 @@ async function prepareOverlay(o) {
 async function buildStrip(o) {
   const st = await buildStripRaw(o);
   // the music made clean for the video: deep black ink, white paper, smooth sharp edges, enough pixels
-  if ((globalThis.__cleanStrip ?? 1) && o.layout.sp) try { cleanStrip(st, o.layout.sp); } catch (e) { console.warn('clean strip', e); }
+  if ((globalThis.__cleanStrip ?? 1) && o.layout.sp) try { const s0 = o.layout.segs && o.layout.segs[0]; cleanStrip(st, o.layout.sp, s0 && s0.staff !== undefined ? ((s0.dy ?? 0) + s0.staff) * (st.k || 1) : null); } catch (e) { console.warn('clean strip', e); }
   return st;
 }
-// The line of music cleaned, as an engraver's print looks: drawn bigger where its staff is small (so it
-// stays sharp in the video), the paper's light made even (the shadow of a photo, a grey scan), then the
-// ink made solid black and the paper pure white, the edge between them kept smooth but narrow — thin
-// lines (staff lines, stems, slurs) helped a little first, so they do not fade.
-function cleanStrip(st, sp0) {
+// The line of music cleaned, as an engraver's print looks: deep ink, white paper, every outline smooth.
+// A page often comes as a scan in black and white only (each of its dots a little square, so every
+// slanted beam, slur and note head is a staircase), or drawn small; shown big on the video, those
+// squares showed. So: the line drawn bigger, the paper's light made even, then the outline of the ink
+// smoothed at the size of the scan's own dots (measured on the line itself), and only then made solid
+// ink with a narrow soft edge. The staff lines are kept whole.
+function grainOf(dk, W, H) {
+  // the scan's dot: in a picture made of squares, no run of ink or paper along a row is shorter than
+  // one square; in a fine picture short runs (the edge of a stroke) are common
+  const hist = new Uint32Array(64);
+  for (let y = 0; y < H; y += 3) {
+    let prev = dk[y * W] > 0.5, run = 1, first = true;
+    for (let x = 1; x < W; x++) {
+      const v = dk[y * W + x] > 0.5;
+      if (v === prev) { run++; continue; }
+      if (!first) hist[Math.min(63, run)]++;
+      first = false; prev = v; run = 1;
+    }
+  }
+  let tot = 0; for (let i = 1; i < 64; i++) tot += hist[i];
+  if (tot < 200) return 1;
+  let acc = 0; for (let i = 1; i < 64; i++) { acc += hist[i]; if (acc >= tot * 0.08) return i; }
+  return 1;
+}
+// (a box blur, along the rows or down the columns, by running sums: twice each way is near a bell curve)
+function boxBlur(src, dst, W, H, r, horiz) {
+  if (r < 1) { dst.set(src); return; }
+  const n = 2 * r + 1;
+  if (horiz) for (let y = 0; y < H; y++) {
+    const o = y * W; let s = 0;
+    for (let x = -r; x <= r; x++) s += src[o + Math.min(W - 1, Math.max(0, x))];
+    for (let x = 0; x < W; x++) { dst[o + x] = s / n; s += src[o + Math.min(W - 1, x + r + 1)] - src[o + Math.max(0, x - r)]; }
+  } else for (let x = 0; x < W; x++) {
+    let s = 0;
+    for (let y = -r; y <= r; y++) s += src[Math.min(H - 1, Math.max(0, y)) * W + x];
+    for (let y = 0; y < H; y++) { dst[y * W + x] = s / n; s += src[Math.min(H - 1, y + r + 1) * W + x] - src[Math.max(0, y - r) * W + x]; }
+  }
+}
+function cleanStrip(st, sp0, top0 = null) {
   const src = st.canvas, W0 = src.width, H0 = src.height, k0 = st.k || 1;
   const sp = sp0 * k0;
+  // (the scan's dot, on the line as it is)
+  let grain = 1;
+  { const g0 = src.getContext('2d', { willReadFrequently: true }), d0 = g0.getImageData(0, 0, W0, H0).data, n0 = W0 * H0, dk0 = new Float32Array(n0);
+    for (let i = 0, j = 0; i < n0; i++, j += 4) dk0[i] = 1 - (d0[j] * 299 + d0[j + 1] * 587 + d0[j + 2] * 114) / 255000;
+    grain = Math.min(Math.max(1, sp * 0.2), grainOf(dk0, W0, H0)); }
   const LIMIT = /iPhone|iPod/.test(navigator.userAgent) ? 8e6 : 14e6;
-  let f = Math.min(2.5, Math.max(1, 24 / sp));
+  // bigger: a staff space of about 30 pixels (and more where the scan's dots are coarse)
+  let f = Math.min(4, Math.max(1, 30 / sp));
   f = Math.min(f, Math.sqrt(LIMIT / (W0 * H0)), 32000 / W0);
   if (f < 1.08) f = 1;
-  const W = Math.round(W0 * f), H = Math.round(H0 * f);
+  const W = Math.round(W0 * f), H = Math.round(H0 * f), spF = sp * f;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d', { willReadFrequently: true }); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.drawImage(src, 0, 0, W, H);
@@ -444,7 +484,7 @@ function cleanStrip(st, sp0) {
   const Lm = new Uint8ClampedArray(N);
   for (let i = 0, j = 0; i < N; i++, j += 4) Lm[i] = (d[j] * 299 + d[j + 1] * 587 + d[j + 2] * 114) / 1000;
   // the paper's own light, in blocks of a few spaces: the brightest of each block (its 90th per cent)
-  const B = Math.max(16, Math.round(sp * f * 4)), bx = Math.ceil(W / B), by = Math.ceil(H / B), bg = new Float32Array(bx * by);
+  const B = Math.max(16, Math.round(spF * 4)), bx = Math.ceil(W / B), by = Math.ceil(H / B), bg = new Float32Array(bx * by);
   const hist = new Uint32Array(256);
   for (let yb = 0; yb < by; yb++) for (let xb = 0; xb < bx; xb++) {
     hist.fill(0); let n = 0;
@@ -455,45 +495,61 @@ function cleanStrip(st, sp0) {
   const bgAt = (x, y) => { const fx = Math.min(bx - 1, Math.max(0, x / B - 0.5)), fy = Math.min(by - 1, Math.max(0, y / B - 0.5)), x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(bx - 1, x0 + 1), y1 = Math.min(by - 1, y0 + 1), ax = fx - x0, ay = fy - y0;
     return (bg[y0 * bx + x0] * (1 - ax) + bg[y0 * bx + x1] * ax) * (1 - ay) + (bg[y1 * bx + x0] * (1 - ax) + bg[y1 * bx + x1] * ax) * ay; };
   // darkness against the paper (0 paper … 1 ink); the ink's own level: its darkest few per cent
-  const dk = new Float32Array(N);
+  let dk = new Float32Array(N);
   for (let y = 0; y < H; y++) { for (let x = 0; x < W; x++) { const i = y * W + x; dk[i] = Math.max(0, 1 - Lm[i] / bgAt(x, y)); } }
   { const hs = new Uint32Array(256); let n = 0; for (let i = 0; i < N; i += 3) { const v = Math.round(dk[i] * 255); if (v > 40) { hs[v]++; n++; } }
     let k = 255, acc = 0; const want = Math.max(1, n * 0.08); while (k > 40 && acc + hs[k] < want) acc += hs[k--];
     const top = Math.max(0.25, k / 255); for (let i = 0; i < N; i++) dk[i] = Math.min(1, dk[i] / top); }
-  // thin lines helped: a light unsharp mask (the pixel against the mean of its neighbours)
-  const r = Math.max(1, Math.round(f)), sh = new Float32Array(N);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = y * W + x, xa = Math.max(0, x - r), xz = Math.min(W - 1, x + r), ya = Math.max(0, y - r), yz = Math.min(H - 1, y + r);
-    const m = (dk[ya * W + x] + dk[yz * W + x] + dk[y * W + xa] + dk[y * W + xz]) / 4;
-    sh[i] = dk[i] + 0.6 * (dk[i] - m);
-  }
-  // the staff's lines whole: a row that is ink along most of the line is a staff line; its short
-  // breaks (where a photo's line was faint, or where the lines of the page were joined) are filled
-  {
-    const cov = new Float32Array(H);
-    for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x += 2) if (sh[y * W + x] > 0.45) n++; cov[y] = n / Math.ceil(W / 2); }
-    const gmax = Math.max(3, Math.round(sp * f * 0.6));
-    for (let y = 0; y < H; y++) {
-      if (cov[y] < 0.5) continue;
-      let last = -1;
-      for (let x = 0; x < W; x++) {
-        const i = y * W + x;
-        if (sh[i] > 0.45) {
-          if (last >= 0 && x - last > 1 && x - last <= gmax) { const v = Math.min(sh[y * W + last], sh[i]); for (let q = last + 1; q < x; q++) if (sh[y * W + q] < v) sh[y * W + q] = v; }
-          last = x;
+  // the outline smoothed: about as wide as a coarse scan's dots (each square's corner rounded away; a
+  // fine print only a touch softer, still sharp at the size it is shown)
+  const sig = spF * 0.06;
+  const r = Math.max(1, Math.round(sig - 0.5));
+  { const t = new Float32Array(N); for (let q = 0; q < 3; q++) { boxBlur(dk, t, W, H, r, true); boxBlur(t, dk, W, H, r, false); } }
+  // the staff's five lines drawn again, straight and even, where the page has them: each at its own
+  // height and thickness as measured on the line (a scan's lines are beaded and broken, and a thin
+  // line comes out of the smoothing paler)
+  if (top0 !== null) {
+    const prof = new Float32Array(H); for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x += 3) n += dk[y * W + x]; prof[y] = n / Math.ceil(W / 3); }
+    const ls = [];
+    for (let k = 0; k < 5; k++) {
+      const want = top0 * f + k * spF; let best = -1, bv = -1;
+      for (let y = Math.max(0, Math.round(want - spF * 0.3)); y <= Math.min(H - 1, Math.round(want + spF * 0.3)); y++) if (prof[y] > bv) { bv = prof[y]; best = y; }
+      if (best < 0 || bv < 0.2) continue;
+      // (its middle and thickness from the rows above half its darkness)
+      let y0 = best, y1 = best; while (y0 > 0 && prof[y0 - 1] > bv * 0.5) y0--; while (y1 < H - 1 && prof[y1 + 1] > bv * 0.5) y1++;
+      let sw = 0, sy = 0; for (let y = y0; y <= y1; y++) { sw += prof[y]; sy += prof[y] * y; }
+      ls.push({ y: sy / sw, t: Math.max(1, Math.min(spF * 0.2, y1 - y0 + 1)) });
+    }
+    if (ls.length >= 4) {
+      const t = ls.map((q) => q.t).sort((p2, q2) => p2 - q2)[ls.length >> 1];
+      // (where along the line it is printed: ink on its row there, most of the way round)
+      const win = Math.max(4, Math.round(spF * 1.5));
+      for (const q of ls) {
+        const on = new Uint8Array(W);
+        for (let x = 0; x < W; x++) { let m = 0; for (let y = Math.round(q.y - t); y <= Math.round(q.y + t); y++) if (y >= 0 && y < H && dk[y * W + x] > m) m = dk[y * W + x]; on[x] = m > 0.3 ? 1 : 0; }
+        const cs = new Int32Array(W + 1); for (let x = 0; x < W; x++) cs[x + 1] = cs[x] + on[x];
+        for (let x = 0; x < W; x++) {
+          const a0 = Math.max(0, x - win), a1 = Math.min(W, x + win + 1);
+          if (cs[a1] - cs[a0] < (a1 - a0) * 0.6) continue;
+          for (let y = Math.floor(q.y - t / 2 - 1); y <= Math.ceil(q.y + t / 2 + 1); y++) {
+            if (y < 0 || y >= H) continue;
+            const v = Math.min(1, Math.max(0, t / 2 + 0.5 - Math.abs(y - q.y)));
+            const i = y * W + x; if (v > dk[i]) dk[i] = v;
+          }
         }
       }
     }
   }
-  // solid ink, white paper, a narrow smooth edge
-  const lo = 0.26, hi = 0.6;
+  // solid ink, white paper, a narrow smooth edge (about a pixel and a half of the line as drawn)
+  const mid = 0.5, half = 0.09;
+  const lo = mid - half, hi = mid + half;
   for (let i = 0, j = 0; i < N; i++, j += 4) {
-    let a = (sh[i] - lo) / (hi - lo); a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
+    let a = (dk[i] - lo) / (hi - lo); a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
     const v = 255 - a * (255 - 18); d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255;
   }
   g.putImageData(id, 0, 0);
   src.width = src.height = 0;
-  st.canvas = c; st.k = k0 * f;
+  st.canvas = c; st.k = k0 * f; st.grain = grain;
   if (st.mask) st.mask.width = st.mask.height = 0;
   st.mask = inkMask(c); st.tinted && st.tinted.clear();
 }
@@ -1061,7 +1117,7 @@ async function autoSync(o, { from = 0 } = {}) {
       if (hm && (!best || hm.good > best.good + 0.1)) { hm.alt = best ? best.good : null; best = hm; }
     }
     // (for the tests: how well each way of listening fitted; and one may be asked for)
-    try { window.__studioPick = { notes: notesBest && +notesBest.good.toFixed(3), chosen: best && best.how, good: best && +best.good.toFixed(3), alt: best && best.alt }; } catch {}
+    try { window.__studioPickInfo = { notes: notesBest && +notesBest.good.toFixed(3), chosen: best && best.how, good: best && +best.good.toFixed(3), alt: best && best.alt }; } catch {}
     if (globalThis.__studioHow === 'notes' && notesBest) best = notesBest;
     if (!best) { busy(null); D.toast('Not enough clear notes were heard. Use Tap along.', 4500); return; }
     busy('Following your playing…', 'Lining them up with the score.', 0.9);
@@ -1089,7 +1145,7 @@ async function autoSync(o, { from = 0 } = {}) {
       if (!fin || r.judge > fin.judge) fin = { ...r, c };
     }
     if (fin) best = fin.c;
-    try { if (window.__studioPick) window.__studioPick.final = best.how; } catch {}
+    try { if (window.__studioPickInfo) window.__studioPickInfo.final = best.how; } catch {}
     let fitT = fin && fin.fitT;
     const byBar = fin ? fin.byBar : [];
     if (fin) best.evs = fin.evs;
@@ -2932,7 +2988,7 @@ async function openBars(o, rv = null) {
   // about four bars across, large enough to touch a line)
   const sMax = () => Math.min(VH / H, VW / Math.min(W, H * 2.2)) * 0.98 * 3;
   const sMin = () => Math.min(sMax() / 3, Math.max(5 / (sp * K), VW / W));
-  const sFirst = () => clamp(VW / ((L.width / Math.max(1, B.length)) * K * 4.2), sMin(), sMax() / 3);
+  const sFirst = () => clamp(VW / ((L.width / Math.max(1, B.length)) * K * (VW < 560 ? 3 : 4.2)), sMin(), sMax() / (VW < 560 ? 1.8 : 3));
   const clampView = () => { E.s = clamp(E.s, sMin(), sMax()); const vis = VW / E.s; E.ox = W <= vis ? (W - vis) / 2 : clamp(E.ox, 0, W - vis); };
   const oy = () => (VH - H * E.s) / 2;
   const sx = (x) => (x * K - E.ox) * E.s;                 // (a place on the line, on the screen)
@@ -2947,28 +3003,47 @@ async function openBars(o, rv = null) {
     g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const y0 = oy();
-    // (each bar: a light wash, every other one, so where one ends and the next begins is plain)
-    B.forEach((b, k) => {
-      const a = sx(b.x0), c = sx(b.x1); if (c < -40 || a > VW + 40) return;
-      const [ra, rb] = rows(b.seg);
-      if (k % 2) { g.fillStyle = 'rgba(70,110,200,0.07)'; g.fillRect(a, y0 + ra * E.s - sp * K * E.s * 0.9, c - a, (rb - ra) * E.s + sp * K * E.s * 1.8); }
-      // the bar's number, over its start
-      const label = String(k + 1); g.font = `600 11px ${css('--font-num') || 'system-ui'}`;
-      const w = g.measureText(label).width + 10, ty = Math.max(4, y0 + ra * E.s - sp * K * E.s * 0.9 - 22);
-      g.fillStyle = 'rgba(255,255,255,0.92)'; rr(g, a + 3, ty, w, 18, 9); g.fill();
-      g.fillStyle = 'rgba(20,30,60,0.75)'; g.fillText(label, a + 8, ty + 13);
+    // where the music's staff is on the screen, and a row above the line for the bars' numbers (never
+    // over the notes)
+    const fontN = css('--font-num') || 'system-ui';
+    const staffTop = (seg) => y0 + rows(seg)[0] * E.s, staffBot = (seg) => y0 + rows(seg)[1] * E.s;
+    const numY = E.numY = Math.max(6, Math.min(y0 - 34, staffTop(B[0] ? B[0].seg : 0) - sp * K * E.s * 3.2 - 30));
+    // (the bar being put right: a light wash over it)
+    if (sel >= 0 && sel + 1 < B.length) for (const k of [sel, sel + 1]) {
+      const bb = B[k], a0 = sx(bb.x0), c0 = sx(bb.x1);
+      g.fillStyle = 'rgba(70,110,200,0.08)'; g.fillRect(a0, numY + 30, c0 - a0, staffBot(bb.seg) + sp * K * E.s * 1.2 - numY - 30);
+    }
+    // the number of each bar, in a badge over its middle (fewer when they would crowd: every 2nd, 5th…)
+    g.font = `700 14px ${fontN}`;
+    const wBar = (VW / E.s) / K / Math.max(1, L.width / Math.max(1, B.length));
+    const every = [1, 2, 5, 10, 20, 50].find((q) => (VW / Math.max(1, wBar)) * q >= 44) || 100;
+    B.forEach((bb, k) => {
+      const a0 = sx(bb.x0), c0 = sx(bb.x1); if (c0 < -60 || a0 > VW + 60) return;
+      const n = k + 1; if (n !== 1 && n % every) return;
+      const label = String(n), w = Math.max(28, g.measureText(label).width + 16), cx = clamp((a0 + c0) / 2, Math.max(a0, 0) + w / 2 + 2, Math.min(c0, VW) - w / 2 - 2);
+      if (c0 - a0 < w + 4 && every === 1) return;
+      const on = sel >= 0 && (k === sel || k === sel + 1);
+      g.fillStyle = on ? accent : 'rgba(255,255,255,0.97)'; rr(g, cx - w / 2, numY, w, 24, 12); g.fill();
+      if (!on) { g.strokeStyle = 'rgba(40,60,110,0.22)'; g.lineWidth = 1; rr(g, cx - w / 2 + 0.5, numY + 0.5, w - 1, 23, 11.5); g.stroke(); }
+      g.fillStyle = on ? '#fff' : 'rgba(20,30,60,0.92)'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, cx, numY + 12.5);
+      g.textAlign = 'start'; g.textBaseline = 'alphabetic';
     });
-    // the barlines: a clear line over the printed one, with a round handle under the staff
+    // the barlines: a clear line over the printed one, from the numbers' row through the staff, with a
+    // grip under the staff to drag it by
     for (const j of lines()) {
       const x = sx(B[j].x1); if (x < -20 || x > VW + 20) continue;
-      const [ra, rb] = rows(B[j].seg), ya = y0 + ra * E.s - sp * K * E.s * 0.9, yb = y0 + rb * E.s + sp * K * E.s * 0.9;
+      const ya = numY + 30, yb = staffBot(B[j].seg) + sp * K * E.s * 0.9;
       const on = j === sel;
-      g.strokeStyle = accent; g.globalAlpha = on ? 1 : 0.8; g.lineWidth = on ? 3 : 2;
       // (inside bars of rest counted together: a dashed line, a bar counted, not printed)
       const mmIn = B[j].mm && B[j + 1].mm && B[j].mm.n === B[j + 1].mm.n && B[j + 1].mm.i === B[j].mm.i + 1;
-      g.setLineDash(mmIn ? [5, 4] : []);
+      g.strokeStyle = accent; g.lineWidth = on ? 3 : 2; g.globalAlpha = on ? 1 : 0.85;
+      g.setLineDash(mmIn ? [6, 5] : []);
       g.beginPath(); g.moveTo(x, ya); g.lineTo(x, yb); g.stroke(); g.setLineDash([]);
-      g.beginPath(); g.arc(x, yb + 9, on ? 8 : 6, 0, Math.PI * 2); g.fillStyle = on ? accent : '#fff'; g.fill(); g.lineWidth = 2; g.stroke();
+      // (the grip: a rounded tab with two small ridges)
+      const gw = on ? 22 : 18, gh = on ? 30 : 26;
+      g.fillStyle = on ? accent : '#fff'; rr(g, x - gw / 2, yb + 4, gw, gh, gw / 2); g.fill(); g.lineWidth = 2; g.strokeStyle = accent; g.stroke();
+      g.strokeStyle = on ? '#fff' : accent; g.lineWidth = 1.5;
+      for (const dx of [-3, 3]) { g.beginPath(); g.moveTo(x + dx, yb + 4 + gh * 0.32); g.lineTo(x + dx, yb + 4 + gh * 0.68); g.stroke(); }
       g.globalAlpha = 1;
     }
     placeRm();
@@ -2981,7 +3056,11 @@ async function openBars(o, rv = null) {
   const placeRm = () => {
     if (sel < 0 || sel + 1 >= B.length) { rm.hidden = true; return; }
     const x = sx(B[sel].x1), [ra] = rows(B[sel].seg), y = oy() + ra * E.s - sp * K * E.s * 0.9;
-    rm.hidden = !(x > 0 && x < VW); rm.style.left = x + 'px'; rm.style.top = Math.max(26, y - 8) + 'px';
+    void y; rm.hidden = !(x > 0 && x < VW); rm.style.left = x + 'px';
+    // (above the bars' numbers when there is room, else under the line's grip)
+    const under = oy() + rows(B[sel].seg)[1] * E.s + sp * K * E.s * 0.9 + 44;
+    const below = (E.numY ?? 0) < 46 && under + 40 <= VH; rm.classList.toggle('below', below);
+    rm.style.top = (below ? under : Math.max(40, (E.numY ?? 0) - 6)) + 'px';
   };
   const drawMap = () => {
     const r = map.getBoundingClientRect(); mc.width = Math.round(r.width * dpr); mc.height = Math.round(r.height * dpr);

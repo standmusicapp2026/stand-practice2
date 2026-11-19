@@ -1045,7 +1045,8 @@ async function sha(ab) { try { const d = await crypto.subtle.digest('SHA-256', a
 async function firstLook(doc) {
   try {
     const c = document.createElement('canvas');
-    await doc.render(0, c, 48, 64);
+    // (big enough that two pieces from one book — the same title, the same layout — are told apart)
+    await doc.render(0, c, 120, 160);
     const g = c.getContext('2d', { willReadFrequently: true }), d = g.getImageData(0, 0, c.width, c.height).data;
     const out = new Uint8Array(c.width * c.height);
     for (let i = 0; i < out.length; i++) out[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
@@ -1053,7 +1054,16 @@ async function firstLook(doc) {
     return out;
   } catch { return null; }
 }
-const looksSame = (a, b) => { if (!a || !b || a.length !== b.length) return false; let s2 = 0; for (let i = 0; i < a.length; i++) s2 += Math.abs(a[i] - b[i]); return s2 / a.length < 5; };
+// (the same picture, all but a pixel here and there: over the whole page, and in every band of it — two
+// pieces of one book differ in their music, even where their titles and layout are alike)
+const looksSame = (a, b) => {
+  if (!a || !b || a.length !== b.length) return false;
+  let s2 = 0; for (let i = 0; i < a.length; i++) s2 += Math.abs(a[i] - b[i]);
+  if (s2 / a.length >= 3) return false;
+  const W = 120, rows = Math.floor(a.length / W), band = Math.max(1, Math.floor(rows / 8));
+  for (let y0 = 0; y0 < rows; y0 += band) { let s = 0, n = 0; for (let i = y0 * W; i < Math.min(rows, y0 + band) * W; i++) { s += Math.abs(a[i] - b[i]); n++; } if (n && s / n >= 6) return false; }
+  return true;
+};
 // items: [{ rel, size, read: () => Promise<Blob> }]
 async function bringItems(items, app, opts = {}) {
   if (BR.busy) { toast('Still bringing the last ones in…', 2500); return; }

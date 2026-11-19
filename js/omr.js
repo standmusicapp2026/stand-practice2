@@ -684,10 +684,12 @@ function distField(g) {
 }
 function fieldOf(s) { let f = dtCache.get(s.m); if (!f) { const g = gridOf(s); f = { d: distField(g), ink: inkOf(g) }; dtCache.set(s.m, f); } return f; }
 // How many white areas a shape closes in, inside its box (only its own ink: ids).
-function holesInBox(C, w, h, bx) {
+function holesInBox(C, w, h, bx, B = null, edge = 0) {
   const x0 = Math.max(0, bx.x0 - 1), y0 = Math.max(0, bx.y0 - 1), x1 = Math.min(w - 1, bx.x1 + 1), y1 = Math.min(h - 1, bx.y1 + 1);
   const W = x1 - x0 + 1, H = y1 - y0 + 1, seen = new Uint8Array(W * H);
-  const ink = (x, y) => C[(y + y0) * w + x + x0];
+  // (B, edge: at the box's top and bottom rows the staff line counts as ink — a digit whose edge
+  // lies along a line had that edge taken away with it, and its hole opened)
+  const ink = !B ? (x, y) => C[(y + y0) * w + x + x0] : (x, y) => { const k = (y + y0) * w + x + x0; return C[k] || ((y + y0 <= bx.y0 + edge || y + y0 >= bx.y1 - edge) && B[k]); };
   const fill = (sx, sy) => { const q = [sx, sy]; seen[sy * W + sx] = 1; let n = 0; while (q.length) { const y = q.pop(), x = q.pop(); n++; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H || seen[yy * W + xx] || ink(xx, yy)) continue; seen[yy * W + xx] = 1; q.push(xx, yy); } } return n; };
   for (let x = 0; x < W; x++) { if (!ink(x, 0) && !seen[x]) fill(x, 0); if (!ink(x, H - 1) && !seen[(H - 1) * W + x]) fill(x, H - 1); }
   for (let y = 0; y < H; y++) { if (!ink(0, y) && !seen[y * W]) fill(0, y); if (!ink(W - 1, y) && !seen[y * W + W - 1]) fill(W - 1, y); }
@@ -765,6 +767,24 @@ function readStaff(s, ctx, header) {
     if (Math.abs(p2 - hd.p) === 1) { hd.p = p2; hd.cy = yAt(s, p2, hd.cx); }
   }
   if (TR && typeof heads !== 'undefined') trk(512, heads);
+  // (a note above or below the staff needs its ledger line: the nearest one, across the head, or
+  // sticking out on both sides of it)
+  const ledgerOk = (cx, p) => {
+    if (p >= -1 && p <= 9) return true;
+    const lp = p < 0 ? -2 : 10;
+    const ly = yAt(s, lp, cx);
+    let best = 0, sides = 0;
+    for (let dy = -Math.ceil(T / 2) - 1; dy <= Math.ceil(T / 2) + 1; dy++) {
+      const y = Math.round(ly + dy); if (y < 0 || y >= h) continue;
+      let run = 0; for (let x = Math.round(cx - rx - sp * 0.25); x <= Math.round(cx + rx + sp * 0.25); x++) if (B[y * w + x]) run++;
+      best = Math.max(best, run);
+      // or a short ledger line: it still sticks out on both sides of the head
+      let l = 0, r = 0; const ext = Math.max(2, Math.round(sp * 0.18));
+      for (let k = 1; k <= ext; k++) { if (B[y * w + Math.round(cx - rx * 0.9 - k)]) l++; if (B[y * w + Math.round(cx + rx * 0.9 + k)]) r++; }
+      if (l >= ext * 0.7 && r >= ext * 0.7) sides++;
+    }
+    return best >= (2 * rx + sp * 0.5) * 0.85 || sides >= 1;
+  };
   // hollow heads read from the grey picture: a dark oval ring around a light middle. This finds
   if (TR && typeof heads !== 'undefined') trk(513, heads);
   // half and whole notes whose hole closed up when the picture was blurred or enlarged
@@ -795,7 +815,9 @@ function readStaff(s, ctx, header) {
         const mid = lightAt(x, cy); if (mid < th + 28) continue;
         let n = 0; for (let i = 0; i < ringPts.length; i += 2) if (dark(x + ringPts[i], cy + ringPts[i + 1])) n++;
         const f = n / (ringPts.length / 2);
-        if (f >= 0.72) ring.push({ cx: x, cy, p, sc: f + (mid - th) / 600, fit: f, comp: null, ringHead: true, wide: kx > 1 });
+        // (below or above the staff only where its ledger line is: else a ring two steps off — the
+        // dark of a dynamic or a slur under the note — outscores the note's own place)
+        if (f >= 0.72 && (!(globalThis.__ringLedger ?? 1) || ledgerOk(x, p))) ring.push({ cx: x, cy, p, sc: f + (mid - th) / 600, fit: f, comp: null, ringHead: true, wide: kx > 1 });
       }
     }
     ring.sort((a, b2) => b2.sc - a.sc);
@@ -1007,22 +1029,7 @@ function readStaff(s, ctx, header) {
   heads = heads.filter((hd, i) => !heads.some((q, j) => j !== i && q.p === hd.p && q.comp === hd.comp && Math.abs(q.cx - hd.cx) < sp * 1.5 && q.wRow > sp * 1.45 && (q.sc > hd.sc || (q.sc === hd.sc && j < i))));
   if (TR && typeof heads !== 'undefined') trk(631, heads);
   // notes above or below the staff need their ledger lines
-  heads = heads.filter((hd) => {
-    if (hd.p >= -1 && hd.p <= 9) return true;
-    const lp = hd.p < 0 ? -2 : 10;
-    const ly = yAt(s, lp, hd.cx);
-    let best = 0, sides = 0;
-    for (let dy = -Math.ceil(T / 2) - 1; dy <= Math.ceil(T / 2) + 1; dy++) {
-      const y = Math.round(ly + dy); if (y < 0 || y >= h) continue;
-      let run = 0; for (let x = Math.round(hd.cx - rx - sp * 0.25); x <= Math.round(hd.cx + rx + sp * 0.25); x++) if (B[y * w + x]) run++;
-      best = Math.max(best, run);
-      // or a short ledger line: it still sticks out on both sides of the head
-      let l = 0, r = 0; const ext = Math.max(2, Math.round(sp * 0.18));
-      for (let k = 1; k <= ext; k++) { if (B[y * w + Math.round(hd.cx - rx * 0.9 - k)]) l++; if (B[y * w + Math.round(hd.cx + rx * 0.9 + k)]) r++; }
-      if (l >= ext * 0.7 && r >= ext * 0.7) sides++;
-    }
-    return best >= (2 * rx + sp * 0.5) * 0.85 || sides >= 1;
-  });
+  heads = heads.filter((hd) => ledgerOk(hd.cx, hd.p));
   if (TR && typeof heads !== 'undefined') trk(648, heads);
   // ---- hollow or filled, stem, beams, dot
   for (const hd of heads) {
@@ -2160,11 +2167,12 @@ function readDigitBox(ctx, sp, bx, C = ctx.C, labC = ctx.labC) {
   if (!bx || (bx.y1 - bx.y0) < sp * 1.1) return null;
   const sh = shapeOf(C, w, bx.x0, bx.y0, bx.x1, bx.y1, sp, labC, bx.ids);
   // the white areas the digit closes in tell 5 from 6, 3 from 8, 0 from…
-  const nh = holesInBox(C, w, ctx.h, bx);
+  // (and with the staff line put back along its top and bottom edges, for a digit sitting on lines)
+  const nh = holesInBox(C, w, ctx.h, bx), nh2 = (globalThis.__holeEdge ?? 1) && C === ctx.C ? holesInBox(C, w, ctx.h, bx, ctx.B, Math.ceil(ctx.T || 2) + 1) : nh;
   const HOLES = { 0: [1], 1: [0], 2: [0], 3: [0], 4: [0, 1], 5: [0, 1], 6: [1], 7: [0], 8: [2], 9: [1] };
   // both comparisons: the exact one (printed digits) and the loose one (handwritten digits)
   const loose = new Map(classifyLoose(sh, ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9']).map((q) => [q.cls, q.d]));
-  const cl = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'].map((d) => { const v = +d.slice(1), e = classify(sh, [d]).d, l = loose.get(d), pen = HOLES[v].includes(nh) ? 0 : 0.2; return { v, d: Math.min(e, l * 1.1 + 0.04) + pen, e: e + pen, l: l + pen, ok: e + pen < 0.5 || l + pen < 0.16 }; }).sort((a, b2) => a.d - b2.d);
+  const cl = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'].map((d) => { const v = +d.slice(1), e = classify(sh, [d]).d, l = loose.get(d), pen = HOLES[v].includes(nh) || (v === 8 && nh2 === 2) ? 0 : 0.2; return { v, d: Math.min(e, l * 1.1 + 0.04) + pen, e: e + pen, l: l + pen, ok: e + pen < 0.5 || l + pen < 0.16 }; }).sort((a, b2) => a.d - b2.d);
   // a digit is about as wide as a staff space or more (a stem or a note is not a digit)
   if ((bx.x1 - bx.x0) < sp * 0.55 && cl[0].v !== 1) return null;
   // 5 or 6: a 5 has a straight bar across its top, a 6 a round top
