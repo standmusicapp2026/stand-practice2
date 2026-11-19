@@ -1913,7 +1913,7 @@ function readStaff(s, ctx, header) {
       if (rests.some((r) => r.multi && r.cx > a && r.cx < z)) continue;
       // (rest-like ink in the staff's middle: something is printed there)
       if (!compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, (q.x0 + q.x1) / 2) - 4) < 2.5 && q.h > sp * 0.35 && q.w > sp * 0.25)) continue;
-      const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 4.4; }).sort((p1, p2) => p1.x0 - p2.x0);
+      const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y0 > top - sp * 3.5 && q.h > sp * 0.9 && q.h < sp * 2.6 && q.w < sp * 3.4 && ctx.staffOf((q.y0 + q.y1) / 2, qc) === s; }).sort((p1, p2) => p1.x0 - p2.x0);
       if (!ds.length || ds.length > 2) continue;
       // (the digits side by side, over the middle of the bar)
       const dm = (ds[0].x0 + ds[ds.length - 1].x1) / 2; if (Math.abs(dm - m) > (z - a) * 0.25) continue;
