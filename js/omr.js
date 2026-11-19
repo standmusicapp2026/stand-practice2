@@ -813,9 +813,7 @@ function readStaff(s, ctx, header) {
         const mid = lightAt(x, cy); if (mid < th + 28) continue;
         let n = 0; for (let i = 0; i < ringPts.length; i += 2) if (dark(x + ringPts[i], cy + ringPts[i + 1])) n++;
         const f = n / (ringPts.length / 2);
-        // (below or above the staff only where its ledger line is: else a ring two steps off — the
-        // dark of a dynamic or a slur under the note — outscores the note's own place)
-        if (f >= 0.72 && (!(globalThis.__ringLedger ?? 1) || ledgerOk(x, p))) ring.push({ cx: x, cy, p, sc: f + (mid - th) / 600, fit: f, comp: null, ringHead: true, wide: kx > 1 });
+        if (f >= 0.72) ring.push({ cx: x, cy, p, sc: f + (mid - th) / 600, fit: f, comp: null, ringHead: true, wide: kx > 1 });
       }
     }
     ring.sort((a, b2) => b2.sc - a.sc);

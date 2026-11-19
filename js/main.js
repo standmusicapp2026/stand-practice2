@@ -1109,6 +1109,10 @@ async function bringItems(items, app, opts = {}) {
   try {
     for (const it of todo) {
       done++;
+      // (a score opened meanwhile comes first: while its pages are being drawn, bringing in waits —
+      // each score brought in has its cover and first page drawn too, and the score being read
+      // waited for them, slow to open, its pages left white)
+      if (globalThis.__brYield ?? 1) { const t0w = performance.now(); let quiet = 0; while (performance.now() - t0w < 20000) { const reading = V.doc && !$('#score').hidden; if (!reading) break; if (globalThis.__rqBusy && globalThis.__rqBusy()) quiet = 0; else if (++quiet >= 6) break; await new Promise((r) => setTimeout(r, 250)); } }
       const sig = (app || '') + ':' + it.rel + ':' + (it.size || 0);
       if (have.has(sig) || skip(it)) { same++; continue; }
       const name = it.rel.split('/').pop();
