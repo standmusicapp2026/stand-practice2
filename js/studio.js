@@ -198,7 +198,7 @@ async function addScore(opt = {}) {
   pause();
   // (drawn bigger than for the page: the music is shown large on the video, and must stay sharp)
   const hi = /iPhone|iPod/.test(navigator.userAgent) ? 2600 : 3400;
-  const region = await D.pickRegion(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video', long: hi });
+  const region = await (globalThis.__studioPick || D.pickRegion)(null, null, { title: second ? 'Choose the same bars in the other part' : 'Choose the lines you play in this video', long: hi });
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
@@ -218,9 +218,12 @@ async function addScore(opt = {}) {
     busy(null);
     stackLines();
     saveSoon(); renderSide(); renderTimeline(); frame();
-    // line it up with the playing straight away
-    if (ST.pcm) { if (second && scoreLines().length === 2) syncBoth(); else autoSync(o); }
-    else { ST.tab = 'timing'; renderSide(); D.toast(`${o.layout.bars.length} bars. Tap along to line them up with the video.`, 4500); }
+    // first the line looked over (its bars, and what is shown of it), then lined up with the playing
+    reviewLine(o, () => {
+      o.reviewed = true; saveSoon(); renderSide();
+      if (ST.pcm) { if (second && scoreLines().length === 2) syncBoth(); else autoSync(o); }
+      else { ST.tab = 'timing'; renderSide(); D.toast(`${o.layout.bars.length} bars. Tap along to line them up with the video.`, 4500); }
+    });
   } catch (err) { console.error(err); busy(null); D.toast('That part of the score could not be read.'); }
 }
 // The score's lines on the video: one, or two (a part on each). A second line looks like the first
@@ -2432,6 +2435,12 @@ function renderScoreTab(side) {
   place.append(el('p', 'hint', 'Or drag the score on the picture.'));
   side.append(place);
   const line = sec('The line of music');
+  if (o.reviewed) {
+    line.append(el('p', 'hint', 'Its bars and what it shows were looked over when it was chosen. To look again, choose the score again.'));
+    const again = el('button', 'btn'); again.append(el('span', '', 'Choose the score again'));
+    again.addEventListener('click', () => addScore(o.line === 2 ? { second: true } : {}));
+    line.append(again);
+  } else {
   const bb = el('button', 'btn'); bb.append(el('span', '', o.layout.bars0 ? 'Edit the bars (changed)' : 'Edit the bars'));
   bb.addEventListener('click', () => openBars(o));
   line.append(bb);
@@ -2440,6 +2449,7 @@ function renderScoreTab(side) {
   er.addEventListener('click', () => openEraser(o));
   line.append(er);
   line.append(el('p', 'hint', 'See the whole line as it goes into the video, and wipe away anything that should not be there.'));
+  }
   // another part, on a line of its own under this one
   if (!two) {
     const add2 = el('button', 'btn'); add2.append(el('span', '', 'Add a second line (another part)'));
@@ -2524,8 +2534,8 @@ function renderTimingTab(side) {
   atLine.addEventListener('click', () => { const T = o.times; const v = clamp(nowT(), k > 0 ? T[k - 1] + 0.08 : -1, k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur); nudgeBar(o, k, v - T[k], { stay: true }); });
   bs.append(atLine);
   bs.append(el('p', 'hint', 'Tap a bar on the timeline to choose it, or drag its start there. Hold still a moment on it to look closer.'));
-  const eb = el('button', 'btn small ghost'); eb.append(el('span', '', 'A bar missing, or one too many? Edit the bars'));
-  eb.addEventListener('click', () => openBars(o)); bs.append(eb);
+  if (!o.reviewed) { const eb = el('button', 'btn small ghost'); eb.append(el('span', '', 'A bar missing, or one too many? Edit the bars'));
+    eb.addEventListener('click', () => openBars(o)); bs.append(eb); }
   if (show('bar')) side.append(bs);
 }
 const fmt2 = (s) => { const neg = s < 0; s = Math.abs(s); const m = Math.floor(s / 60), r = s - m * 60; return (neg ? '−' : '') + m + ':' + r.toFixed(2).padStart(5, '0'); };
@@ -2671,7 +2681,15 @@ function renderFormat(side) {
 // of the line above, a page number, a smudge) and to bring back what was wiped. One finger paints;
 // two fingers move along and closer; the little line under it shows where you are.
 // =====================================================================
-async function openEraser(o) {
+// The line of music looked over once, just after it is chosen: where each bar is (and put right by
+// hand), and what is shown of it (anything wiped away). Two views of the same line, a switch between
+// them; Done, and the Studio goes on with it. (Later, to look again, the score is chosen again.)
+function reviewLine(o, then) {
+  const rv = { review: true, then, go: (v) => (v === 'clean' ? openEraser(o, rv) : openBars(o, rv)) };
+  openBars(o, rv);
+}
+const reviewSwitch = (rv, now, save) => seg([['bars', 'Bars'], ['clean', 'Clean']], now, (v) => { if (v === now) return; save(); rv.go(v); });
+async function openEraser(o, rv = null) {
   pause();
   const box = $('#stEraser'); box.textContent = ''; box.hidden = false;
   busy('Getting the line ready…', '', 0.4);
@@ -2692,6 +2710,12 @@ async function openEraser(o) {
   const undo = el('button', 'icon-btn'); undo.innerHTML = '<svg><use href="#i-undo"/></svg>'; undo.setAttribute('aria-label', 'Undo');
   const done = el('button', 'btn small primary', 'Done');
   top.append(cancel, title, undo, done);
+  const keep = () => {
+    o.erase = strokes.filter((k) => k.p.length >= 2);
+    const old = ST.strips.get(o.id); if (old) { old.canvas.width = 0; if (old.mask) old.mask.width = 0; }
+    ST.strips.set(o.id, { canvas: work, mask: inkMask(work), tinted: new Map(), k: orig.k });
+  };
+  if (rv) { cancel.hidden = true; top.replaceChild(reviewSwitch(rv, 'clean', () => { keep(); close2(); saveSoon(); frame(); }), title); }
   const view = el('div', 'st-er-view'); const vc = el('canvas'); const ring = el('div', 'st-er-ring'); ring.hidden = true; view.append(vc, ring);
   const map = el('div', 'st-er-map'); const mc = el('canvas'); const win = el('div', 'st-er-win'); map.append(mc, win);
   const hint = el('p', 'st-er-hint', 'Paint with one finger over what should go. Two fingers move along the line and closer.');
@@ -2701,6 +2725,7 @@ async function openEraser(o) {
   const allBack = el('button', 'btn small ghost', 'Bring it all back');
   tools.append(modeSeg(), sizeSeg(), allBack);
   box.append(top, view, map, hint, tools);
+  if (rv) box.insertBefore(el('p', 'st-er-hint st-review-lead', 'Clean the line for the video: wipe away anything that should not be in it. Bars, to check them again.'), hint);
   const dpr = Math.min(2, devicePixelRatio || 1);
   let VW = 0, VH = 0;
   const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; vc.width = Math.round(VW * dpr); vc.height = Math.round(VH * dpr); vc.style.width = VW + 'px'; vc.style.height = VH + 'px'; };
@@ -2771,10 +2796,9 @@ async function openEraser(o) {
   const close2 = () => { ro.disconnect(); box.hidden = true; box.textContent = ''; orig.canvas.width = orig.canvas.height = 0; if (orig.mask) orig.mask.width = 0; };
   cancel.addEventListener('click', () => { work.width = work.height = 0; close2(); });
   done.addEventListener('click', () => {
-    o.erase = strokes.filter((k) => k.p.length >= 2);
-    const old = ST.strips.get(o.id); if (old) { old.canvas.width = 0; if (old.mask) old.mask.width = 0; }
-    ST.strips.set(o.id, { canvas: work, mask: inkMask(work), tinted: new Map(), k: orig.k });
+    keep();
     close2(); saveSoon(); frame(); renderSide();
+    if (rv) { rv.then(); return; }
     D.toast(o.erase.length ? 'The video shows the line as you left it.' : 'The line is shown as it was read.', 2200);
   });
 }
@@ -2831,7 +2855,7 @@ function barsRead(o) { return o.layout.bars0 || o.layout.bars; }
 // adds one (it finds the barline printed there), a line is dragged to where it belongs, a tap on a
 // line chooses it and it can be taken away. One finger elsewhere moves along the line, two fingers
 // move and come closer.
-async function openBars(o) {
+async function openBars(o, rv = null) {
   pause();
   const box = $('#stEraser'); box.textContent = ''; box.hidden = false; box.classList.add('bars');
   let strip = ST.strips.get(o.id), own = false;
@@ -2865,6 +2889,7 @@ async function openBars(o) {
   foot.append(count, asRead);
   box.append(top, view, map, hint, foot);
   if (scoreLines().length > 1) hint.textContent = 'Tap where a bar begins to add a barline. Drag a line to move it, or tap it to remove it. Each line of music has its own bars.';
+  if (rv) box.insertBefore(el('p', 'st-er-hint st-review-lead', 'Check where each bar begins: each has its number. Then Clean, to wipe away what should not be in the video.'), hint);
   const dpr = Math.min(2, devicePixelRatio || 1);
   const E = { s: 1, ox: 0 }; let VW = 0, VH = 0;
   const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; vc.width = Math.round(VW * dpr); vc.height = Math.round(VH * dpr); vc.style.width = VW + 'px'; vc.style.height = VH + 'px'; };
@@ -3032,11 +3057,12 @@ async function openBars(o) {
   const ro = new ResizeObserver(() => { fit(); clampView(); redraw(); }); ro.observe(view);
   const close2 = () => { document.removeEventListener('keydown', onKey, true); ro.disconnect(); box.hidden = true; box.textContent = ''; box.classList.remove('bars'); if (own) { src.width = src.height = 0; if (strip.mask) strip.mask.width = 0; } };
   cancel.addEventListener('click', close2);
+  const keepBars = () => { const changed = key(B) !== key(start); close2(); if (changed) applyBars(o, B); return changed; };
+  if (rv) { cancel.hidden = true; top.replaceChild(reviewSwitch(rv, 'bars', () => { keepBars(); }), title); }
   done.addEventListener('click', () => {
-    const changed = key(B) !== key(start);
-    close2();
+    const changed = keepBars();
+    if (rv) { rv.then(); return; }
     if (!changed) return;
-    applyBars(o, B);
     D.toast(`${B.length} bars now. The times of the bars you left as they were are kept.`, 2600);
   });
   ST.barsEditor = { get bars() { return B; }, addAt, removeLine, moveLine, snap, lines, sx,
@@ -3545,6 +3571,7 @@ export async function _addScoreFrom(canvas, opt = {}) {
   return o;
 }
 export const _frame = () => frame();
+export const _addScore = (opt) => addScore(opt);   // (tests: with globalThis.__studioPick standing for the picker)
 export const _prepare = (o) => prepareOverlay(o);
 // (for the tests: following the playing, and one frame of the export drawn at a time)
 export const _autoSync = (o, opt) => autoSync(o, opt);

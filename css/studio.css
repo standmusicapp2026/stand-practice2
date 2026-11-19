@@ -249,3 +249,7 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
 .st-bars-view.nope { animation: st-nope .28s ease; }
 @keyframes st-nope { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
 @media (prefers-reduced-motion: reduce) { .st-bars-view.nope { animation: none; } }
+
+/* looking over a new line: the switch between its bars and its cleaning in the top bar, and a word on what to do */
+.st-er-top .seg { flex: 0 1 auto; min-width: 0; }
+.st-review-lead { font-weight: 600; color: var(--ink); }
