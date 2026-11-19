@@ -1911,6 +1911,8 @@ function readStaff(s, ctx, header) {
       if (z - a < sp * 2.5) continue;
       if (heads.some((hd) => hd.cx > a && hd.cx < z)) continue;
       if (rests.some((r) => r.multi && r.cx > a && r.cx < z)) continue;
+      // (nor a stem: a stroke two and a half spaces tall or more, thin, inside the bar — a note there)
+      if (compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && q.h > sp * 2.5 && q.y1 > yAt(s, 8, q.x0) && q.y0 < yAt(s, 0, q.x0))) continue;
       // (rest-like ink in the staff's middle: something is printed there)
       if (!compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, (q.x0 + q.x1) / 2) - 4) < 2.5 && q.h > sp * 0.35 && q.w > sp * 0.25)) continue;
       const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y0 > top - sp * 3.5 && q.h > sp * 0.9 && q.h < sp * 2.6 && q.w < sp * 3.4 && ctx.staffOf((q.y0 + q.y1) / 2, qc) === s; }).sort((p1, p2) => p1.x0 - p2.x0);
@@ -1926,11 +1928,11 @@ function readStaff(s, ctx, header) {
           let best = null;
           for (let x = Math.round(q.x0 + q.w * 0.3); x <= Math.round(q.x1 - q.w * 0.3); x++) { let ink = 0; for (let y = q.y0; y <= q.y1; y++) { const k2 = y * w + x; if (C[k2] && labC[k2] === q.id) ink++; } if (!best || ink < best.ink) best = { x, ink }; }
           const k1 = best && one(q, q.x0, best.x - 1), k2 = best && one(q, best.x + 1, q.x1);
-          if (k1 && k2 && k1.d < 0.45 && k2.d < 0.45) { n = n * 100 + +k1.cls.slice(1) * 10 + +k2.cls.slice(1); continue; }
+          if (k1 && k2 && k1.d < 0.38 && k2.d < 0.38) { n = n * 100 + +k1.cls.slice(1) * 10 + +k2.cls.slice(1); continue; }
           okAll = false; continue;
         }
         const k = one(q, q.x0, q.x1);
-        if (k && k.d < 0.42) n = n * 10 + +k.cls.slice(1); else okAll = false;
+        if (k && k.d < 0.34) n = n * 10 + +k.cls.slice(1); else okAll = false;
       }
       if (!okAll || n < 2 || n > 199) continue;
       for (let k = rests.length - 1; k >= 0; k--) if (rests[k].cx > a && rests[k].cx < z) rests.splice(k, 1);
