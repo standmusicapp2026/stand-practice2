@@ -3335,6 +3335,23 @@ async function outNext(id, types, ms = 120000) {
 // (a picture from a canvas; when iOS is short of memory toBlob gives nothing, so the slower way is tried)
 const encodeCanvas = (c, type, q) => new Promise((res) => { try { c.toBlob((b) => { if (b) return res(b); try { res(c.toDataURL(type, q)); } catch (e) { res(null); } }, type, q); } catch (e) { res(null); } });
 const toB64 = (blob) => typeof blob === 'string' ? Promise.resolve(blob.split(',')[1] || '') : !blob ? Promise.reject(new Error('the picture could not be made (memory)')) : new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+// Several frames made into PNGs at once, each on a core of its own (pngworker.js); where the web view
+// cannot (no OffscreenCanvas in a worker), null: one at a time on the page, as before.
+function pngPool() {
+  try {
+    if (!(globalThis.__pngPool ?? 1) || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined' || !OffscreenCanvas.prototype.convertToBlob) return null;
+    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    const ws = Array.from({ length: n }, () => new Worker(new URL('./pngworker.js', import.meta.url)));
+    const wait = new Map(); let seq = 0, rr = 0;
+    for (const w of ws) w.onmessage = (e) => { const p = wait.get(e.data.id); if (!p) return; wait.delete(e.data.id); if (e.data.error) p.rej(new Error(e.data.error)); else p.res(e.data.data); };
+    return {
+      n,
+      // (a copy of the canvas as it is now, handed on; the canvas can be drawn again at once)
+      async png(canvas) { const bmp = await createImageBitmap(canvas); const id = ++seq; const w = ws[rr++ % n]; return new Promise((res, rej) => { wait.set(id, { res, rej }); w.postMessage({ id, bmp }, [bmp]); }); },
+      end() { for (const w of ws) w.terminate(); for (const p of wait.values()) p.rej(new Error('stopped')); wait.clear(); },
+    };
+  } catch { return null; }
+}
 // a file handed to iOS in pieces (never whole in one message)
 async function outUpload(id, op, blob, name) {
   const post = (m) => window.webkit.messageHandlers.standVideoOut.postMessage({ op, id, ...m });
@@ -3441,36 +3458,54 @@ async function exportNative({ share = true, noOver = false } = {}) {
       const cx = (vw - cw) * px, cy = (vh - ch) * py;
       const q = Math.min(1, 3840 / Math.max(cw, ch));
       const Wo = Math.max(16, Math.round((cw * q) / 2) * 2), Ho = Math.max(16, Math.round((ch * q) / 2) * 2);
-      post({ op: 'over', a, b, fps, w: Wo, h: Ho, crop: [cx, cy, cw, ch] });
+      // (the music moves 30 times a second at most: a film at 60 has each of its pictures twice)
+      const ofps = Math.min(fps, globalThis.__overFps ?? 30);
+      post({ op: 'over', a, b, fps: ofps, w: Wo, h: Ho, crop: [cx, cy, cw, ch] });
       let ready = true;
       try { await outNext(id, ['ready']); } catch (e) { ready = false; console.warn('over', e); }
       if (ready) {
         try {
           // (only the part of the picture the music and pictures can be in, at the film's own sharpness)
-          const box = overBox(W, H, a, b), sc = Wo / W;
-          const oc = document.createElement('canvas'); oc.width = Math.max(2, Math.round(box.w * sc)); oc.height = Math.max(2, Math.round(box.h * sc));
+          // (where it goes on the film, in the film's own pixels; drawn no sharper than half again the
+          // size it is shown at in Studio — iOS lays it on at the film's size — and each frame made into
+          // its picture side by side with the next ones, on the other cores)
+          const box = overBox(W, H, a, b), sc = Wo / W, scd = Math.min(sc, globalThis.__overScale ?? 1.5);
+          const oc = document.createElement('canvas'); oc.width = Math.max(2, Math.round(box.w * scd)); oc.height = Math.max(2, Math.round(box.h * scd));
           const og = oc.getContext('2d');
-          const rect = [box.x * sc, box.y * sc, oc.width, oc.height];
-          const N = Math.max(1, Math.ceil(total * fps - 1e-6));
+          const rect = [box.x * sc, box.y * sc, box.w * sc, box.h * sc];
+          const N = Math.max(1, Math.ceil(total * ofps - 1e-6));
           const t0o = performance.now();
-          let pend = null;
-          for (let i = 0; i < N; i++) {
-            if (cancelled) return false;
-            const t = a + i / fps;
-            globalThis.__studioOverlaysOnly = true;
-            try { og.setTransform(1, 0, 0, 1, 0, 0); og.clearRect(0, 0, oc.width, oc.height); og.setTransform(sc, 0, 0, sc, -box.x * sc, -box.y * sc); drawFrame(og, W, H, t, true); }
-            finally { globalThis.__studioOverlaysOnly = false; og.setTransform(1, 0, 0, 1, 0, 0); }
-            const data = await toB64(await encodeCanvas(oc, 'image/png'));
+          const pool = pngPool();
+          let pend = null; const queue = [];
+          const sendOne = async (q) => {
+            const data = await q.data;
             if (pend) await pend;
-            if (cancelled) return false;
-            post({ op: 'oframe', i, t: t - a, data, rect });
+            if (cancelled) return;
+            post({ op: 'oframe', i: q.i, t: q.t - a, data, rect });
             pend = outNext(id, ['ack'], 180000); pend.catch(() => {});   // (looked at below; a failure is not left unseen)
             sent++;
-            if (i % 6 === 0) {
-              const f = clamp((t - a) / Math.max(0.01, total), 0, 1), left = f > 0.03 ? ((performance.now() - t0o) / f) * (1 - f) / 1000 : null;
-              busy('Making the video…', `${fmt(t - a)} of ${fmt(total)}` + (left ? ` · about ${fmt(left)} left` : ''), 0.03 + 0.92 * f);
+          };
+          try {
+            for (let i = 0; i < N; i++) {
+              if (cancelled) return false;
+              const t = a + i / ofps;
+              globalThis.__studioOverlaysOnly = true;
+              try { og.setTransform(1, 0, 0, 1, 0, 0); og.clearRect(0, 0, oc.width, oc.height); og.setTransform(scd, 0, 0, scd, -box.x * scd, -box.y * scd); drawFrame(og, W, H, t, true); }
+              finally { globalThis.__studioOverlaysOnly = false; og.setTransform(1, 0, 0, 1, 0, 0); }
+              const data = pool ? pool.png(oc) : toB64(await encodeCanvas(oc, 'image/png'));
+              data.catch(() => {});
+              queue.push({ i, t, data });
+              // (as many on their way as there are cores making them; sent to iOS in order)
+              while (queue.length > (pool ? pool.n + 1 : 0)) await sendOne(queue.shift());
+              if (cancelled) return false;
+              if (i % 6 === 0) {
+                const f = clamp((t - a) / Math.max(0.01, total), 0, 1), left = f > 0.03 ? ((performance.now() - t0o) / f) * (1 - f) / 1000 : null;
+                busy('Making the video…', `${fmt(t - a)} of ${fmt(total)}` + (left ? ` · about ${fmt(left)} left` : ''), 0.03 + 0.92 * f);
+              }
             }
-          }
+            while (queue.length) await sendOne(queue.shift());
+          } finally { if (pool) pool.end(); }
+          if (cancelled) return false;
           if (pend) await pend;
           outW = Wo; outH = Ho; overUsed = true;
         } catch (e) {
@@ -3693,6 +3728,8 @@ export const _syncBoth = () => syncBoth();
 export const _steady = (t) => steadyTimes(t);
 export const _tapFrom = (o, k) => startTap(o, k);
 export const _finishTap = () => finishTap();
+export const _overBox = (W, H, a, b) => overBox(W, H, a, b);
+export const _drawFrame = (g, W, H, t, ex) => drawFrame(g, W, H, t, ex);
 export function _drawAt(canvas, t) { const [W, H] = outSize(); if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; } drawFrame(canvas.getContext('2d'), W, H, t, true); }
 export const _stack = () => stackLines();
 export const _exportNative = (o) => exportNative(o);
