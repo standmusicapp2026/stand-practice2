@@ -26,8 +26,8 @@
 .st-tappad { position: absolute; left: 0; right: 0; z-index: 9; height: 54px; padding: 0 12px; background: var(--surface-solid); border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
 .st-tappad[hidden] { display: none; }
 .st-tapinfo { font-size: 14px; color: var(--muted); line-height: 1.25; min-width: 0; }
-.st-tap { position: relative; width: 96px; height: 96px; margin-top: -42px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; touch-action: none; -webkit-user-select: none; user-select: none; box-shadow: 0 6px 22px rgba(0,0,0,.28), 0 0 0 5px var(--surface-solid); transition: transform .07s; }
-.st-tap b { font: 700 20px/1.05 var(--font-num); text-align: center; padding: 0 8px; }
+.st-tap { position: relative; width: 108px; height: 108px; margin-top: -48px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; touch-action: none; -webkit-user-select: none; user-select: none; box-shadow: 0 6px 22px rgba(0,0,0,.28), 0 0 0 5px var(--surface-solid); transition: transform .07s; }
+.st-tap b { font: 700 22px/1.05 var(--font-num); text-align: center; padding: 0 8px; }
 .st-tap::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--accent); opacity: 0; pointer-events: none; }
 .st-tap.hit { transform: scale(.94); filter: brightness(1.15); }
 .st-tap.hit::after { animation: st-ring .45s ease-out; }
@@ -95,6 +95,12 @@
 .st-playbtn { width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
 .st-playbtn svg { width: 22px; height: 22px; }
 .st-playbtn:active { transform: scale(.94); }
+/* the Tap ball beside play: one touch and you tap along (to set the bars right when the music does not follow) */
+.st-transport { position: relative; }
+.st-tapgo { position: absolute; top: 50%; left: calc(50% + 37px); transform: translateY(-50%); width: 46px; height: 46px; border-radius: 50%; background: var(--surface-solid); color: var(--accent); border: 2.5px solid var(--accent); display: grid; place-items: center; }
+.st-tapgo b { font: 700 14px/1 var(--font-num); }
+.st-tapgo:active { transform: translateY(-50%) scale(.92); }
+.studio.tapping .st-tapgo { visibility: hidden; }
 .st-tzoom { justify-self: end; display: flex; gap: 4px; }
 .st-tzoom .icon-btn { width: 38px; height: 38px; }
 .st-tzoom .icon-btn.on { color: var(--accent-ink); background: var(--accent); }
@@ -176,8 +182,8 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
   .studio.sheet-tall .st-stage { flex: 0 0 auto; height: 40vh; height: 40dvh; min-height: 0; }
   .studio.sheet-tall .st-panel { flex: 1 1 0; max-height: none; }
   .st-panel .seg button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; padding-left: 4px; padding-right: 4px; }
-  .st-tap { width: 80px; height: 80px; margin-top: -34px; }
-  .st-tap b { font-size: 17px; }
+  .st-tap { width: 90px; height: 90px; margin-top: -38px; }
+  .st-tap b { font-size: 19px; }
   .st-tapinfo { font-size: 13px; }
   .st-media { height: 46px; }
   .st-scoretrack { height: 34px; }
@@ -198,8 +204,10 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
   .st-ruler { height: 14px; }
   .st-timeline { padding-top: 2px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px); }
   .st-tappad { height: 44px; }
-  .st-tap { width: 66px; height: 66px; margin-top: -24px; }
-  .st-tap b { font-size: 15px; }
+  .st-tap { width: 74px; height: 74px; margin-top: -28px; }
+  .st-tap b { font-size: 16px; }
+  .st-tapgo { width: 38px; height: 38px; left: calc(50% + 31px); }
+  .st-tapgo b { font-size: 12px; }
 }
 @media (max-width: 600px), (max-height: 500px) {
   .st-empty { bottom: 10px; padding: 6px 6px 6px 12px; gap: 8px; }

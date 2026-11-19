@@ -1864,6 +1864,7 @@ function updateHead(light) {
   const o = scoreOv();
   let b = -1;
   if (o && o.times) b = barAt(o, t).b;
+  { const g = $('#stTapGo'), on = !!(o && o.layout && o.layout.bars.length); if (g.hidden === on) g.hidden = !on; }
   if (b !== TL.curB) {
     TL.curB = b;
     $('#stScoreRoll').querySelectorAll('.st-bar[data-bar]').forEach((d) => d.classList.toggle('cur', +d.dataset.bar === b));
@@ -3421,6 +3422,14 @@ function wire() {
   if (!$('#studio')) return;
   $('#stBack').addEventListener('click', close);
   $('#stPlay').addEventListener('click', () => (ST.playing ? pause() : play()));
+  // the Tap ball: tap along at once, from the bar playing now (from the start when the bars were never
+  // set, or when it is at the first bar); the bars before it stay as they are
+  $('#stTapGo').addEventListener('click', () => {
+    const o = scoreOv(); if (!o || !o.layout || !o.layout.bars.length || ST.tapping) return;
+    const n = o.layout.bars.length, set = o.times && o.synced !== 'even';
+    const k = set && TL.curB > 0 && TL.curB < n ? TL.curB : 0;
+    ST.tapFrom = k; ST.tapFromFor = o.id; startTap(o, k);
+  });
   $('#stEmptyAdd').addEventListener('click', () => addScore());
   for (const b of $('#stTabs').querySelectorAll('button')) b.addEventListener('click', () => { if (ST.tapping) return; if (b.dataset.tab !== 'image' && b.dataset.tab !== 'score') { const o = selected(); if (o && o.kind === 'image') ST.sel = null; } openTab(b.dataset.tab); frame(); });
   $('#stTapStop').addEventListener('click', () => finishTap());
