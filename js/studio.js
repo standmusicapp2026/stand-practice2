@@ -975,6 +975,9 @@ async function autoSync(o, { from = 0 } = {}) {
       try { window.__studioHarmony = hm ? { good: hm.good, shift: hm.shift, events: L.events.length } : { none: true, events: L.events.length }; } catch {}
       if (hm && (!best || hm.good > best.good + 0.1)) { hm.alt = best ? best.good : null; best = hm; }
     }
+    // (for the tests: how well each way of listening fitted; and one may be asked for)
+    try { window.__studioPick = { notes: notesBest && +notesBest.good.toFixed(3), chosen: best && best.how, good: best && +best.good.toFixed(3), alt: best && best.alt }; } catch {}
+    if (globalThis.__studioHow === 'notes' && notesBest) best = notesBest;
     if (!best) { busy(null); D.toast('Not enough clear notes were heard. Use Tap along.', 4500); return; }
     busy('Following your playing…', 'Lining them up with the score.', 0.9);
     await new Promise((r) => setTimeout(r, 30));
