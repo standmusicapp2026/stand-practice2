@@ -1142,7 +1142,7 @@ async function autoSync(o, { from = 0 } = {}) {
       if (cands.length > 1) {
         const sn = pitchSamples(L, (notesBest && notesBest.clef) || L.clef || 'treble', (notesBest && notesBest.shift) || 0);
         cache.p ||= obsOfPitches(frames);
-        r.judge = frameAgreement(sn, nb, r.fitT, cache.p) + frameAgreement(sn, nb, r.fitT, await chromaOf()) + (c === best ? 0.045 : 0);
+        r.judge = frameAgreement(sn, nb, r.fitT, cache.p) + frameAgreement(sn, nb, r.fitT, await chromaOf()) + (c === best ? 0.08 : 0);
       }
       if (globalThis.__fitDbg) (globalThis.__fitDbg.judge ||= []).push({ how: c.how, good: c.good, judge: r.judge });
       if (!fin || r.judge > fin.judge) fin = { ...r, c };
