@@ -1487,7 +1487,17 @@ function readStaff(s, ctx, header) {
     if (c.h < sp * 0.95 && c.w > sp * 0.8 && c.w < sp * 1.7 && c.n > c.w * c.h * 0.7) {
       // a block: hanging from the 4th line is a whole rest, sitting on the middle line a half rest
       const l6 = yAt(s, 6, c.x0), l4 = yAt(s, 4, c.x0);
+      // (only a true block: nearly every row filled across, and every column down — a tie or slur along
+      // a line is curved, and where it meets the line it tapers)
+      const rowsFull = () => { let full = 0; for (let y = c.y0; y <= c.y1; y++) { let n = 0; for (let x = c.x0; x <= c.x1; x++) if (lab[y * w + x] === c.id) n++; if (n >= c.w * 0.85) full++; } if (full < c.h * 0.9) return false; let fc = 0; for (let x = c.x0; x <= c.x1; x++) { let n = 0; for (let y = c.y0; y <= c.y1; y++) if (lab[y * w + x] === c.id) n++; if (n >= c.h * 0.85) fc++; } return fc >= c.w * 0.9; };
       if (Math.abs(c.y0 - (l6 - T / 2)) < sp * 0.3) t = 1; else if (Math.abs(c.y1 - (l4 + T / 2)) < sp * 0.3) t = 2;
+      // (moved up or down, as in a part with two voices or a rest set out of the way: hanging from
+      // another line it is a whole rest, sitting on one a half rest)
+      else if ((globalThis.__restAnyLine ?? 1) && c.h >= sp * 0.3 && rowsFull()) for (const lp of [8, 2, 0, 10, -2]) {
+        const ly = yAt(s, lp, c.x0);
+        if (Math.abs(c.y0 - (ly - T / 2)) < sp * 0.2 && lp >= 0) { t = 1; break; }
+        if (Math.abs(c.y1 - (ly + T / 2)) < sp * 0.2 && lp <= 8) { t = 2; break; }
+      }
     } else if ((globalThis.__breveRest ?? 1) && c.h >= sp * 0.75 && c.h <= sp * 1.2 && c.w >= sp * 0.3 && c.w < sp * 0.8 && c.n > c.w * c.h * 0.8) {
       // the breve rest (old music in 4/2, a whole bar of rest): a block filling the space between the
       // 3rd and 4th lines, narrower than a whole rest. Alone in its bar it fills the bar, as a whole
