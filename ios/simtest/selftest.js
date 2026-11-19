@@ -420,6 +420,26 @@ async function videoRun() {
     if (window.standCaps && window.standCaps.videoOver && !r.over) throw new Error('fell back: ' + msg);
     return msg;
   }, 180000);
+  // the music's pictures made one at a time, or side by side on the other cores: both timed in the same
+  // run, by turns (a test machine's speed changes from run to run). Measured only.
+  await step('studio export: one picture at a time, or side by side (timed)', async () => {
+    await closePanels();
+    const S = await import('/js/studio.js');
+    await S.openStudio(got.id); await sleep(1500);
+    S._studio.P.trim = { a: 0, b: 1 };
+    const T = { one: [], side: [] };
+    for (const way of ['one', 'side', 'one', 'side']) {
+      globalThis.__pngPool = way === 'side' ? 1 : 0;
+      window.__studioExport = null; const t0 = performance.now();
+      const ok = await S._exportNative({ share: false });
+      T[way].push(ok ? Math.round(performance.now() - t0) : -1);
+    }
+    delete globalThis.__pngPool;
+    $('#stBack') && $('#stBack').click(); await sleep(800);
+    const msg = `one at a time ${T.one.join(', ')} ms; side by side ${T.side.join(', ')} ms; cores ${navigator.hardwareConcurrency}`;
+    say('SELFTEST detail export timing: ' + msg);
+    return msg;
+  }, 400000);
   await step('studio export: picture by picture (the way kept for when the other fails)', async () => {
     await closePanels();
     const S = await import('/js/studio.js');
