@@ -607,28 +607,53 @@ const tbText = (s) => {
 let mctx = null;
 const spaced = (ctx, t, ls) => ctx.measureText(t).width + (t.length > 1 ? ls * (t.length - 1) : 0);
 // lines of a text box at a page width W (in pixels)
+// (a list set to the left: the box or bullet before each line, and a line that runs on starts under
+// the words, as in a word processor; out.ind holds that indent for each line, in pixels)
+const hangs = (s) => (s.list === 'check' || s.list === 'bullet') && (s.al || 'left') === 'left' && !s.curve;
+const listPre = (s) => (s.list === 'check' ? '☐ ' : '•  ');
 export function tbLines(s, W) {
   if (!mctx) mctx = document.createElement('canvas').getContext('2d');
-  const px = s.fs * W, ls = (s.ls || 0) * px, maxW = Math.max(px, s.w * W - pad(s, W) * 2);
+  const px = s.fs * W, ls = (s.ls || 0) * px, maxW0 = Math.max(px, s.w * W - pad(s, W) * 2);
   mctx.font = tbFont(s, px);
-  const out = [];
-  for (const para of tbText(s).split('\n')) {
-    let cur = '';
+  const out = [], ind = []; out.ind = ind;
+  const hang = hangs(s), hw = hang ? spaced(mctx, listPre(s), ls) + ls : 0;
+  const paras = hang ? tbText(s).split('\n').map((l) => { const k = l.startsWith('•  ') ? 3 : 2; return [l.slice(0, k), l.slice(k)]; }) : tbText(s).split('\n').map((l) => ['', l]);
+  for (const [pre, para] of paras) {
+    const maxW = Math.max(px, maxW0 - hw);
+    let cur = '', first = true;
+    const push = (t) => { out.push(first ? pre + t : t); ind.push(first ? 0 : hw); first = false; };
     for (const word of para.split(/(\s+)/)) {
       const t = cur + word;
-      if (cur && spaced(mctx, t.trimEnd(), ls) > maxW) { out.push(cur.trimEnd()); cur = word.trimStart(); }
+      if (cur && spaced(mctx, t.trimEnd(), ls) > maxW) { push(cur.trimEnd()); cur = word.trimStart(); }
       else cur = t;
       while (spaced(mctx, cur, ls) > maxW && cur.length > 1) {
         let n = cur.length - 1; while (n > 1 && spaced(mctx, cur.slice(0, n), ls) > maxW) n--;
-        out.push(cur.slice(0, n)); cur = cur.slice(n);
+        push(cur.slice(0, n)); cur = cur.slice(n);
       }
     }
-    out.push(cur);
+    push(cur);
   }
   return out;
 }
+// The words being typed in a box are laid out by the browser, over the page's own drawing of them:
+// for the two to fall on each other, the indent of a list's words, and how far below the top of its
+// line the browser puts the first line's foot (its baseline) for this typeface.
+export function tbIndent(s, W) {
+  if (!hangs(s)) return 0;
+  if (!mctx) mctx = document.createElement('canvas').getContext('2d');
+  const px = s.fs * W, ls = (s.ls || 0) * px; mctx.font = tbFont(s, px);
+  return spaced(mctx, listPre(s), ls) + ls;
+}
+export function tbCssBaseline(s, px) {
+  if (!mctx) mctx = document.createElement('canvas').getContext('2d');
+  mctx.font = tbFont(s, px);
+  const m = mctx.measureText('Hg'), A = m.fontBoundingBoxAscent, D = m.fontBoundingBoxDescent;
+  if (!(A > 0) || !(D >= 0)) return px;
+  return (px * lineH(s) - (A + D)) / 2 + A;
+}
+export const tbPad = (s, W) => pad(s, W);
 const pad = (s, W) => (s.bg ? s.fs * W * (s.pad ? 0.8 : 0.45) : 0);
-const lineH = (s) => s.lh || 1.28;
+export const lineH = (s) => s.lh || 1.28;
 // height of a text box as a fraction of the page height
 export function tbHeight(s, W, H) {
   const n = Math.max(1, tbLines(s, W).length), px = s.fs * W;
@@ -642,7 +667,10 @@ function line(ctx, t, x, y, ls, align, stroke) {
   const w = spaced(ctx, t, ls);
   let cx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   ctx.textAlign = 'left';
-  for (const ch of t) { draw(ch, cx); cx += ctx.measureText(ch).width + ls; }
+  // letter by letter, each where the words before it end (so the typeface's kerning is kept, as in
+  // the words being typed), plus the spacing
+  const chars = [...t]; let pre = '';
+  chars.forEach((ch, i) => { draw(ch, cx + (i ? ctx.measureText(pre).width : 0) + ls * i); pre += ch; });
 }
 // a line along an arc (curved text)
 function arcLine(ctx, t, cx, baseY, ls, curve, px, stroke) {
@@ -680,15 +708,16 @@ export function drawTextBox(ctx, s, W, H) {
   const align = s.al === 'center' ? 'center' : s.al === 'right' ? 'right' : 'left';
   const ax = s.al === 'center' ? w / 2 : s.al === 'right' ? w - P : P;
   const top = P * 0.7 + (s.curve > 0 ? px * Math.min(3, Math.abs(s.curve) / 30) : 0);
-  const each = (fn) => lines.forEach((l, i) => fn(l, top + i * lh + px));
+  let IND = 0;
+  const each = (fn) => lines.forEach((l, i) => { IND = lines.ind[i] || 0; fn(l, top + i * lh + px); });
   const put = (l, yy, dx = 0, dy = 0, stroke = false) => {
     if (s.curve) arcLine(ctx, l, w / 2 + dx, yy + dy, ls, s.curve, px, stroke);
-    else line(ctx, l, ax + dx, yy + dy, ls, align, stroke);
+    else line(ctx, l, ax + IND + dx, yy + dy, ls, align, stroke);
   };
   // highlight: a marker band behind each line
   if (fx === 'highlight') {
     ctx.save(); ctx.fillStyle = s.fc || '#ffe066'; ctx.globalAlpha = (s.a ?? 1) * 0.85;
-    each((l, yy) => { const lw = spaced(ctx, l, ls); const lx = align === 'center' ? ax - lw / 2 : align === 'right' ? ax - lw : ax; ctx.fillRect(lx - px * 0.15, yy - px * 0.62, lw + px * 0.3, px * 0.78); });
+    each((l, yy) => { const lw = spaced(ctx, l, ls); const lx = align === 'center' ? ax - lw / 2 : align === 'right' ? ax - lw : ax + IND; ctx.fillRect(lx - px * 0.15, yy - px * 0.62, lw + px * 0.3, px * 0.78); });
     ctx.restore();
   }
   ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineJoin = 'round';
@@ -724,7 +753,7 @@ export function drawTextBox(ctx, s, W, H) {
     else { each((l, yy) => put(l, yy, 0, 0, true)); return; }
   }
   each((l, yy) => put(l, yy));
-  if (s.u) each((l, yy) => { const m = spaced(ctx, l, ls), ux = align === 'center' ? ax - m / 2 : align === 'right' ? ax - m : ax; ctx.fillRect(ux, yy + px * 0.12, m, Math.max(1, px * 0.06)); });
+  if (s.u) each((l, yy) => { const m = spaced(ctx, l, ls), ux = align === 'center' ? ax - m / 2 : align === 'right' ? ax - m : ax + IND; ctx.fillRect(ux, yy + px * 0.12, m, Math.max(1, px * 0.06)); });
 }
 
 // ---------- washi tape ----------

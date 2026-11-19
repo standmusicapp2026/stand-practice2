@@ -1298,7 +1298,7 @@ body.phone .tile { text-align: left; }
 .sel-box.obj .sel-bar { bottom: calc(100% + 48px); }
 .sel-box.obj .sel-bar.below { bottom: auto; top: calc(100% + 14px); }
 .sel-bar button.on { background: rgba(255,255,255,.18); }
-.tb-edit { position: fixed; z-index: 45; margin: 0; border: 1.5px dashed var(--accent-text); border-radius: 6px; outline: none; resize: none; overflow: hidden; box-sizing: border-box; }
+.tb-edit { position: fixed; z-index: 45; margin: 0; border: 0; border-radius: 6px; outline: 1.5px dashed var(--accent-text); outline-offset: 0; resize: none; overflow: hidden; box-sizing: border-box; }
 .tb-bar { position: absolute; z-index: 46; top: calc(env(safe-area-inset-top, 0px) + 124px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 14px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line); max-width: calc(100vw - 24px); overflow-x: auto; }
 .tb-bar select { height: 32px; border-radius: 8px; padding: 0 8px; background: var(--sunk); color: var(--ink); border: none; font: 600 13px var(--font); }
 .tb-bar .btn.on { background: var(--accent-soft); color: var(--accent-text); }

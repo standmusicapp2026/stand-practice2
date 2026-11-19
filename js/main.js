@@ -15,7 +15,7 @@ import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes
 import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findComposer, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
-import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
+import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath, tbIndent, tbCssBaseline, tbPad } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
@@ -5539,12 +5539,11 @@ function startTextBox(entry, p, hitIdx, fresh, sample) {
   let hit = hitIdx;
   if (hit == null || hit < 0) hit = p ? items.findLastIndex((s) => s.t === 'tb' && itemHit(s, p[0], p[1], 0.004, 1, 1)) : -1;
   const item = hit >= 0 ? { ...items[hit] } : fresh || tbFromStyle(TB.style, p[0], p[1] - 0.012);
-  const ta = el('textarea', 'tb-edit');
+  const ta = el('textarea', 'tb-edit'); ta.rows = 1;
   ta.value = item.txt || (sample ? 'Your text' : ''); ta.placeholder = 'Type, or write here with the Pencil'; ta.spellcheck = true; ta.setAttribute('autocapitalize', 'sentences');
   $('#score').append(ta);
   tbEdit = { entry, item, hit, ta, before: items.slice() };
   item.txt = ta.value;
-  if (hit >= 0) entry.layer.redraw(new Set([hit]));
   placeTextBox(); syncTbBar();
   ta.addEventListener('input', () => { tbEdit && (tbEdit.item.txt = ta.value); placeTextBox(); });
   ta.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') finishTextBox(); });
@@ -5576,21 +5575,40 @@ function placeTextBox(fromLift) {
   if (!fromLift) setTimeout(keepAboveKeyboard, 0);
   const r = t.entry.inner.getBoundingClientRect(), PS = pageSize(r), it = t.item;
   const at = screenOf(it.x, it.y, r), px = it.fs * PS[0];
-  const pad = it.bg ? px * (it.pad ? 0.8 : 0.45) : 0;
+  // Laid out as the page draws it: the same padding (a little less above and below than at the
+  // sides), the same width for the words (the room letter spacing takes after the last letter
+  // added), a list's words after its box or bullet, the first line's foot where the page puts it,
+  // and turned as the box is turned. The words are drawn by the page itself as you type (with their
+  // effects, list marks…), so nothing changes or jumps when you are done; this box only takes the
+  // keys and shows where you type. (Curved words are typed straight, curving when you are done.)
+  const P = tbPad(it, PS[0]), ls = (it.ls || 0) * px, ind = tbIndent(it, PS[0]);
+  const live = !it.curve, w = it.w * PS[0];
+  const shift = Math.max(-P * 0.7 - px, px - tbCssBaseline(it, px));
   Object.assign(t.ta.style, {
-    left: at[0] + 'px', top: at[1] + 'px', width: Math.max(80, it.w * PS[0]) + 'px',
-    font: tbFont(it, px), lineHeight: String(it.lh || 1.28), color: it.fx === 'hollow' ? 'transparent' : it.c, textAlign: it.al || 'left',
-    letterSpacing: (it.ls || 0) + 'em', textTransform: it.caps ? 'uppercase' : 'none',
-    textDecoration: it.u ? 'underline' : 'none', background: it.bg || 'rgba(255,255,255,.35)',
-    padding: pad + 'px', minHeight: px * 1.5 + 'px', webkitTextStroke: it.fx === 'hollow' || it.fx === 'outline' ? Math.max(1, px * 0.04) + 'px ' + (it.c || '#000') : '',
-    textShadow: it.fx === 'neon' ? `0 0 ${px * 0.3}px ${it.c}` : it.fx === 'shadow' ? `${px * 0.06}px ${px * 0.08}px ${px * 0.18}px rgba(0,0,0,.35)` : 'none',
+    left: at[0] + 'px', top: at[1] + Math.min(0, shift) + 'px', width: Math.max(40, w + ls) + 'px',
+    font: tbFont(it, px), lineHeight: String(it.lh || 1.28), textAlign: it.al || 'left',
+    letterSpacing: (it.ls || 0) + 'em', textTransform: it.caps ? 'uppercase' : 'none', textDecoration: it.u ? 'underline' : 'none',
+    color: live ? 'transparent' : it.fx === 'hollow' ? 'transparent' : it.c, webkitTextFillColor: live ? 'transparent' : '', caretColor: it.c && it.c.toLowerCase() !== '#ffffff' ? it.c : 'var(--accent)',
+    background: live ? 'transparent' : it.bg || 'rgba(255,255,255,.35)',
+    padding: `${P * 0.7 + Math.max(0, shift)}px ${P}px ${P * 0.7}px ${P + ind}px`, minHeight: px * lh(it) + P * 1.4 + 'px',
+    webkitTextStroke: !live && (it.fx === 'hollow' || it.fx === 'outline') ? Math.max(1, px * 0.04) + 'px ' + (it.c || '#000') : '', textShadow: 'none',
+    transform: it.rot ? `rotate(${it.rot}rad)` : '',
   });
-  t.ta.style.height = 'auto'; t.ta.style.height = Math.max(px * 1.5, t.ta.scrollHeight + 2) + 'px';
+  // (as tall as its lines: a box of one line is one line high, not the two a text field starts with)
+  t.ta.style.height = '0px'; t.ta.style.height = Math.max(px * lh(it) + P * 1.4, t.ta.scrollHeight) + 'px';
+  // (turned about the middle of the box as the page draws it, which starts a little higher or lower)
+  if (it.rot) t.ta.style.transformOrigin = `${w / 2}px ${(t.ta.offsetHeight - Math.max(0, shift)) / 2 - Math.min(0, shift)}px`;
+  // (drawn again only when the words or their look changed, not as the page is zoomed or moved)
+  const key = live ? JSON.stringify(it) + '\u0000' + t.ta.value : '';
+  if (key !== t.liveKey || t.entry.layer.live == null !== !live) { t.liveKey = key; t.entry.layer.setLive(live ? measureTextBox({ ...it, txt: t.ta.value }) : null, live ? t.hit : -1); }
+  if (!live && t.hit >= 0 && t.entry.layer.liveOf !== t.hit) { t.entry.layer.liveOf = t.hit; t.entry.layer.redraw(); }
 }
+const lh = (it) => it.lh || 1.28;
 function finishTextBox() {
   const t = tbEdit; if (!t) return; tbEdit = null;
   if (kbLift) { kbLift = 0; stage.style.transform = ''; }
   const txt = t.ta.value.replace(/\s+$/, ''); t.ta.remove();
+  t.entry.layer.live = null; t.entry.layer.liveOf = -1;
   if (!(Sel.entry && selTb())) { $('#tbBar').hidden = true; $('#inkbar').classList.remove('under'); closeTextPop(); }
   const L = t.entry.layer;
   let after, idx = -1;
@@ -5601,6 +5619,7 @@ function finishTextBox() {
   // the box stays chosen, to move it or change its look
   if (idx >= 0) makeSelection(t.entry, [idx]);
 }
+window.__tb = { add: (k, txt) => addTextBox(k, txt), finish: () => finishTextBox(), change: (ch) => tbChange(ch), get edit() { return tbEdit; }, start: (e, i) => startTextBox(e, null, i), clear: () => clearSelection() };   // (tests)
 // the text box being edited, or the one chosen
 function selTb() { return Sel.entry && Sel.idx.length === 1 && Sel.entry.layer.items[Sel.idx[0]] && Sel.entry.layer.items[Sel.idx[0]].t === 'tb' ? Sel.entry.layer.items[Sel.idx[0]] : null; }
 function tbCur() { return tbEdit ? tbEdit.item : selTb(); }

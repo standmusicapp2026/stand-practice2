@@ -497,11 +497,12 @@ export class InkLayer {
     this.prep(ctx);
     const v = this.view;
     this.items.forEach((s, i) => {
-      if (hide && hide.has(i)) return;
+      if ((hide && hide.has(i)) || i === this.liveOf) return;
       // zoomed in: what is off the part on show is not drawn at all
       if (v && s.t !== 'bg' && s.t !== 'passage') { const b = itemBounds(s); if (b && (b.x1 < v.x - 0.02 || b.x0 > v.x + v.w + 0.02 || b.y1 < v.y - 0.02 || b.y0 > v.y + v.h + 0.02)) return; }
       drawItem(ctx, s, W, H, false);
     });
+    if (this.live) { this.prep(ctx); drawItem(ctx, this.live, W, H, false); }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this._hide = hide;
     if (v) this._baseLater();
@@ -529,7 +530,8 @@ export class InkLayer {
     if (b.width !== W || b.height !== H) { b.width = W; b.height = H; }
     const ctx = b.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
-    const hide = this._hide; this.items.forEach((s, i) => { if (!(hide && hide.has(i))) drawItem(ctx, s, W, H, false); });
+    const hide = this._hide; this.items.forEach((s, i) => { if (!(hide && hide.has(i)) && i !== this.liveOf) drawItem(ctx, s, W, H, false); });
+    if (this.live) drawItem(ctx, this.live, W, H, false);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     // (where the sharp part is, nothing: a highlighter drawn twice would look darker)
     const x0 = Math.ceil(v.x * W), y0 = Math.ceil(v.y * H), x1 = Math.floor((v.x + v.w) * W), y1 = Math.floor((v.y + v.h) * H);
@@ -586,13 +588,24 @@ export class InkLayer {
     // (in the box, back to page fractions, for choosing what to draw)
     const fx0 = (px0 + ox) / W, fy0 = (py0 + oy) / H, fx1 = (px1 + ox) / W, fy1 = (py1 + oy) / H, hide = this._hide;
     this.items.forEach((s, i) => {
-      if (hide && hide.has(i)) return;
+      if ((hide && hide.has(i)) || i === this.liveOf) return;
       if (s.t !== 'bg' && s.t !== 'passage') { const bb = itemBounds(s); if (bb && (bb.x1 + 0.01 < fx0 || bb.x0 - 0.01 > fx1 || bb.y1 + 0.01 < fy0 || bb.y0 - 0.01 > fy1)) return; }
       drawItem(ctx, s, W, H, false);
     });
+    if (this.live) { this.prep(ctx); drawItem(ctx, this.live, W, H, false); }
     ctx.restore();
     if (v) this._baseLater();
     told(this, null, b);
+  }
+  // Something being made, drawn on the page as it will be but not yet among its markings (never
+  // saved): the text box being typed. of: the marking it stands in for, hidden meanwhile.
+  setLive(item, of = -1) {
+    const old = this.live; this.live = item || null; this.liveOf = item ? of : -1;
+    const bs = [old, item].filter(Boolean).map((x) => itemBounds(x)).filter(Boolean);
+    if (of >= 0 && this.items[of]) { const b = itemBounds(this.items[of]); if (b) bs.push(b); }
+    if (!bs.length || bs.some((b) => b.rot)) { this.redraw(this._hide); return; }
+    const u = bs.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
+    this.redrawArea({ x0: u.x0 - 0.03, y0: u.y0 - 0.03, x1: u.x1 + 0.03, y1: u.y1 + 0.03 });
   }
   flushErase() { if (!this.erasing) return; this.erasing = false; this.redraw(); this.save(); }
   // (things added at the end are new: they go in the layer being written in; undo passes raw)
