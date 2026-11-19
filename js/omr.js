@@ -1461,8 +1461,17 @@ function readStaff(s, ctx, header) {
     if (allAcc.some((q) => c.x0 < q.x1 && c.x1 > q.x0 && c.y0 < q.y1 && c.y1 > q.y0)) { why('c3'); continue; }
     const cyc = (c.y0 + c.y1) / 2, pc = pAt(s, cyc, (c.x0 + c.x1) / 2);
     if (pc < -1 || pc > 9) { why('c5'); continue; }
-    if (heads.some((hd) => hd.cx > c.x0 - sp * 0.3 && hd.cx < c.x1 + sp * 0.3 && hd.cy > c.y0 - sp * 0.6 && hd.cy < c.y1 + sp * 0.6)) { why('c6'); continue; }
-    if (heads.some((hd) => hd.stem && hd.stem.x >= c.x0 - 1 && hd.stem.x <= c.x1 + 1 && ((hd.stem.top <= c.y1 && hd.stem.bot >= c.y0)))) { why('c7'); continue; }
+    // (a 'note' whose stem is a barline is no note: a rest just after a barline, its curve taken for a
+    // head and the barline for its stem, is still a rest)
+    // (nor is one whose 'stem' runs exactly from the staff's top line to its bottom line — a barline
+    // not yet known as one — when the shape beside it is clearly a rest)
+    const barStem = (hd) => hd.stem && (merged.some((b) => Math.abs(b.x - hd.stem.x) < Math.max(3, sp * 0.25))
+      || (Math.abs(hd.stem.top - yAt(s, 8, hd.stem.x)) < sp * 0.7 && Math.abs(hd.stem.bot - yAt(s, 0, hd.stem.x)) < sp * 0.7 && hd.stem.x < c.x0 + 2));
+    let restLike = null;
+    const clearRest = () => { if (restLike === null) { const k0 = c.h > sp * 1.05 && c.h < sp * 3.4 ? classify(shapeOf(img, w, c.x0, c.y0, c.x1, c.y1, sp, lab, c.id), ['r4', 'r8', 'r16', 'sharp', 'flat', 'natural', 'd2', 'd3', 'd4', 'd7', 'd1']) : null; restLike = !!(k0 && k0.cls[0] === 'r' && k0.d < 0.3); } return restLike; };
+    const real = (hd) => !((globalThis.__restByBar ?? 1) && barStem(hd) && clearRest());
+    if (heads.some((hd) => real(hd) && hd.cx > c.x0 - sp * 0.3 && hd.cx < c.x1 + sp * 0.3 && hd.cy > c.y0 - sp * 0.6 && hd.cy < c.y1 + sp * 0.6)) { why('c6'); continue; }
+    if (heads.some((hd) => real(hd) && hd.stem && hd.stem.x >= c.x0 - 1 && hd.stem.x <= c.x1 + 1 && ((hd.stem.top <= c.y1 && hd.stem.bot >= c.y0)))) { why('c7'); continue; }
     if (c.w > sp * 1.8 || c.h > sp * 4.2 || c.h < sp * 0.3) { why('c8'); continue; }
     let t = null;
     if (ctx.dbg && c.h > sp * 1.3) (ctx.restTrace = ctx.restTrace || []).push({ x0: c.x0, w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2), pc: +pc.toFixed(1), k: classify(shapeOf(img, w, c.x0, c.y0, c.x1, c.y1, sp, lab, c.id), ['r4', 'r8', 'r16', 'r32', 'sharp', 'flat', 'natural', 'treble', 'bass', 'alto', 'd2', 'd3', 'd4', 'd6', 'd8']) });
@@ -1523,6 +1532,12 @@ function readStaff(s, ctx, header) {
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, nCut, pieces: pieces.map((q) => [q.x0, q.x1, q.y0, q.y1]) });
       if (pieces.length) cands.splice(ci, 1, ...pieces);
     }
+    // (how alike a shape is above and below its middle: a C clef's halves mirror each other)
+    const cSymOf = (x0, x1, y0, y1) => {
+      let both = 0, any = 0; const H = y1 - y0;
+      for (let yy = 0; yy <= H / 2; yy++) for (let x = x0; x <= x1; x++) { const a1 = C[(y0 + yy) * w + x], b1 = C[(y1 - yy) * w + x]; if (a1 || b1) { any++; if (a1 && b1) both++; } }
+      return any ? both / any : 0;
+    };
     const cClefShape = (x0, x1, y0, y1) => {
       if (y1 - y0 < sp * 2.4 || y1 - y0 > sp * 4.6 || x1 - x0 < sp * 1.0 || x1 - x0 > sp * 2.4) return false;
       // (the thick bar: several full columns side by side; a sharp's or a natural's strokes are thin)
@@ -1532,9 +1547,7 @@ function readStaff(s, ctx, header) {
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cBars: x0, runs, best, bestSp: +(best / sp).toFixed(2), wSp: +((x1 - x0) / sp).toFixed(2), hSp: +((y1 - y0) / sp).toFixed(2), top: +top.toFixed(1), bot: +bot.toFixed(1), sp: +sp.toFixed(1) });
       // (a C clef is the same above and below its middle line: a note with its stem and an
       // accidental beside it is not)
-      let both = 0, any = 0; const H = y1 - y0;
-      for (let yy = 0; yy <= H / 2; yy++) for (let x = x0; x <= x1; x++) { const a1 = C[(y0 + yy) * w + x], b1 = C[(y1 - yy) * w + x]; if (a1 || b1) { any++; if (a1 && b1) both++; } }
-      const sym = any ? both / any : 0;
+      const sym = cSymOf(x0, x1, y0, y1);
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cSym: x0, sym: +sym.toFixed(2) });
       if (sym < (globalThis.__cSym ?? 0.7)) return false;
       return runs >= 1 && best >= Math.max(3, sp * (globalThis.__cBarW ?? 0.15)) && x1 - x0 >= sp * 1.3 && top <= 10.5 && bot >= -2.5;
@@ -1625,7 +1638,10 @@ function readStaff(s, ctx, header) {
       const cBars = () => cClefShape(x0, x1, y0, y1);
       // (a C clef, by its bars, when the likeness puts it among the first few)
       if ((globalThis.__cBars ?? 1) && !(['treble', 'bass', 'alto'].includes(k.cls) && k.d <= 0.38) && lz.slice(0, 3).some((q) => q.cls === 'alto' && q.d < 0.22) && cBars()) k = { cls: 'alto', d: 0.3 };
-      if ((!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) && lz[0] && ['treble', 'bass', 'alto'].includes(lz[0].cls) && lz[0].d < 0.2 && (!lz[1] || lz[1].d - lz[0].d > 0.015 || (lz[0].cls === 'bass' && bassDots()) || (lz[0].cls === 'alto' && (globalThis.__cBars ?? 1) && cBars()))) k = { cls: lz[0].cls, d: 0.3 };
+      if ((!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) && lz[0] && ['treble', 'bass', 'alto'].includes(lz[0].cls) && lz[0].d < 0.2 && (!lz[1] || lz[1].d - lz[0].d > 0.015 || (lz[0].cls === 'bass' && bassDots()) || (lz[0].cls === 'alto' && (globalThis.__cBars ?? 1) && cBars()))
+        // (a C clef only loosely like one must at least mirror itself above and below its middle: two
+        // beamed notes with their stems down, a tie over them, have the shape of one but not that)
+        && !(lz[0].cls === 'alto' && (globalThis.__cSymLoose ?? 1) && cSymOf(x0, x1, y0, y1) < 0.55)) k = { cls: lz[0].cls, d: 0.3 };
       // (but a bass clef's two dots, either side of its line, are not a note's)
       const inkDots = () => { const tY = yAt(s, 8, x1), bY = yAt(s, 0, x1); const full = (x) => { for (let y = Math.round(tY) + 1; y < bY - 1; y++) if (!C[y * w + x]) return false; return true; };
         const dot = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = x1 + 1; x <= Math.round(x1 + sp * 0.8); x++) { if (full(x)) continue; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) if (C[yy * w + x]) n++; } return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
@@ -1885,6 +1901,43 @@ function readStaff(s, ctx, header) {
     }
     if (okAll && n >= 2 && n <= 99) { r.multi = n; if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ multi: n, x: r.x, whole: true }); }
   }
+  // (any bar with no note in it and a number over its middle, above the staff: as many bars of rest,
+  // whatever stands for them — a thick bar, a whole rest, or old church rests, blocks for two and four
+  // bars side by side)
+  if (globalThis.__multiAny ?? 1) {
+    const xs = [startX, ...merged.map((b) => b.x).filter((x) => x > startX + sp)];
+    for (let i = 0; i + 1 < xs.length; i++) {
+      const a = xs[i], z = xs[i + 1], m = (a + z) / 2;
+      if (z - a < sp * 2.5) continue;
+      if (heads.some((hd) => hd.cx > a && hd.cx < z)) continue;
+      if (rests.some((r) => r.multi && r.cx > a && r.cx < z)) continue;
+      // (rest-like ink in the staff's middle: something is printed there)
+      if (!compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, (q.x0 + q.x1) / 2) - 4) < 2.5 && q.h > sp * 0.35 && q.w > sp * 0.25)) continue;
+      const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 4.4; }).sort((p1, p2) => p1.x0 - p2.x0);
+      if (!ds.length || ds.length > 2) continue;
+      // (the digits side by side, over the middle of the bar)
+      const dm = (ds[0].x0 + ds[ds.length - 1].x1) / 2; if (Math.abs(dm - m) > (z - a) * 0.25) continue;
+      let n = 0, okAll = true;
+      const DG = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'];
+      const one = (q, x0, x1) => classifyLoose(shapeOf(C, w, x0, q.y0, x1, q.y1, sp, labC, q.id), DG)[0];
+      for (const q of ds) {
+        // (two digits printed bold run into one shape, as a '10': cut where the ink is thinnest)
+        if (q.w > q.h * 0.95) {
+          let best = null;
+          for (let x = Math.round(q.x0 + q.w * 0.3); x <= Math.round(q.x1 - q.w * 0.3); x++) { let ink = 0; for (let y = q.y0; y <= q.y1; y++) { const k2 = y * w + x; if (C[k2] && labC[k2] === q.id) ink++; } if (!best || ink < best.ink) best = { x, ink }; }
+          const k1 = best && one(q, q.x0, best.x - 1), k2 = best && one(q, best.x + 1, q.x1);
+          if (k1 && k2 && k1.d < 0.45 && k2.d < 0.45) { n = n * 100 + +k1.cls.slice(1) * 10 + +k2.cls.slice(1); continue; }
+          okAll = false; continue;
+        }
+        const k = one(q, q.x0, q.x1);
+        if (k && k.d < 0.42) n = n * 10 + +k.cls.slice(1); else okAll = false;
+      }
+      if (!okAll || n < 2 || n > 199) continue;
+      for (let k = rests.length - 1; k >= 0; k--) if (rests[k].cx > a && rests[k].cx < z) rests.splice(k, 1);
+      rests.push({ x: Math.round(m - sp), t: 1, cx: m, w: sp * 2, dots: 0, multi: n });
+      if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ multi: n, x: m, any: true });
+    }
+  }
   // ---- grace notes: small filled heads with a short stem, just before a note
   const graces = [];
   {
@@ -2096,6 +2149,40 @@ function readHeader(s, comps, ctx, prev, heads) {
   // the clef: the first big shape (with any pieces of it)
   // (a bar number or a word above the staff is not the clef: the clef overlaps the staff)
   const onStaff = (c) => c.y1 > yAt(s, 8, c.x0) + sp * 0.3 && c.y0 < yAt(s, 0, c.x0) - sp * 0.3;
+  // (a small 8 below a clef, centred under it, clear of the staff: a shape of its own, read as the digit)
+  // (the 8 joined to the clef's tail: a treble clef ends about three steps below the staff; the ink
+  // below that, inside the clef's width, read as an 8)
+  const eightInTail = (x0, x1, y1) => {
+    const ya = Math.round(yAt(s, -3.35, (x0 + x1) / 2)); let bx0 = Infinity, bx1 = -1, by0 = Infinity, by1 = -1;
+    for (let y = ya; y <= y1; y++) for (let x = Math.round(x0); x <= Math.round(x1); x++) if (C[y * w + x]) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+    if (bx1 < 0) return false;
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+    if (bh < sp * 0.35 || bh > sp * 1.9 || bw < sp * 0.22 || bw > sp * 1.4) return false;
+    const k8 = classify(shapeOf(C, w, bx0, by0, bx1, by1, sp), ['d8', 'd0', 'd3', 'd6', 'd9', 'd5', 'd2']);
+    if (globalThis.__clefLog) globalThis.__clefLog.push({ eightTail: [k8.cls, +k8.d.toFixed(3)], bw: +(bw / sp).toFixed(2), bh: +(bh / sp).toFixed(2) });
+    // (under a treble clef only an 8 means anything: any digit-like shape there, centred under the
+    // clef, is taken for it, however roughly it is like one)
+    const cx = (bx0 + bx1) / 2, mid = (x0 + x1) / 2;
+    return ['d8', 'd0', 'd3', 'd6', 'd9'].includes(k8.cls) && k8.d < 0.66 && Math.abs(cx - mid) < (x1 - x0) * 0.3;
+  };
+  const eightBelow = (x0, x1, clefId) => {
+    const yb = yAt(s, 0, (x0 + x1) / 2), ya = Math.round(yb + sp * 0.9), yz = Math.min(Math.floor(C.length / w) - 1, Math.round(yb + sp * 4.6));
+    const xa = Math.max(0, Math.round(x0 - sp * 0.3)), xz = Math.min(w - 1, Math.round(x1 + sp * 0.3));
+    const box = new Map(), own = new Set([clefId].flat());
+    for (let y = ya; y <= yz; y++) for (let x = xa; x <= xz; x++) { const q = y * w + x; if (!C[q]) continue; const l = labC[q]; if (own.has(l)) continue;
+      const b = box.get(l); if (b) { if (x < b.x0) b.x0 = x; if (x > b.x1) b.x1 = x; if (y < b.y0) b.y0 = y; if (y > b.y1) b.y1 = y; } else box.set(l, { x0: x, x1: x, y0: y, y1: y }); }
+    for (const [l, b] of box) {
+      const bw = b.x1 - b.x0 + 1, bh = b.y1 - b.y0 + 1, cx = (b.x0 + b.x1) / 2;
+      // (whole within the search box: not a note's stem or a beam run in from beside)
+      if (b.y0 <= ya || b.y1 >= yz || b.x0 <= xa || b.x1 >= xz) continue;
+      // (the 8 is small: half a space high or more, a little narrower than high)
+      if (bh < sp * 0.35 || bh > sp * 1.9 || bw < sp * 0.22 || bw > sp * 1.4 || bw > bh * 1.1 || cx < x0 || cx > x1) continue;
+      const k8 = classify(shapeOf(C, w, b.x0, b.y0, b.x1, b.y1, sp, labC, [l]), ['d8', 'd0', 'd3', 'd6', 'd9', 'd5', 'd2']);
+      if (globalThis.__clefLog) globalThis.__clefLog.push({ eight: [k8.cls, +k8.d.toFixed(3)], bw: +(bw / sp).toFixed(2), bh: +(bh / sp).toFixed(2) });
+      if (k8.cls === 'd8' && k8.d < 0.42) return true;
+    }
+    return false;
+  };
   while (i < comps.length && (comps[i].h < sp * 1.2 || !onStaff(comps[i]))) i++;
   // (a shape far taller than a clef is the system's line or brace with the clef run into it: read
   // below, from the ink just after the line)
@@ -2145,6 +2232,8 @@ function readHeader(s, comps, ctx, prev, heads) {
       if (k1.cls === 'alto' && k1.d < 0.42 && t1 - b1 > 6 && t1 - b1 < 10.5 && mid > -1.5 && mid < 7.5) name = cLine(mid);
     }
     if (globalThis.__clefLog) globalThis.__clefLog.push({ top: +top.toFixed(2), bot: +bot.toFixed(2), cls: k.cls, d: +k.d.toFixed(3), name, bassDots });
+    // a treble clef with a small 8 under it (a tenor's part, a guitar's): it sounds an octave lower
+    if (name === 'treble' && (globalThis.__treble8 ?? 1) && (eightBelow(x0, x1, c.id) || (bot < -3.9 && eightInTail(x0, x1, y1)))) name = 'treble8';
     if (name) {
       clef = name; end = Math.max(x1, ...dots.map((q) => q.x1)) + sp * 0.2;
       i = comps.findIndex((q) => q.x0 >= end - sp * 0.1); if (i < 0) i = comps.length;
@@ -2411,8 +2500,11 @@ function readHeader(s, comps, ctx, prev, heads) {
     const digits = [];
     for (const col of cols.slice(0, 3)) {
       const xm = (col.x0 + col.x1) / 2;
-      // a note is not a time signature (a head with a stem found there)
-      if (heads.some((hd) => hd.stem && hd.cx > col.x0 - sp * 0.2 && hd.cx < col.x1 + sp * 0.2)) break;
+      // a note is not a time signature (a head with a stem found there) — unless what is there reads
+      // clearly as two digits, one above the other (the hole of a 4 and its upright look like a half
+      // note: then it is the time signature, and that 'note' goes with it)
+      const noteThere = heads.some((hd) => hd.stem && hd.cx > col.x0 - sp * 0.2 && hd.cx < col.x1 + sp * 0.2);
+      if (noteThere && !(globalThis.__tsDigits ?? 1)) break;
       const yT = yAt(s, 8, xm), yM = yAt(s, 4, xm), yB = yAt(s, 0, xm);
       const allTop = Math.min(...col.cs.map((c) => c.y0)), allBot = Math.max(...col.cs.map((c) => c.y1));
       // inside the staff (large digits, handwritten above all, may stand out of it by a space or two)
@@ -2425,6 +2517,12 @@ function readHeader(s, comps, ctx, prev, heads) {
         let cut = null;
         for (let k = 1; k < cs.length; k++) { const above = Math.max(...cs.slice(0, k).map((c) => c.y1)); if (cs[k].y0 > above && cs[k].y0 - above >= 1) { cut = (cs[k].y0 + above) / 2; break; } }
         if (cut !== null && Math.abs(cut - yM) < sp * 1.6) { up = inkBox(col, allTop, cut); dn = inkBox(col, cut, allBot); }
+      }
+      if (noteThere) {
+        const u = up && readDigitBox(ctx, sp, up), d = dn && readDigitBox(ctx, sp, dn);
+        const clear = (q) => q && q[0] && q[0].ok && q[0].e < 0.3 && (!q[1] || q[1].e - q[0].e > 0.05);
+        if (globalThis.__clefLog) globalThis.__clefLog.push({ tsNote: [u, d].map((q) => q && q.slice(0, 3).map((r) => [r.v, +r.e.toFixed(2), +r.l.toFixed(2), r.ok])) });
+        if (!(clear(u) && clear(d) && [2, 4, 8, 16].includes(d[0].v))) break;
       }
       digits.push({ col, up, dn, xm });
     }
@@ -2908,8 +3006,9 @@ export function fitBar(bar, total, opts = {}) {
       const before = Math.abs(sum(b) - total), after = Math.abs(sum(t2) - total);
       if (after < before - 1 || after < 1) b = t2;
     }
-    // then unmarked: three equal beamed notes of one beam
-    for (let i = 0; i + 2 < b.length; i++) {
+    // then unmarked: three equal beamed notes of one beam (not in 6/8 and the like, where three
+    // beamed quavers are simply its beat)
+    for (let i = 0; i + 2 < b.length && !opts.compound; i++) {
       if (sum(b) <= total + 1) break;
       const g = b.slice(i, i + 3);
       if (g.some((x) => x.full || x.tup || x.rest || x.t < 8 || x.t !== g[0].t || x.dots || !x.beamed)) continue;
@@ -3009,16 +3108,18 @@ export async function recognise(canvas, opts = {}) {
   // the time of each bar
   const times = []; { let t = time; meta.forEach((m, i) => { if (i > 0 && m.time) t = m.time; times.push(t); }); }
   const totalOf = (i) => (WHOLE * times[i][0]) / times[i][1];
+  // (6/8, 9/8, 12/8, 3/8: its beats are groups of three quavers, never triplets unless a 3 is printed)
+  const compoundOf = (i) => (globalThis.__compoundFit ?? 1) && times[i][1] === 8 && times[i][0] % 3 === 0;
   const sumOf = (b, total) => b.reduce((a, it) => a + (it.full ? total : ticksOf(it.t, it.dots) * (it.tup ? it.tup.m / it.tup.n : 1)), 0);
   const firstShort = bars.length > 1 && sumOf(bars[0], totalOf(0)) < totalOf(0) - 1;
   // how many bars add up as read (before any repair): a measure of how well the page was read
-  const fitsAsRead = (b, i) => Math.abs(sumOf(fitBar(b, totalOf(i), { tupletsOnly: true }), totalOf(i)) - totalOf(i)) < 1;
+  const fitsAsRead = (b, i) => Math.abs(sumOf(fitBar(b, totalOf(i), { tupletsOnly: true, compound: compoundOf(i) }), totalOf(i)) - totalOf(i)) < 1;
   const innerIdx = bars.map((_, i) => i).slice(1, -1);
   const fitRead = innerIdx.length ? innerIdx.filter((i) => fitsAsRead(bars[i], i)).length / innerIdx.length : bars.length ? (fitsAsRead(bars[0], 0) ? 1 : 0.5) : 0;
   // the bars to check: those that did not add up as read (a short first or last bar is an upbeat),
   // and any that still do not after the repair
-  const doubt = bars.map((b, i) => { const pick = i === 0 || (i === bars.length - 1 && firstShort); if (b.length === 1 && b[0].full) return false; const sm = sumOf(fitBar(b, totalOf(i), { tupletsOnly: true }), totalOf(i)); return pick ? sm > totalOf(i) + 1 : Math.abs(sm - totalOf(i)) >= 1; });
-  bars = bars.map((b, i) => fitBar(b, totalOf(i), { pickup: i === 0 || (i === bars.length - 1 && firstShort), sp: first.sp }));
+  const doubt = bars.map((b, i) => { const pick = i === 0 || (i === bars.length - 1 && firstShort); if (b.length === 1 && b[0].full) return false; const sm = sumOf(fitBar(b, totalOf(i), { tupletsOnly: true, compound: compoundOf(i) }), totalOf(i)); return pick ? sm > totalOf(i) + 1 : Math.abs(sm - totalOf(i)) >= 1; });
+  bars = bars.map((b, i) => fitBar(b, totalOf(i), { pickup: i === 0 || (i === bars.length - 1 && firstShort), sp: first.sp, compound: compoundOf(i) }));
   bars.forEach((b, i) => { const pick = i === 0 || (i === bars.length - 1 && firstShort); const sm = sumOf(b, totalOf(i)); if (b.length === 1 && b[0].full) return; if (pick ? sm > totalOf(i) + 1 : Math.abs(sm - totalOf(i)) >= 1) doubt[i] = true; });
   // the changes, as the caller applies them: the first bar's are the capture's own clef, key, time
   let runClef = first.clef || 'treble', runKey = first.key || 0;
