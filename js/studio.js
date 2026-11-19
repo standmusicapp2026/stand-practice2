@@ -522,20 +522,23 @@ function cleanStrip(st, sp0, top0 = null) {
     }
     if (ls.length >= 4) {
       const t = ls.map((q) => q.t).sort((p2, q2) => p2 - q2)[ls.length >> 1];
-      // (where along the line it is printed: ink on its row there, most of the way round)
+      // (where the staff is printed: most of its lines there, close by — then all five are drawn; a
+      // scan's thinnest line, faint in places, is not left broken)
       const win = Math.max(4, Math.round(spF * 1.5));
+      const cnt = new Uint8Array(W);
       for (const q of ls) {
         const on = new Uint8Array(W);
         for (let x = 0; x < W; x++) { let m = 0; for (let y = Math.round(q.y - t); y <= Math.round(q.y + t); y++) if (y >= 0 && y < H && dk[y * W + x] > m) m = dk[y * W + x]; on[x] = m > 0.3 ? 1 : 0; }
         const cs = new Int32Array(W + 1); for (let x = 0; x < W; x++) cs[x + 1] = cs[x] + on[x];
-        for (let x = 0; x < W; x++) {
-          const a0 = Math.max(0, x - win), a1 = Math.min(W, x + win + 1);
-          if (cs[a1] - cs[a0] < (a1 - a0) * 0.6) continue;
-          for (let y = Math.floor(q.y - t / 2 - 1); y <= Math.ceil(q.y + t / 2 + 1); y++) {
-            if (y < 0 || y >= H) continue;
-            const v = Math.min(1, Math.max(0, t / 2 + 0.5 - Math.abs(y - q.y)));
-            const i = y * W + x; if (v > dk[i]) dk[i] = v;
-          }
+        for (let x = 0; x < W; x++) { const a0 = Math.max(0, x - win), a1 = Math.min(W, x + win + 1); if (cs[a1] - cs[a0] >= (a1 - a0) * 0.6) cnt[x]++; }
+      }
+      const need = Math.ceil(ls.length * 0.6);
+      for (const q of ls) for (let x = 0; x < W; x++) {
+        if (cnt[x] < need) continue;
+        for (let y = Math.floor(q.y - t / 2 - 1); y <= Math.ceil(q.y + t / 2 + 1); y++) {
+          if (y < 0 || y >= H) continue;
+          const v = Math.min(1, Math.max(0, t / 2 + 0.5 - Math.abs(y - q.y)));
+          const i = y * W + x; if (v > dk[i]) dk[i] = v;
         }
       }
     }
