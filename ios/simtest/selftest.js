@@ -190,6 +190,22 @@ async function run() {
     return exact && n > 20 ? `layer ${o.width}x${o.height} at ${dpr}x, ${n} dots of ink` : false;
   });
   await shot('05b-zoom-ink');
+  // zoomed in, just after writing, two fingers zoom out a little: every frame timed, while the fingers
+  // move and in the second after (where the sharp page and writing are drawn again). Measured only.
+  await step('zoomed: a little zoom out just after writing (frames)', async () => {
+    await stroke('pen', 0.4, 0.62); await sleep(60);
+    const t = $('#stage'), r = t.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const fr = []; let on = true; const f = (q) => { fr.push(q); if (on) requestAnimationFrame(f); }; requestAnimationFrame(f);
+    ptr(t, 'pointerdown', cx - 200, cy, 43, 'touch'); ptr(t, 'pointerdown', cx + 200, cy, 44, 'touch', { isPrimary: false });
+    for (let i = 1; i <= 12; i++) { ptr(t, 'pointermove', cx - 200 + i * 4, cy, 43, 'touch'); ptr(t, 'pointermove', cx + 200 - i * 4, cy, 44, 'touch', { isPrimary: false }); await sleep(16); }
+    ptr(t, 'pointerup', cx - 152, cy, 43, 'touch'); ptr(t, 'pointerup', cx + 152, cy, 44, 'touch', { isPrimary: false });
+    const tEnd = performance.now(); await sleep(1500); on = false;
+    const gaps = (a) => a.slice(1).map((x, i) => x - a[i]);
+    const dur = gaps(fr.filter((x) => x <= tEnd)), aft = gaps(fr.filter((x) => x >= tEnd));
+    const sum = (g) => `${g.length} frames, over 50 ms ${g.filter((x) => x > 50).length}, longest ${Math.round(Math.max(0, ...g))} ms, lost ${Math.round(g.reduce((s, x) => s + Math.max(0, x - 17), 0))} ms`;
+    say(`SELFTEST detail zoom out after writing: during ${sum(dur)}; after ${sum(aft)}`);
+    return `during: ${sum(dur)}; after: ${sum(aft)}`;
+  });
   await step('zoom back', async () => { const pill = $('.zoom-pill'); if (pill && !pill.hidden) pill.click(); await sleep(500); return true; });
   // a page turn shows itself by a gentle slide, never by dimming the whole screen
   await step('a page turn: a gentle slide, no flash', async () => {
