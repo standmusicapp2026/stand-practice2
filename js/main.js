@@ -28,7 +28,7 @@ import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperCo
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPicture, exportPdf, imagesToPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
-import { initReview, openReview } from './review.js';
+import { initReview, openReview, addReviewPages } from './review.js';
 import * as P from './pomodoro.js';
 import { placeWords } from './textplace.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks, localComposers, imslpComposers, pinnedRest } from './imslp.js';
@@ -942,6 +942,9 @@ $('#scanBtn').addEventListener('click', () => {
 // Pages go through the review first: straightened, cleaned and cropped before they join the library.
 initReview({
   toast,
+  // (more pages from the page scanner, into the review that is open)
+  canScan: () => !!(NATIVE && NATIVE.standScan && (window.standCaps || {}).scan),
+  scanMore: () => { if (!(NATIVE && NATIVE.standScan && (window.standCaps || {}).scan)) return false; window.__scanMore = true; NATIVE.standScan.postMessage({}); return true; },
   async commit(blobs, name) {
     // (on the iPhone: a score of its own, in My scores)
     if (PHONE && window.__phs && window.__phs.addOwn) { await phoneAdd(blobs, blobs.map(() => name), { reviewed: true, how: REVIEW_PHONE.how }); return; }
@@ -1378,6 +1381,8 @@ window.standIncoming = async (msg) => {
     for (const p of paths) { const res = await fetch(p); if (!res.ok) throw new Error('missing file'); const bl = await res.blob(); if (/-flat\.jpe?g$/i.test(p)) bl.__flat = true; blobs.push(bl); }
     // the files are in memory now, so the native copies can go
     if (NATIVE && NATIVE.standDone) for (const p of paths) NATIVE.standDone.postMessage({ path: p });
+    // (pages scanned for the review that is open: they join it)
+    if (window.__scanMore) { window.__scanMore = false; if (addReviewPages(blobs)) return; }
     // a MusicXML score (.mxl, .musicxml, or an .xml that is one): it opens in Compose, on the iPad and the iPhone
     { const nm0 = (k) => (msg.names && msg.names[k]) || (paths.length === 1 ? msg.name : '') || String(paths[k]).split('/').pop() || '';
       const isMusic = async (k) => { const n = nm0(k); if (/\.(mxl|musicxml|mid|midi)$/i.test(n)) return true; if (!/\.xml$/i.test(n)) return false; try { const head = await blobs[k].slice(0, 4096).text(); return /<score-(partwise|timewise)\b/.test(head.replace(/\0/g, '')); } catch { return false; } };

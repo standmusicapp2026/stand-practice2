@@ -24,6 +24,14 @@ export function openReview(blobs, name, { paths = [], onDone = null } = {}) {
   document.body.classList.add('reviewing');
   syncTools(); draw(); strip();
 }
+// more pages for the score being reviewed (from the page scanner, or photos), after the others
+export function addReviewPages(blobs) {
+  if ($('#review').hidden || !blobs.length) return false;
+  const p0 = R.pages[R.cur] || DEFAULTS();
+  for (const b of blobs) R.pages.push({ src: b, bmp: null, ...DEFAULTS(), look: p0.look, contrast: p0.contrast, clean: p0.clean, straight: p0.straight, ...(b && b.__flat ? { quad: null, flat: true } : {}) });
+  R.cur = R.pages.length - 1; syncTools(); draw(); strip();
+  return true;
+}
 function closeReview() {
   $('#review').hidden = true;
   document.body.classList.remove('reviewing');
@@ -163,9 +171,11 @@ async function strip() {
     box.append(b);
     renderPage(p, 200).then((c) => { cv.width = c.width; cv.height = c.height; cv.getContext('2d').drawImage(c, 0, 0); }).catch(() => {});
   });
-  const add = el('button', 'rev-add'); add.append(el('b', '', '+'), document.createTextNode('Page'));
+  const add = el('button', 'rev-add'); add.append(el('b', '', '+'), document.createTextNode(deps.scanMore && deps.canScan && deps.canScan() ? 'Scan' : 'Page'));
   add.setAttribute('aria-label', 'Add a page');
-  add.addEventListener('click', () => $('#revAddInput').click());
+  // (with the page scanner when this device has it — the same camera as Scan, the pages flattened
+  // and found for you — else the camera or the photos)
+  add.addEventListener('click', () => { if (deps.scanMore && deps.scanMore()) return; $('#revAddInput').click(); });
   box.append(add);
   const on = box.querySelector('.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
