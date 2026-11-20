@@ -3,7 +3,7 @@
 // shadows are taken out and the ink made black on white. Pages can be added, reordered, turned
 // and trimmed. Used for the page scanner, the camera, and photos or images from Files.
 import { ask } from './dialog.js';
-import { detectPage, warpPage, estimateSkew, rotateSmall, whitenPaper, crispInk, levels, trueAspect, cleanPage } from './scan.js';
+import { detectPage, warpPage, estimateSkew, rotateSmall, whitenPaper, crispInk, levels, trueAspect, cleanPage, trimEdges, finishPage } from './scan.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -85,7 +85,7 @@ function giveShape(c, p, maxSide) {
   const g = o.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, W, H);
   return o;
 }
-async function renderPage(p, maxSide) {
+async function renderPage(p, maxSide, kept = true) {
   await ensureFound(p);
   let c;
   if (p.quad) {
@@ -111,8 +111,12 @@ async function renderPage(p, maxSide) {
   if (p.look === 'none') return c;
   // (cleaned as a good scanner does: shadows and the paper's tint gone, white paper, crisp dark ink)
   if (p.clean || p.look === 'bw') cleanPage(c, { contrast: p.contrast, grey: p.look !== 'colour' });
+  // (what is left of the table along a found page's edges made paper)
+  if ((p.quad || p.flat) && (p.clean || p.look === 'bw')) { try { trimEdges(c); } catch {} }
   if (p.look === 'bw') crispInk(c, p.contrast);
   else if (!p.clean) tone(c, p);
+  // (the page as kept: its ink crisp and dark, as from a good scanner)
+  else if (kept) finishPage(c);
   return c;
 }
 // contrast (and grey) for the colour and grey looks
@@ -298,7 +302,7 @@ async function save() {
 // Used by Capture and Studio when the music comes from a photo.
 export async function cleanPhoto(src, { maxSide = 2600, look = 'grey', straight = true, clean = true } = {}) {
   const p = { src, bmp: null, ...DEFAULTS(), look, clean, straight };
-  const c = await renderPage(p, maxSide);
+  const c = await renderPage(p, maxSide, false);
   if (p.bmp && p.bmp.close) p.bmp.close();
   return { canvas: c, found: !!p.quad, skew: p.skew || 0 };
 }

@@ -412,3 +412,109 @@ export function crispInk(c, strength = 55) {
   g.putImageData(img, 0, 0);
   return c;
 }
+
+// What is left of the table or of the page underneath along the edges of a flattened page — a dark
+// wedge where the corners were found a hair outside the sheet, the sheet's own edge drawn as a grey
+// line, a black corner — made paper again. Each side is looked at only in its outer few hundredths
+// (music never reaches there); there the outermost mark of every row (or column) is found, and when
+// those marks lie along one straight line for a good part of the side, it is the sheet's edge: all
+// outside it becomes white. A dark sliver touching the border is whitened wherever it is.
+export function trimEdges(c, { paper = 255 } = {}) {
+  const W = c.width, H = c.height, g = c.getContext('2d', { willReadFrequently: true });
+  const img = g.getImageData(0, 0, W, H), d = img.data;
+  const ink = (x, y) => { const i = (y * W + x) * 4; return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] < 215; };
+  const sides = [
+    { n: H, dim: W, px: (s, k) => [k, s] },            // left
+    { n: H, dim: W, px: (s, k) => [W - 1 - k, s] },    // right
+    { n: W, dim: H, px: (s, k) => [s, k] },            // top
+    { n: W, dim: H, px: (s, k) => [s, H - 1 - k] },    // bottom
+  ];
+  let changed = 0;
+  for (const S of sides) {
+    const D = Math.max(16, Math.round(S.dim * 0.03)), G = Math.max(4, Math.round(D * 0.2));
+    const tol = Math.max(3, Math.round(S.dim * 0.002)), step = Math.max(1, Math.round(S.n / 700));
+    const ss = [], es = [], solid = [];
+    for (let s = 0; s < S.n; s += step) {
+      let last = -1, run = -1;
+      for (let k = 0; k < D; k++) { const [x, y] = S.px(s, k); if (ink(x, y)) { last = k; if (run === k - 1) run = k; } }
+      if (last >= D - G) continue;                     // something reaches into the page here: not an edge
+      ss.push(s); es.push(last); solid.push(run);
+    }
+    if (!ss.length) continue;
+    const cut = new Float32Array(S.n).fill(-1);
+    // (the sheet's edge: a straight line through most of the outermost marks)
+    const idx = []; for (let i = 0; i < ss.length; i++) if (es[i] >= 0) idx.push(i);
+    const need = Math.max(8, 0.2 * ((S.n / step) | 0));
+    if (idx.length >= 8) {
+      let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+      let best = null, bn = 0;
+      for (let t = 0; t < 300; t++) {
+        const i = idx[(rnd() * idx.length) | 0], j = idx[(rnd() * idx.length) | 0];
+        if (ss[i] === ss[j]) continue;
+        const b = (es[j] - es[i]) / (ss[j] - ss[i]); if (Math.abs(b) > 0.05) continue;
+        const a = es[i] - b * ss[i];
+        let n = 0; for (const k of idx) if (Math.abs(es[k] - (a + b * ss[k])) <= tol) n++;
+        if (n > bn) { bn = n; best = [a, b]; }
+      }
+      if (best) {
+        let lo = Infinity, hi = -Infinity;
+        const on = []; for (const k of idx) if (Math.abs(es[k] - (best[0] + best[1] * ss[k])) <= tol) { lo = Math.min(lo, ss[k]); hi = Math.max(hi, ss[k]); on.push(ss[k]); }
+        // (or the sheet's edge seen only along a part of the side — where a shadow darkened it — but
+        // unbroken, and running into a corner of the page: a barline never does)
+        let run = 0, rlo = 0, rhi = -1;
+        for (let a = 0, b = 0; b < on.length; b++) { if (b > a && on[b] - on[b - 1] > S.n * 0.03) a = b; if (on[b] - on[a] > run) { run = on[b] - on[a]; rlo = on[a]; rhi = on[b]; } }
+        const corner = (run >= S.n * 0.12 && (rlo <= S.n * 0.04 || rhi >= S.n * 0.96)) || (run >= S.n * 0.04 && (rlo <= S.n * 0.01 || rhi >= S.n * 0.99) && best[0] + best[1] * (rlo + rhi) / 2 <= S.dim * 0.015);
+        if ((bn >= need && hi - lo >= S.n * 0.25) || corner) {
+          if (!(bn >= need && hi - lo >= S.n * 0.25)) { lo = rlo; hi = rhi; }
+          // (a sheet's edge runs on into the corner: near one, it is followed all the way)
+          const ext = S.n * 0.05, s0 = lo - ext <= S.n * 0.1 ? 0 : Math.floor(lo - ext), s1 = hi + ext >= S.n * 0.9 ? S.n : Math.ceil(hi + ext);
+          for (let s = Math.max(0, s0); s < Math.min(S.n, s1); s++) cut[s] = Math.min(D - 1, best[0] + best[1] * s + tol);
+          // (a mark just past the line, at that row, goes with it: the edge is never perfectly straight)
+          for (let i = 0; i < ss.length; i++) { const L = best[0] + best[1] * ss[i]; if (es[i] >= 0 && es[i] - L <= tol * 2.5) for (let s = ss[i]; s < Math.min(S.n, ss[i] + step); s++) cut[s] = Math.max(cut[s], es[i] + 1); }
+        }
+      }
+    }
+    // (a dark sliver from the border inwards, narrow, all along a long stretch of the side: the table —
+    // a barline or a bracket cut by the border is far shorter)
+    const narrow = Math.max(6, Math.round(S.dim * 0.008)), long = S.n * 0.2;
+    for (let i = 0; i < ss.length;) {
+      if (!(solid[i] >= 0 && solid[i] <= narrow)) { i++; continue; }
+      let j = i; while (j + 1 < ss.length && solid[j + 1] >= 0 && solid[j + 1] <= narrow && ss[j + 1] - ss[j] <= step * 3) j++;
+      if (ss[j] - ss[i] >= long) for (let k = i; k <= j; k++) for (let s = ss[k]; s < Math.min(S.n, ss[k] + step); s++) cut[s] = Math.max(cut[s], solid[k] + 1);
+      i = j + 1;
+    }
+    // (a dark block from the border inwards, wider than any line and with nothing past it: a corner of
+    // the table)
+    for (let i = 0; i < ss.length; i++) if (solid[i] > narrow && solid[i] >= es[i] - 1) for (let s = ss[i]; s < Math.min(S.n, ss[i] + step); s++) cut[s] = Math.max(cut[s], solid[i] + 1);
+    for (let s = 0; s < S.n; s++) {
+      const m = Math.min(D - 1, Math.round(cut[s]));
+      for (let k = 0; k <= m; k++) { const [x, y] = S.px(s, k); const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = paper; changed++; }
+    }
+  }
+  if (changed) g.putImageData(img, 0, 0);
+  return c;
+}
+
+// The last touch of a good scanner on a cleaned page: the ink's edges drawn in (a wide, gentle
+// sharpening — the camera's softness is a couple of pixels wide), the faintest grey left by the
+// paper taken to white and the ink's body to black. Letters and notes come out crisp and dark;
+// pencil stays, lighter. Only for the page as it is kept and shown (reading works on the page before).
+export function finishPage(c) {
+  const w = c.width, h = c.height, g = c.getContext('2d', { willReadFrequently: true });
+  const img = g.getImageData(0, 0, w, h), d = img.data, N = w * h;
+  const L = new Float32Array(N); for (let j = 0, i = 0; j < N; j++, i += 4) L[j] = lumOf(d, i);
+  const r = Math.max(1, Math.round(Math.max(w, h) / 1800));
+  let B = boxBlur(L, w, h, r); B = boxBlur(B, w, h, r); B = boxBlur(B, w, h, r);
+  const lut = new Uint8ClampedArray(512);
+  for (let k = 0; k < 512; k++) { const v = k - 128; let t = (v - 40) / 175; t = t < 0 ? 0 : t > 1 ? 1 : t; lut[k] = Math.round(255 * Math.pow(t, 1.2)); }
+  for (let j = 0, i = 0; j < N; j++, i += 4) {
+    const L0 = L[j]; if (L0 >= 250 && B[j] >= 250) continue;
+    let v = Math.round(L0 + 1.2 * (L0 - B[j])) + 128; v = v < 0 ? 0 : v > 511 ? 511 : v;
+    // (never lighter than it was: a thin line's half-lit pixels, where it steps from row to row, stay)
+    const y = Math.min(lut[v], L0);
+    if (d[i] === d[i + 1] && d[i + 1] === d[i + 2]) { d[i] = d[i + 1] = d[i + 2] = y; }
+    else { const k2 = y / Math.max(1, L0); d[i] = Math.min(255, d[i] * k2); d[i + 1] = Math.min(255, d[i + 1] * k2); d[i + 2] = Math.min(255, d[i + 2] * k2); }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}

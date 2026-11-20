@@ -311,7 +311,8 @@ final class PageScanner: UIViewController, AVCapturePhotoCaptureDelegate, AVCapt
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
         if #available(iOS 16.0, *) { settings.maxPhotoDimensions = stillOutput.maxPhotoDimensions }
-        settings.photoQualityPrioritization = .balanced
+        // (the camera's best: small print and thin lines come out sharper; the next page waits a moment longer)
+        settings.photoQualityPrioritization = .quality
         stillOutput.capturePhoto(with: settings, delegate: self)
     }
 
