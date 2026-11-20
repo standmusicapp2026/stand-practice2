@@ -3250,7 +3250,10 @@ async function openBars(o, rv = null) {
       if (best === -1 || near > best) { best = near; bx = xa + c; }
     }
     void rb;
-    return bx == null ? x : bx / K;
+    let at = bx == null ? x : bx / K;
+    // (where a barline was read at first, it goes back exactly there: its bar keeps its time)
+    for (const b of read) if (b.seg === seg && Math.abs(b.x0 - at) < Math.max(sp * 0.25, 6 / (E.s * K))) { at = b.x0; break; }
+    return at;
   };
   // (the rest of several bars from k0 to k1 made n bars, its span shared evenly)
   const setCount = (k0, k1, n) => {
