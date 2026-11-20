@@ -13044,6 +13044,9 @@ $('#tourAgain').addEventListener('click', () => {
   S.sectionTours = {}; saveSettings();
   hidePanel(); setTimeout(() => startTour({ phone: PHONE }), 200);
 });
+// "Show the welcome again": the first-launch pages, seen again without reinstalling. Nothing in the
+// library, the markings or the settings changes; the instrument and tools shown are the ones in use.
+$('#welcomeAgain')?.addEventListener('click', () => { hidePanel(); setTimeout(showWelcome, 200); });
 function showWelcome() {
   const w = $('#welcome'); w.hidden = false; w.classList.toggle('phone', PHONE);
   const sel = $('#welInst'); sel.textContent = '';
@@ -13051,7 +13054,8 @@ function showWelcome() {
   { const o = el('option', '', 'Choose your instrument'); o.value = ''; o.disabled = true; sel.append(o); }
   fillInstrumentOptions(sel);
   sel.value = S.welcomed && S.instrument ? S.instrument : '';
-  let chosen = toolsFor(sel.value || 'other'), touched = false;
+  const again = !!(S.welcomed && Array.isArray(S.tools));
+  let chosen = again ? [...S.tools] : toolsFor(sel.value || 'other'), touched = again;
   const NAMES = Object.fromEntries(TOOLS.map(([k, v]) => [k, tr(v)]));
   // the tools are a sensible set for the instrument; shown as a short line, opened to change them
   const sum = () => { const n = chosen.length; $('#welToolsSum').textContent = n ? (n <= 2 ? chosen.map((k) => NAMES[k]).join(', ') : `${NAMES[chosen[0]]}, ${NAMES[chosen[1]]} and ${n - 2} more`) : 'None'; };

@@ -2972,21 +2972,30 @@ async function openBars(o, rv = null) {
   const undo = el('button', 'icon-btn'); undo.innerHTML = '<svg><use href="#i-undo"/></svg>'; undo.setAttribute('aria-label', 'Undo');
   const done = el('button', 'btn small primary', 'Done');
   top.append(cancel, title, undo, done);
-  const view = el('div', 'st-er-view st-bars-view'); const vc = el('canvas');
+  // (two layers: the music, drawn again only when the view moves; over it the barlines and numbers,
+  // drawn again with the finger, so a line dragged follows it smoothly)
+  const view = el('div', 'st-er-view st-bars-view'); const bgc = el('canvas'), vc = el('canvas');
   const rm = el('button', 'st-bars-rm', 'Remove'); rm.hidden = true; rm.setAttribute('aria-label', 'Remove this barline');
-  view.append(vc, rm);
+  view.append(bgc, vc, rm);
   const map = el('div', 'st-er-map'); const mc = el('canvas'); const win = el('div', 'st-er-win'); map.append(mc, win);
-  const hint = el('p', 'st-er-hint', 'Tap where a bar begins to add a barline. Drag a line to move it, or tap it to remove it.');
+  // (how it works, in one short line under the music; it says what a tap does next)
+  const hint = el('p', 'st-er-hint st-bars-hint');
+  const HINT = { none: 'Tap the music to add a barline · Tap a line to choose it · Drag a line to move it', sel: 'Remove takes this barline away · Drag it to move it · Tap elsewhere to add one' };
+  hint.textContent = HINT.none;
   const foot = el('div', 'st-er-tools st-bars-foot');
   const count = el('span', 'st-bars-count');
   const asRead = el('button', 'btn small ghost', 'Back to as read');
   foot.append(count, asRead);
   box.append(top, view, map, hint, foot);
-  if (scoreLines().length > 1) hint.textContent = 'Tap where a bar begins to add a barline. Drag a line to move it, or tap it to remove it. Each line of music has its own bars.';
   if (rv) box.insertBefore(el('p', 'st-er-hint st-review-lead', 'Check where each bar begins: each has its number. Then Clean, to wipe away what should not be in the video.'), hint);
   const dpr = Math.min(2, devicePixelRatio || 1);
   const E = { s: 1, ox: 0 }; let VW = 0, VH = 0;
-  const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; vc.width = Math.round(VW * dpr); vc.height = Math.round(VH * dpr); vc.style.width = VW + 'px'; vc.style.height = VH + 'px'; };
+  let bgKey = '';
+  const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; for (const c of [bgc, vc]) { c.width = Math.round(VW * dpr); c.height = Math.round(VH * dpr); c.style.width = VW + 'px'; c.style.height = VH + 'px'; } bgKey = ''; };
+  // (the music at half, a quarter… of its size, made once when needed: far out, a smaller copy is
+  // drawn, quicker and smoother than the whole line scaled down every time)
+  const mips = [src];
+  const mip = (l) => { while (mips.length <= l) { const a = mips[mips.length - 1], c = document.createElement('canvas'); c.width = Math.max(1, Math.round(a.width / 2)); c.height = Math.max(1, Math.round(a.height / 2)); const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(a, 0, 0, c.width, c.height); mips.push(c); } return mips[l]; };
   // (closest: the line as high as the view; farthest: a staff space still a few pixels; at first,
   // about four bars across, large enough to touch a line)
   const sMax = () => Math.min(VH / H, VW / Math.min(W, H * 2.2)) * 0.98 * 3;
@@ -2998,58 +3007,64 @@ async function openBars(o, rv = null) {
   const lx = (cx) => { const r = view.getBoundingClientRect(); return ((cx - r.left) / E.s + E.ox) / K; };
   // (the staves of a line of music, top to bottom, in the strip's pixels)
   const rows = (seg) => { const s = L.segs[seg] || L.segs[0], dy = s.dy ?? 0; const a = (dy + s.staff) * K, b = Math.max(a + sp * 4 * K, (dy + s.h - sp * 3.6) * K); return [a, b]; };
-  const lines = () => { const out = []; for (let j = 0; j + 1 < B.length; j++) if (B[j].seg === B[j + 1].seg) out.push(j); return out; };
+  // (inside bars of rest counted together, a multi-bar rest: no barline is printed there, so none is
+  // shown or touched; the rest shows as one bar numbered "2–3")
+  const mmIn = (j) => { const a = B[j] && B[j].mm, b = B[j + 1] && B[j + 1].mm; return !!(a && b && a.n === b.n && b.i === a.i + 1); };
+  const lines = () => { const out = []; for (let j = 0; j + 1 < B.length; j++) if (B[j].seg === B[j + 1].seg && !mmIn(j)) out.push(j); return out; };
+  const groups = () => { const out = []; for (let k = 0; k < B.length; k++) { let e = k; while (e + 1 < B.length && mmIn(e)) e++; out.push([k, e]); k = e; } return out; };
   const accent = css('--accent') || '#3b6fd8';
+  const drawBg = () => {
+    const key = `${E.s}|${E.ox}|${VW}|${VH}`; if (key === bgKey) return; bgKey = key;
+    const g = bgc.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = getComputedStyle(view).backgroundColor || '#ddd'; g.fillRect(0, 0, bgc.width, bgc.height);
+    let l = 0; while (E.s * dpr * (1 << (l + 1)) <= 1 && (src.width >> (l + 1)) > 64) l++;
+    const m = mip(l), f = src.width / m.width;
+    g.setTransform(E.s * dpr * f, 0, 0, E.s * dpr * f, -E.ox * E.s * dpr, oy() * dpr);
+    g.imageSmoothingQuality = 'high'; g.drawImage(m, 0, 0);
+  };
   const draw = () => {
-    const g = vc.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = getComputedStyle(view).backgroundColor || '#ddd'; g.fillRect(0, 0, vc.width, vc.height);
-    g.setTransform(E.s * dpr, 0, 0, E.s * dpr, -E.ox * E.s * dpr, oy() * dpr);
-    g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0);
+    drawBg();
+    const g = vc.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, vc.width, vc.height);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const y0 = oy();
+    const y0 = oy(), u = sp * K * E.s;
     // where the music's staff is on the screen, and a row above the line for the bars' numbers (never
     // over the notes)
     const fontN = css('--font-num') || 'system-ui';
     const staffTop = (seg) => y0 + rows(seg)[0] * E.s, staffBot = (seg) => y0 + rows(seg)[1] * E.s;
-    const numY = E.numY = Math.max(6, Math.min(y0 - 34, staffTop(B[0] ? B[0].seg : 0) - sp * K * E.s * 3.2 - 30));
-    // (the bar being put right: a light wash over it)
-    if (sel >= 0 && sel + 1 < B.length) for (const k of [sel, sel + 1]) {
-      const bb = B[k], a0 = sx(bb.x0), c0 = sx(bb.x1);
-      g.fillStyle = 'rgba(70,110,200,0.08)'; g.fillRect(a0, numY + 30, c0 - a0, staffBot(bb.seg) + sp * K * E.s * 1.2 - numY - 30);
-    }
-    // the number of each bar, in a badge over its middle (fewer when they would crowd: every 2nd, 5th…)
-    g.font = `700 14px ${fontN}`;
+    const numY = E.numY = Math.max(6, Math.min(y0 - 34, staffTop(B[0] ? B[0].seg : 0) - u * 3.2 - 30));
+    const selBars = sel >= 0 && sel + 1 < B.length ? [sel, sel + 1] : [];
+    // the number of each bar over its middle, as plain figures (fewer when they would crowd: every
+    // 2nd, 5th…); a rest of several bars: one number "2–3"; the two bars either side of the line
+    // chosen: their numbers in the accent colour
+    g.font = `600 15px ${fontN}`; g.textAlign = 'center'; g.textBaseline = 'middle';
     const wBar = (VW / E.s) / K / Math.max(1, L.width / Math.max(1, B.length));
-    const every = [1, 2, 5, 10, 20, 50].find((q) => (VW / Math.max(1, wBar)) * q >= 44) || 100;
-    B.forEach((bb, k) => {
-      const a0 = sx(bb.x0), c0 = sx(bb.x1); if (c0 < -60 || a0 > VW + 60) return;
-      const n = k + 1; if (n !== 1 && n % every) return;
-      const label = String(n), w = Math.max(28, g.measureText(label).width + 16), cx = clamp((a0 + c0) / 2, Math.max(a0, 0) + w / 2 + 2, Math.min(c0, VW) - w / 2 - 2);
-      if (c0 - a0 < w + 4 && every === 1) return;
-      const on = sel >= 0 && (k === sel || k === sel + 1);
-      g.fillStyle = on ? accent : 'rgba(255,255,255,0.97)'; rr(g, cx - w / 2, numY, w, 24, 12); g.fill();
-      if (!on) { g.strokeStyle = 'rgba(40,60,110,0.22)'; g.lineWidth = 1; rr(g, cx - w / 2 + 0.5, numY + 0.5, w - 1, 23, 11.5); g.stroke(); }
-      g.fillStyle = on ? '#fff' : 'rgba(20,30,60,0.92)'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, cx, numY + 12.5);
-      g.textAlign = 'start'; g.textBaseline = 'alphabetic';
-    });
-    // the barlines: a clear line over the printed one, from the numbers' row through the staff, with a
-    // grip under the staff to drag it by
+    const every = [1, 2, 5, 10, 20, 50].find((q) => (VW / Math.max(1, wBar)) * q >= 40) || 100;
+    for (const [k0, k1] of groups()) {
+      const a0 = sx(B[k0].x0), c0 = sx(B[k1].x1); if (c0 < -60 || a0 > VW + 60) continue;
+      const n0 = k0 + 1, n1 = k1 + 1;
+      let shown = every === 1 || n0 === 1; for (let q = n0; q <= n1 && !shown; q++) if (q % every === 0) shown = true;
+      if (!shown) continue;
+      const label = n1 > n0 ? `${n0}–${n1}` : String(n0), w = g.measureText(label).width;
+      if (c0 - a0 < w + 6 && every === 1) continue;
+      const cx = clamp((a0 + c0) / 2, Math.max(a0, 0) + w / 2 + 4, Math.min(c0, VW) - w / 2 - 4);
+      const on = selBars.some((k) => k >= k0 && k <= k1);
+      if (on) { g.fillStyle = accent; rr(g, cx - w / 2 - 9, numY, w + 18, 24, 12); g.fill(); }
+      g.fillStyle = on ? '#fff' : 'rgba(20,30,60,0.78)'; g.fillText(label, cx, numY + 12.5);
+    }
+    g.textAlign = 'start'; g.textBaseline = 'alphabetic';
+    // the barlines: a clear line over the printed one, through the staff, with a round handle under
+    // it to drag it by (bigger when chosen)
     for (const j of lines()) {
       const x = sx(B[j].x1); if (x < -20 || x > VW + 20) continue;
-      const ya = numY + 30, yb = staffBot(B[j].seg) + sp * K * E.s * 0.9;
+      const ya = staffTop(B[j].seg) - u * 0.8, yb = staffBot(B[j].seg) + u * 0.8;
       const on = j === sel;
-      // (inside bars of rest counted together: a dashed line, a bar counted, not printed)
-      const mmIn = B[j].mm && B[j + 1].mm && B[j].mm.n === B[j + 1].mm.n && B[j + 1].mm.i === B[j].mm.i + 1;
-      g.strokeStyle = accent; g.lineWidth = on ? 3 : 2; g.globalAlpha = on ? 1 : 0.85;
-      g.setLineDash(mmIn ? [6, 5] : []);
-      g.beginPath(); g.moveTo(x, ya); g.lineTo(x, yb); g.stroke(); g.setLineDash([]);
-      // (the grip: a rounded tab with two small ridges)
-      const gw = on ? 22 : 18, gh = on ? 30 : 26;
-      g.fillStyle = on ? accent : '#fff'; rr(g, x - gw / 2, yb + 4, gw, gh, gw / 2); g.fill(); g.lineWidth = 2; g.strokeStyle = accent; g.stroke();
-      g.strokeStyle = on ? '#fff' : accent; g.lineWidth = 1.5;
-      for (const dx of [-3, 3]) { g.beginPath(); g.moveTo(x + dx, yb + 4 + gh * 0.32); g.lineTo(x + dx, yb + 4 + gh * 0.68); g.stroke(); }
+      g.strokeStyle = accent; g.lineWidth = on ? 3 : 2; g.globalAlpha = on ? 1 : 0.8;
+      g.beginPath(); g.moveTo(x, ya); g.lineTo(x, yb); g.stroke();
+      const r = on ? 9 : 6.5;
+      g.beginPath(); g.arc(x, yb + r + 3, r, 0, Math.PI * 2); g.fillStyle = on ? accent : '#fff'; g.fill(); g.lineWidth = 2; g.stroke();
       g.globalAlpha = 1;
     }
     placeRm();
+    hint.textContent = sel >= 0 ? HINT.sel : HINT.none;
     const mr = map.getBoundingClientRect(); const vis = VW / E.s;
     win.style.left = (Math.max(0, E.ox) / W * mr.width) + 'px'; win.style.width = Math.min(mr.width, vis / W * mr.width) + 'px';
     const n0 = read.length, n = B.length;
@@ -3106,7 +3121,7 @@ async function openBars(o, rv = null) {
   const removeLine = (j) => { if (j < 0 || j + 1 >= B.length || B[j].seg !== B[j + 1].seg) return; push(); B.splice(j, 2, { x0: B[j].x0, x1: B[j + 1].x1, seg: B[j].seg }); sel = -1; redraw(); };
   const moveLine = (j, x) => { const lo = B[j].x0 + minW, hi = B[j + 1].x1 - minW; if (hi <= lo) return; x = clamp(x, lo, hi); B[j].x1 = B[j + 1].x0 = x; };
   const hitLine = (cx, cy) => {
-    const r = view.getBoundingClientRect(), x = cx - r.left; let best = -1, bd = 18;
+    const r = view.getBoundingClientRect(), x = cx - r.left; let best = -1, bd = 22;
     for (const j of lines()) { const d = Math.abs(sx(B[j].x1) - x); if (d < bd) { bd = d; best = j; } }
     void cy; return best;
   };
@@ -3150,9 +3165,15 @@ async function openBars(o, rv = null) {
     if (u.drag && u.moved) { const j = u.j; moveLine(j, snap(B[j].x1, B[j].seg)); redraw(); return; }
     if (u.moved) { drawMap(); return; }
     // a tap: on a line, it is chosen (again: no longer); elsewhere, a new barline there
+    // (one tap always does something: a line chosen, or a barline added there, even with another
+    // line chosen; right beside a line, that line is chosen rather than a bar too thin to play)
     if (u.j >= 0) { sel = sel === u.j ? -1 : u.j; draw(); return; }
+    const x = lx(e.clientX);
+    if (addAt(x)) return;
+    const near = lines().find((j) => Math.abs(B[j].x1 - x) <= minW + 1);
+    if (near != null) { sel = near; draw(); return; }
     if (sel >= 0) { sel = -1; draw(); return; }
-    if (!addAt(lx(e.clientX))) { view.classList.remove('nope'); void view.offsetWidth; view.classList.add('nope'); }
+    view.classList.remove('nope'); void view.offsetWidth; view.classList.add('nope');
   };
   view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up);
   view.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) { const r = view.getBoundingClientRect(); const at = E.ox + (e.clientX - r.left) / E.s; E.s *= Math.exp(-e.deltaY * 0.01); clampView(); E.ox = at - (e.clientX - r.left) / E.s; } else E.ox += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / E.s; clampView(); onceAFrame('bars', draw); }, { passive: false });
