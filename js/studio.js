@@ -682,6 +682,9 @@ function cleanStrip(st, sp0, top0 = null) {
         if (last - x + 1 >= minRun) for (let q = x; q <= last; q++) { const i = y * W + q; if (dk[i] > th) sm[i] = Math.max(sm[i], 0.5 + 0.5 * Math.min(1, dk[i] / 0.6)); }
         x = last + 1;
       }
+      // (a ledger line through a note's head: its ends beside the head are short, but the line with the
+      // head is long — the ends kept, so the head stays a head with a line through it)
+      for (let x2 = 0; x2 < W; x2++) { const i = y * W + x2; if (thinH(i) && hrun[i] >= minRun * 0.8 && sm[i] < 0.6) sm[i] = Math.max(sm[i], 0.5 + 0.5 * Math.min(1, dk[i] / 0.6)); }
     }
   }
   dk = sm;
