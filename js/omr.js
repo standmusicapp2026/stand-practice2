@@ -1245,7 +1245,10 @@ function readStaff(s, ctx, header) {
       const bs = sts.map((st) => Math.max(...st.hs.map((hd) => hd.beams)));
       const m = bs.slice().sort((a, b2) => bs.filter((v) => v === b2).length - bs.filter((v) => v === a).length)[0];
       const odd = bs.map((v, k) => (v === m + 1 ? k : -1)).filter((k) => k >= 0);
-      if (odd.length === 1 && bs.filter((v) => v === m).length === sts.length - 1) for (const hd of sts[odd[0]].hs) hd.beams = m;
+      // (but after a dotted note the shorter one is the dot's other half — a dotted quaver and its
+      // semiquaver: its beam is no misreading)
+      const afterDot = (k) => (globalThis.__oddDot ?? 1) && ((k > 0 && sts[k - 1].hs.some((hd) => hd.dots)) || (k + 1 < sts.length && sts[k + 1].hs.some((hd) => hd.dots)));
+      if (odd.length === 1 && bs.filter((v) => v === m).length === sts.length - 1 && !afterDot(odd[0])) for (const hd of sts[odd[0]].hs) hd.beams = m;
     }
     // a note between two of its group with two beams or more than either (something below the beam,
     // a tuplet's number, read as beams): as many as its neighbours
@@ -2206,6 +2209,8 @@ function dotOf(C, w, h, hd, s, sp, lab, comps) {
       if (c && c.w >= sp * 0.17 && c.w <= sp * 0.75 && c.h >= sp * 0.17 && c.h <= sp * 0.75 && c.w / c.h > 0.5 && c.w / c.h < 2) return 1;
       // (the edge of the head itself, reaching past where it was measured: look on)
       if (c && c.x0 < xa - 1 && c.x1 < xa + sp * 0.5) continue;
+      // (the note's own stem, up from its right side, with its beam: look past it)
+      if ((globalThis.__dotPastStem ?? 1) && c && c.h > sp * 1.5 && x < hd.right + sp * 0.4 && hd.stem && hd.stem.up) continue;
       return 0;
     }
   }
