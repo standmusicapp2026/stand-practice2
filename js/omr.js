@@ -1496,7 +1496,9 @@ function readStaff(s, ctx, header) {
   for (const hd of heads) {
     if (hd.acc !== undefined || hd.left < startX) continue;
     for (const c of compsC) {
-      if (c.x1 > hd.left || hd.left - c.x1 > sp * 0.8 || c.h > sp * 0.85 || c.h < sp * 0.4 || c.w > sp * 0.9 || c.w < sp * 0.4) continue;
+      // (as big as a space or a little more in some fonts: the shape decides)
+      const big = (globalThis.__dsBig ?? 1) ? 1.25 : 0;
+      if (c.x1 > hd.left || hd.left - c.x1 > sp * 0.8 || c.h > sp * (big || 0.85) || c.h < sp * 0.4 || c.w > sp * (big || 0.9) || c.w < sp * 0.4) continue;
       if (Math.abs((c.y0 + c.y1) / 2 - hd.cy) > sp * 0.35) continue;
       const k = classify(shapeOf(C, w, c.x0, c.y0, c.x1, c.y1, sp, labC, c.id), ['dsharp']);
       if (k.d < 0.33) { hd.acc = 2; isAcc.add(c.id); }
