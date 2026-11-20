@@ -1955,7 +1955,15 @@ function readStaff(s, ctx, header) {
     if (!tot || ok / tot < 0.75) continue;
     if (heads.some((hd) => hd.cx > c.x0 && hd.cx < c.x1 && Math.abs(pAt(s, hd.cy, hd.cx) - 4) < 3)) continue;
     // the number: digits above the staff over the middle of the bar
-    const ds = compsC.filter((q) => q.x1 > c.x0 && q.x0 < c.x1 && q.y1 < yAt(s, 8, q.x0) - sp * 0.2 && q.y1 > yAt(s, 8, q.x0) - sp * 5.5 && q.h > sp * 0.9 && q.h < sp * 3.5 && q.w < sp * 2.5).sort((a, b2) => a.x0 - b2.x0);
+    let ds = compsC.filter((q) => q.x1 > c.x0 && q.x0 < c.x1 && q.y1 < yAt(s, 8, q.x0) - sp * 0.2 && q.y1 > yAt(s, 8, q.x0) - sp * 5.5 && q.h > sp * 0.9 && q.h < sp * 3.5 && q.w < sp * 2.5).sort((a, b2) => a.x0 - b2.x0);
+    // (only the row of print nearest the staff: a tempo word above the number — "Mässig", "Allegro" —
+    // is no part of it; and a row that runs on into letters beside it is a word, not a number)
+    if ((globalThis.__multiRow ?? 1) && ds.length) {
+      const low = Math.max(...ds.map((q) => q.y1));
+      ds = ds.filter((q) => q.y1 > low - sp * 0.6);
+      const ya = Math.min(...ds.map((q) => q.y0)), yb = Math.max(...ds.map((q) => q.y1)), xa = ds[0].x0, xb = ds[ds.length - 1].x1;
+      if (ds.length > 3 || compsC.some((q) => !ds.includes(q) && q.y1 > ya - sp * 0.2 && q.y0 < yb + sp * 0.2 && q.h > sp * 0.3 && ((q.x1 <= xa && q.x1 > xa - sp * 1.2) || (q.x0 >= xb && q.x0 < xb + sp * 1.2)))) ds = [];
+    }
     let n = 0;
     for (const q of ds) {
       const k = classifyLoose(shapeOf(C, w, q.x0, q.y0, q.x1, q.y1, sp, labC, q.id), ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'])[0];
@@ -1973,7 +1981,14 @@ function readStaff(s, ctx, header) {
   for (const r of rests) {
     // (a breve rest's number is the group's: see below)
     if (r.multi || r.t !== 1 || r.breve) continue;
-    const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return Math.abs(qc - r.cx) < sp * 1.3 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 4.5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 2.2; }).sort((a, b2) => a.x0 - b2.x0);
+    let ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return Math.abs(qc - r.cx) < sp * 1.3 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 4.5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 2.2; }).sort((a, b2) => a.x0 - b2.x0);
+    // (only the row of print nearest the staff: a tempo word above the number is no part of it)
+    if ((globalThis.__multiRow ?? 1) && ds.length) {
+      const low = Math.max(...ds.map((q) => q.y1)); ds = ds.filter((q) => q.y1 > low - sp * 0.6);
+      // (and digits that run on into letters beside them, on the same line, are a word: "Mässig")
+      const ya = Math.min(...ds.map((q) => q.y0)), yb = Math.max(...ds.map((q) => q.y1)), xa = ds[0].x0, xb = ds[ds.length - 1].x1;
+      if (compsC.some((q) => !ds.includes(q) && q.y1 > ya - sp * 0.2 && q.y0 < yb + sp * 0.2 && q.h > sp * 0.3 && ((q.x1 <= xa && q.x1 > xa - sp * 1.2) || (q.x0 >= xb && q.x0 < xb + sp * 1.2)))) ds = [];
+    }
     if (!ds.length || ds.length > 2) continue;
     if (heads.some((hd) => Math.abs(hd.cx - r.cx) < sp * 2.5)) continue;
     let n = 0, okAll = true;
@@ -2007,7 +2022,9 @@ function readStaff(s, ctx, header) {
       if (compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && q.h > sp * 2.5 && q.y1 > yAt(s, 8, q.x0) && q.y0 < yAt(s, 0, q.x0))) continue;
       // (rest-like ink in the staff's middle: something is printed there)
       if (!compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, (q.x0 + q.x1) / 2) - 4) < 2.5 && q.h > sp * 0.35 && q.w > sp * 0.25)) continue;
-      const ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y0 > top - sp * 3.5 && q.h > sp * 0.9 && q.h < sp * 2.6 && q.w < sp * 3.4 && ctx.staffOf((q.y0 + q.y1) / 2, qc) === s; }).sort((p1, p2) => p1.x0 - p2.x0);
+      let ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y0 > top - sp * 3.5 && q.h > sp * 0.9 && q.h < sp * 2.6 && q.w < sp * 3.4 && ctx.staffOf((q.y0 + q.y1) / 2, qc) === s; }).sort((p1, p2) => p1.x0 - p2.x0);
+      // (only the row of print nearest the staff: a tempo mark above the number is no part of it)
+      if ((globalThis.__multiRow ?? 1) && ds.length) { const low = Math.max(...ds.map((q) => q.y1)); ds = ds.filter((q) => q.y1 > low - sp * 0.6); }
       if (!ds.length || ds.length > 2) continue;
       // (the digits side by side, over the middle of the bar)
       const dm = (ds[0].x0 + ds[ds.length - 1].x1) / 2; if (Math.abs(dm - m) > (z - a) * 0.25) continue;
@@ -2217,6 +2234,44 @@ function dotOf(C, w, h, hd, s, sp, lab, comps) {
     }
   }
   return 0;
+}
+// The ink with the staff lines put back wherever a symbol touches them from above or below (made once
+// for a page): the bowl of a bold 6 or 8 resting on a line stays closed, so its hole is seen.
+function digitInk(ctx, sp) {
+  if (ctx._dInk) return ctx._dInk;
+  const { B, C, w, h, T } = ctx, r = T + 2, o = C.slice();
+  for (let y = r; y < h - r; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x; if (!B[i] || C[i]) continue;
+    for (let k = 1; k <= r; k++) if (C[i - k * w] || C[i + k * w]) { o[i] = 1; break; }
+  }
+  // (and a stretch of line between two strokes of one sign, short: the bottom of a 6's bowl, printed
+  // on the line itself)
+  const lim = Math.max(3, Math.round(sp * 1.1));
+  for (let y = r; y < h - r; y++) {
+    let x = 0;
+    while (x < w) {
+      const i = y * w + x;
+      if (!(B[i] && !o[i])) { x++; continue; }
+      let e = x; while (e < w && B[y * w + e] && !o[y * w + e]) e++;
+      if (x > 0 && e < w && o[y * w + x - 1] && o[y * w + e] && e - x <= lim) for (let q = x; q < e; q++) o[y * w + q] = 1;
+      x = e;
+    }
+  }
+  ctx._dInk = o;
+  return o;
+}
+// A digit read both ways — without the staff lines, and with them put back where they run through it —
+// and the clearer reading kept: a 3 or a 4 reads best without its lines, a bold 6 or 8 whose bowl rests
+// on a line only with them.
+function readDigitBoth(ctx, sp, bx) {
+  const a = readDigitBox(ctx, sp, bx);
+  if (!(globalThis.__tsCb ?? 1) || !ctx.B || !bx) return a;
+  const b = readDigitBox(ctx, sp, bx, digitInk(ctx, sp), null);
+  if (!a) return b; if (!b) return a;
+  // (a 5 is not taken from the lines put back: a 6 whose round top rests on a line then has a 5's flat
+  // top. A 6 almost as close is the 6.)
+  if (b[0].v === 5 && b[1] && b[1].v === 6 && b[1].d - b[0].d < 0.03) { const q = b.splice(1, 1)[0]; q.d = Math.min(q.d, b[0].d); b.unshift(q); }
+  return b[0].d <= a[0].d && b[0].v !== 5 ? b : a;
 }
 // A digit of a time signature (best readings first)
 function readDigitBox(ctx, sp, bx, C = ctx.C, labC = ctx.labC) {
@@ -2587,7 +2642,9 @@ function readHeader(s, comps, ctx, prev, heads) {
   // are read from the ink in each half (they may touch the middle line and each other).
   let time = null, timeAlt = [];
   const endKey = end;
-  const cand = comps.slice(i).filter((c) => c.h > sp * 0.9 && c.x0 < end + sp * 2.5 && c.x0 >= end - sp * 0.3);
+  // (only what reaches into the staff: a tempo mark above the time signature — a note and "= 112" —
+  // stands over it, is no part of it, and must not make it seem to stand out of the staff)
+  const cand = comps.slice(i).filter((c) => c.h > sp * 0.9 && c.x0 < end + sp * 2.5 && c.x0 >= end - sp * 0.3 && (!(globalThis.__tsInStaff ?? 1) || (c.y1 > yAt(s, 8, c.x0) - sp * 0.2 && c.y0 < yAt(s, 0, c.x0) + sp * 0.2)));
   if (cand.length) {
     // columns of overlapping shapes
     cand.sort((a, b2) => a.x0 - b2.x0);
@@ -2621,14 +2678,17 @@ function readHeader(s, comps, ctx, prev, heads) {
         if (cut !== null && Math.abs(cut - yM) < sp * 1.6) { up = inkBox(col, allTop, cut); dn = inkBox(col, cut, allBot); }
       }
       if (noteThere) {
-        const u = up && readDigitBox(ctx, sp, up), d = dn && readDigitBox(ctx, sp, dn);
+        const rd = (bx) => readDigitBoth(ctx, sp, bx);
+        const u = up && rd(up), d = dn && rd(dn);
         const clear = (q) => q && q[0] && q[0].ok && q[0].e < 0.3 && (!q[1] || q[1].e - q[0].e > 0.05);
         if (globalThis.__clefLog) globalThis.__clefLog.push({ tsNote: [u, d].map((q) => q && q.slice(0, 3).map((r) => [r.v, +r.e.toFixed(2), +r.l.toFixed(2), r.ok])) });
         if (!(clear(u) && clear(d) && [2, 4, 8, 16].includes(d[0].v))) break;
       }
       digits.push({ col, up, dn, xm });
     }
-    const readDigit = (bx) => readDigitBox(ctx, sp, bx);
+    // (each digit read whole: where a staff line crosses it, the line put back — with the line taken
+    // out, a 6 or an 8 printed bold falls into pieces and reads as a 3)
+    const readDigit = (bx) => readDigitBoth(ctx, sp, bx);
     const ups = [], dns = [];
     for (const dg of digits) {
       // one shape filling the middle of the staff: C or cut C

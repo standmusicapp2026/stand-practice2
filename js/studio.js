@@ -320,7 +320,7 @@ function stripLayout(A, W, H, canvas) {
     }
     return xa + end;
   };
-  const segs = [], bars = [], notes = [], events = [];
+  const segs = [], bars = [], notes = [], events = [], rests = [];
   let sx = 0;
   // every note of a staff as sounding pitch classes, with the clef and key as they change along the
   // line and the accidentals carried through the bar (as the score follower reads them)
@@ -330,9 +330,10 @@ function stripLayout(A, W, H, canvas) {
     bars.forEach((b, bi) => {
       if (bars.meta && bars.meta[bi] && bars.meta[bi].key !== undefined) key = bars.meta[bi].key;
       for (const it of b) {
-        if (it.rest) continue;
+        if (it.rest) { (out.rests ||= []).push(it.x); continue; }
         const bottom = (CLEFS[it.clef] || CLEFS[clef0]).bottom;
-        out.push({ x: it.x, pcs: it.ps.map((q) => { const s2 = bottom + q; const a = it.acc && it.acc[q] !== undefined ? it.acc[q] : keyAlter(key, s2); return ((midiOf(s2, a) % 12) + 12) % 12; }) });
+        const ms = it.ps.map((q) => { const s2 = bottom + q; const a = it.acc && it.acc[q] !== undefined ? it.acc[q] : keyAlter(key, s2); return midiOf(s2, a); });
+        out.push({ x: it.x, pcs: ms.map((m) => ((m % 12) + 12) % 12), ms });
       }
     });
     return out;
@@ -369,7 +370,7 @@ function stripLayout(A, W, H, canvas) {
         const bi0 = bars.length;
         for (let q = 0; q < mm.n; q++) bars.push({ x0: sx + (a - x0) + ((b - a) * q) / mm.n, x1: sx + (a - x0) + ((b - a) * (q + 1)) / mm.n, seg: segs.length - 1, rests: 1, restFirst: true, mm: { n: mm.n, i: q } });
         // (what the other staves play meanwhile, in the bar it falls in)
-        evAll.forEach((evs, si2) => { if (si2 === 0) return; for (const e of evs) if (e.x >= a && e.x < b) events.push({ bar: bi0 + Math.min(mm.n - 1, Math.floor(((e.x - a) / (b - a)) * mm.n)), x: sx + (e.x - x0), pcs: [...e.pcs] }); });
+        evAll.forEach((evs, si2) => { if (si2 === 0) return; for (const e of evs) if (e.x >= a && e.x < b) events.push({ bar: bi0 + Math.min(mm.n - 1, Math.floor(((e.x - a) / (b - a)) * mm.n)), x: sx + (e.x - x0), pcs: [...e.pcs], ms: [...e.ms] }); });
         continue;
       }
       bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1, rests: r0.length, restFirst: firstR < firstN - sp * 0.3 });
@@ -381,11 +382,13 @@ function stripLayout(A, W, H, canvas) {
       evAll.forEach((evs) => {
         for (const e of evs) if (e.x >= a && e.x < b) {
           const g = here.find((q) => Math.abs(q.x - e.x) < sp * 0.7);
-          if (g) { for (const pc of e.pcs) if (!g.pcs.includes(pc)) g.pcs.push(pc); } else here.push({ x: e.x, pcs: [...e.pcs] });
+          if (g) { for (const pc of e.pcs) if (!g.pcs.includes(pc)) g.pcs.push(pc); for (const m of e.ms) if (!g.ms.includes(m)) g.ms.push(m); } else here.push({ x: e.x, pcs: [...e.pcs], ms: [...e.ms] });
         }
       });
       here.sort((p2, q) => p2.x - q.x);
-      for (const g of here) events.push({ bar: bi, x: sx + (g.x - x0), pcs: g.pcs });
+      for (const g of here) events.push({ bar: bi, x: sx + (g.x - x0), pcs: g.pcs, ms: g.ms });
+      // (the rests of the top staff: where the soloist's notes stop sounding)
+      for (const x of evAll[0].rests || []) if (x >= a && x < b) rests.push({ bar: bi, x: sx + (x - x0) });
     }
     sx += x1 - x0 + sp * 1.2;
   });
@@ -401,7 +404,7 @@ function stripLayout(A, W, H, canvas) {
   const bandOf = (st) => { if (!bands) return -1; const m = (st.top + st.bottom) / 2; return bands.findIndex(([a, b]) => m >= a && m <= b); };
   const staffs = A.staves.every((st) => st.edge) ? A.staves.map((st, i) => ({ sys: sysOf.has(i) ? sysOf.get(i) : -1, sp: st.sp, top: st.top, bottom: st.bottom, edge: st.edge, band: bandOf(st) })) : null;
   events.sort((p, q) => p.x - q.x);
-  return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key, staffs, bands, v: staffs ? 2 : 1 };
+  return { segs, bars, notes, events, width: sx - sp * 1.2, height: above + below, sp, clef: A.staves[0].clef, key: A.staves[0].key, staffs, bands, v: staffs ? 2 : 1, staffsN: Math.max(1, ...A.systems.map((sy) => sy.length)), rests };
 }
 function evenTimes(n) {
   const a = ST.P.trim.a + 0.4, b = ST.P.trim.b - 0.2;
@@ -1190,12 +1193,25 @@ async function autoSync(o, { from = 0 } = {}) {
   // playing is followed again from this bar's start to the end
   const full = o.layout;
   from = o.times && from > 0 && from < full.bars.length ? from : 0;
-  const L = from ? { ...full, bars: full.bars.slice(from), notes: full.notes.filter((n) => n.bar >= from).map((n) => ({ ...n, bar: n.bar - from })), events: (full.events || []).filter((e) => e.bar >= from).map((e) => ({ ...e, bar: e.bar - from })) } : full;
+  const L = from ? { ...full, bars: full.bars.slice(from), notes: full.notes.filter((n) => n.bar >= from).map((n) => ({ ...n, bar: n.bar - from })), events: (full.events || []).filter((e) => e.bar >= from).map((e) => ({ ...e, bar: e.bar - from })), rests: (full.rests || []).filter((e) => e.bar >= from).map((e) => ({ ...e, bar: e.bar - from })) } : full;
   const A = from ? clamp(o.times[from] - 0.3, ST.P.trim.a, ST.P.trim.b - 1) : ST.P.trim.a, B = ST.P.trim.b;
   if (L.notes.length < 3) { D.toast('Not enough notes were found in the score to follow. Use Tap along.', 4000); return; }
   busy('Following your playing…', 'Listening to the recording.', 0);
   let cancelled = false; ST.busyCancel = () => { cancelled = true; };
   try {
+    // what sounds at each pitch, the page's notes followed through it (followSalience): with a piano
+    // behind the soloist as well as alone, and for the piano itself
+    let sal = null;
+    if ((globalThis.__salFollow ?? 1) && globalThis.__studioHow !== 'notes') {
+      sal = await followSalience(L, A, B, (f) => busy('Following your playing…', 'Listening to the recording.', f * 0.85), () => cancelled);
+      if (cancelled) return;
+      try { window.__studioPickInfo = { chosen: sal ? 'pitches' : null, good: sal && +sal.good.toFixed(3), cost: sal && +sal.cost.toFixed(3), shift: sal && sal.shift }; } catch {}
+    }
+    if (sal) {
+      const nb = L.bars.length, byBar = Array.from({ length: nb }, () => []);
+      for (const e of sal.evs) byBar[e.bar].push({ x: e.x, t: e.t });
+      return finishSync(o, L, from, A, B, sal.T, byBar, sal);
+    }
     // two ways of listening: note by note (one line at a time) and chord by chord (the piano,
     // double stops, an ensemble). Both are tried; the one that fits the page best wins.
     const frames = await pitchTrack(ST.pcm, ST.sr, A, B, (f) => busy('Following your playing…', 'Listening to the recording.', f * 0.45));
@@ -1271,6 +1287,14 @@ async function autoSync(o, { from = 0 } = {}) {
     const byBar = fin ? fin.byBar : [];
     if (fin) best.evs = fin.evs;
     if (!fitT) { busy(null); D.toast('Your playing could not be matched with the score. Use Tap along.', 5000); return; }
+    return finishSync(o, L, from, A, B, fitT, byBar, best);
+  } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
+}
+// The bar times found, put on the line: the last bar's end, the bars kept (from a bar), the line's
+// movement inside each bar.
+function finishSync(o, L, from, A, B, fitT, byBar, best) {
+  try {
+    const nb = L.bars.length;
     const times = fitT.slice(0, nb);
     // (the end of the last bar: where the pace puts it, not past the last note heard by much)
     const lastPlayed = Math.max(...best.evs.map((e) => e.t || 0)) + 0.6;
@@ -1348,6 +1372,233 @@ async function finishTimes(best, notesBest, frames, L, A, B, chromaOf, stop) {
     } catch (err) { console.warn('paced', err); }
   }
   return fitT ? { fitT, evs, byBar, judge: 0 } : null;
+}
+// ---- following by what sounds at each pitch ----
+// With a piano (or anything) behind the soloist, the one pitch heard loudest is often not the
+// soloist's, and the harmony as a whole (pitch classes) says little about which note of the line is
+// being played. What does hold: the soloist's own note is there, with its overtones, at its own
+// pitch. So the recording is heard as how strongly each semitone sounds (its partials added up), and
+// the page is followed through it: at each moment, how strongly the notes the page has there sound.
+const SAL_LO = 28, SAL_HI = 104;
+async function salienceFrames(pcm, sr, a, b, onProgress) {
+  // (a copy at about 22 kHz: enough for the partials that matter, and quicker)
+  const dec = Math.max(1, Math.round(sr / 22050)), r = sr / dec;
+  const i0 = Math.max(0, Math.floor(a * sr)), i1 = Math.min(pcm.length, Math.floor(Math.min(b, pcm.length / sr) * sr));
+  const n = Math.floor((i1 - i0) / dec), x = new Float32Array(n);
+  for (let i = 0; i < n; i++) { let s = 0; const k = i0 + i * dec; for (let j = 0; j < dec; j++) s += pcm[k + j] || 0; x[i] = s / dec; }
+  const N = 4096, hop = 512;
+  const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+  const NP = SAL_HI - SAL_LO + 1;
+  // (for each semitone and each of its first partials: the bins within a quarter tone of it)
+  const H = 8, lob = [], hib = [];
+  for (let p = 0; p < NP; p++) for (let h = 1; h <= H; h++) {
+    const f = 440 * Math.pow(2, (p + SAL_LO - 69) / 12) * h, bn = (f * N) / r;
+    lob.push(Math.floor(bn * Math.pow(2, -1 / 48))); hib.push(Math.ceil(bn * Math.pow(2, 1 / 48)));
+  }
+  const frames = [], re = new Float64Array(N), im = new Float64Array(N);
+  let k = 0;
+  for (let i = 0; i + N <= n; i += hop) {
+    let ms = 0; for (let j = 0; j < N; j++) { const v = x[i + j]; re[j] = v * win[j]; im[j] = 0; ms += v * v; }
+    const mag = fftMag(re, im);
+    for (let q = 0; q < mag.length; q++) mag[q] = Math.log1p(mag[q] * N * 20);
+    const s = new Float32Array(NP);
+    let mx = 1e-6;
+    for (let p = 0; p < NP; p++) {
+      let v = 0, w = 1;
+      for (let h = 0; h < H; h++) {
+        const a2 = lob[p * H + h], b2 = hib[p * H + h];
+        if (b2 < mag.length) { let m = 0; for (let q = a2; q <= b2; q++) if (mag[q] > m) m = mag[q]; v += w * m; }
+        w *= 0.85;
+      }
+      s[p] = v; if (v > mx) mx = v;
+    }
+    // (each semitone against the strongest of that moment)
+    for (let p = 0; p < NP; p++) s[p] /= mx;
+    // (and how much each has just grown: a note beginning at that pitch)
+    const on = new Float32Array(NP), p1 = frames[frames.length - 1], p2 = frames[frames.length - 2];
+    if (p1) for (let p = 0; p < NP; p++) on[p] = Math.max(0, s[p] - Math.max(p1.s[p], p2 ? p2.s[p] : 0));
+    // (the moment a frame stands for: a little past its middle — a note shows in a frame a little
+    // before it begins)
+    frames.push({ t: a + (i * dec + N * dec * 0.75) / sr, s, on, rms: Math.sqrt(ms / N) });
+    if (++k % 120 === 0) { onProgress && onProgress(i / n); await new Promise((r2) => setTimeout(r2, 0)); }
+  }
+  return frames;
+}
+// The page as pitches through time (as pitchSamples, but the notes' own pitches, octave and all): each
+// bar cut into steps; each step the notes sounding there. A bar's music begins a little after its
+// barline (as far as its first note usually stands); a bar that begins with a rest begins with it.
+function midiSteps(L, clef, shift) {
+  const nb = L.bars.length, out = Array.from({ length: nb * PSTEPS }, () => null);
+  const cl = CLEFS[clef] || CLEFS.treble;
+  // (a piano page: both hands, each staff in its own clef; else the soloist's notes)
+  // (the notes as the reader spelled them: each staff in its own clef as it changes along the line, the
+  // accidentals carried through the bar; a piano page with both hands. Else the top staff's notes.)
+  const useEv = (globalThis.__salEv ?? 1) && L.events && L.events.length && L.events.every((e) => e.ms);
+  let items = useEv ? L.events.map((e) => ({ bar: e.bar, x: e.x, ms: e.ms.map((m) => m + shift) }))
+    : L.notes.map((nt) => ({ bar: nt.bar, x: nt.x, ms: nt.ps.map(({ p, acc }) => { const s2 = cl.bottom + p; const a = acc !== undefined ? acc : keyAlter(L.key || 0, s2); return midiOf(s2, a) + shift; }) }));
+  // (one line of music: its rests are where its notes stop sounding)
+  const withRests = (globalThis.__salRests ?? 1) && L.rests && (L.staffsN || 1) === 1;
+  if (withRests) items = items.concat(L.rests.map((r) => ({ bar: r.bar, x: r.x, ms: null })));
+  const fs = [];
+  for (let k = 0; k < nb; k++) { const b = L.bars[k], xs = items.filter((n) => n.bar === k && n.ms).map((n) => n.x); if (xs.length && !b.restFirst) fs.push((Math.min(...xs) - b.x0) / Math.max(1, b.x1 - b.x0)); }
+  fs.sort((p, q) => p - q);
+  const lead = fs.length ? clamp(fs[fs.length >> 1], 0.02, 0.2) : 0.08;
+  const xAt = new Map();
+  for (let k = 0; k < nb; k++) {
+    const b = L.bars[k], ns = items.filter((n) => n.bar === k).sort((p, q) => p.x - q.x);
+    let xs = b.x0 + (b.x1 - b.x0) * lead; if (ns.length && !b.restFirst) xs = Math.min(xs, ns[0].x);
+    // (a bar that begins with a rest: the bar begins with it)
+    if (ns.length && !ns[0].ms) xs = Math.min(xs, ns[0].x);
+    const W = Math.max(1, b.x1 - xs);
+    ns.forEach((n, i) => {
+      const fa = clamp((n.x - xs) / W, 0, 1), fb = i + 1 < ns.length ? clamp((ns[i + 1].x - xs) / W, 0, 1) : 1;
+      const a0 = i === 0 && !b.restFirst ? 0 : Math.round(fa * PSTEPS);
+      if (!n.ms) return;
+      for (let q = a0; q < Math.max(a0 + 1, Math.round(fb * PSTEPS)); q++) if (q < PSTEPS) out[k * PSTEPS + q] = n.ms;
+      if (a0 < PSTEPS) xAt.set(k * PSTEPS + a0, n.x);
+    });
+  }
+  out.xAt = xAt;
+  return out;
+}
+// The page through the recording (dynamic time warping with the pace held, as pacedAlign): at each
+// moment, how strongly the page's notes sound. Returns { T: bar starts (nb + 1), at: the moment of each
+// step, cost } or null.
+function pacedSalience(sn, nb, fr0, pace) {
+  if (!(pace > 0.2) || fr0.length < 4) return null;
+  const dt = pace / PSTEPS, NP = SAL_HI - SAL_LO + 1;
+  // (what sounds in moments a page step long at this pace: the strongest of the frames in each)
+  const fr = [];
+  let q0 = 0;
+  for (let t = fr0[0].t; t < fr0[fr0.length - 1].t; t += dt) {
+    while (q0 < fr0.length - 1 && fr0[q0].t < t) q0++;
+    const s = new Float32Array(NP), on = new Float32Array(NP); let rms = 0, q = q0;
+    do { const f = fr0[q]; for (let p = 0; p < NP; p++) { if (f.s[p] > s[p]) s[p] = f.s[p]; if (f.on[p] > on[p]) on[p] = f.on[p]; } if (f.rms > rms) rms = f.rms; q++; } while (q < fr0.length && fr0[q].t < t + dt);
+    fr.push({ t, s, on, rms });
+  }
+  const n = sn.length, m = fr.length;
+  if (m < 4 || n < 4 || n * m > 2.5e7) return null;
+  const loud = Math.max(...fr.map((f) => f.rms), 1e-6);
+  // (the cost of each step at each moment, worked out once per distinct set of notes; each step keeps
+  // only a reference to its row — little memory, even for a long recording)
+  const rows = new Array(n), seen = new Map(), ONW = globalThis.__onW ?? 0.8;
+  for (let i = 0; i < n; i++) {
+    const ms = sn[i];
+    // (a note's first step: where the note begins, it should be heard beginning)
+    const first = ms && ONW > 0 && (i === 0 || sn[i - 1] !== ms);
+    const key = ms ? ms.join(',') + (first ? '+' : '') : '';
+    let row = seen.get(key);
+    if (!row) {
+      row = new Float32Array(m);
+      for (let j = 0; j < m; j++) {
+        const f = fr[j];
+        if (!ms) { row[j] = f.rms < loud * 0.05 ? 0.1 : 0.5; continue; }
+        if (f.rms < loud * 0.03) { row[j] = 0.9; continue; }
+        let v = 0, c = 0, o2 = 0; for (const mm of ms) { const p = mm - SAL_LO; if (p >= 0 && p < NP) { v += f.s[p]; if (f.on[p] > o2) o2 = f.on[p]; } c++; }
+        row[j] = 1 - v / Math.max(1, c) + (first ? ONW * (1 - Math.min(1, o2 * 2.5)) : 0);
+      }
+      seen.set(key, row);
+    }
+    rows[i] = row;
+  }
+  // (the sums kept for the last three steps of the page only; the way back, one byte a cell)
+  const SKIP = 0.4, W = m + 1;
+  let D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
+  const P = new Uint8Array((n + 1) * W);
+  for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
+  for (let i = 1; i <= n; i++) {
+    const ri = rows[i - 1], rp = i >= 2 ? rows[i - 2] : null;
+    D0.fill(1e9, 0, 1);
+    for (let j = 1; j <= m; j++) {
+      const c = ri[j - 1];
+      let v = D1[j - 1] + c, how = 1;
+      if (rp) { const v2 = D2[j - 1] + rp[j - 1] + c; if (v2 < v) { v = v2; how = 2; } }
+      if (j >= 2) { const v3 = D1[j - 2] + ri[j - 2] + c; if (v3 < v) { v = v3; how = 3; } }
+      // (a note held three times as long: a pause, the end of a phrase)
+      if (j >= 3) { const v4 = D1[j - 3] + ri[j - 3] + ri[j - 2] + c + 0.35; if (v4 < v) { v = v4; how = 4; } }
+      D0[j] = v; P[i * W + j] = how;
+    }
+    const t = D2; D2 = D1; D1 = D0; D0 = t;
+  }
+  let bj = m, bc = 1e9; for (let j = 1; j <= m; j++) { const v = D1[j] + (m - j) * SKIP * 0.5; if (v < bc) { bc = v; bj = j; } }
+  const at = new Float64Array(n).fill(-1), sc = new Float32Array(n);
+  let i = n, j = bj;
+  while (i > 0 && j > 0) {
+    at[i - 1] = fr[j - 1].t; sc[i - 1] = rows[i - 1][j - 1];
+    const h = P[i * W + j];
+    if (h === 1) { i--; j--; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; }
+  }
+  if (at[0] < 0) return null;
+  // (how many of the page's notes were clearly heard where they were put: most of their steps sounding)
+  let heard = 0, notes = 0;
+  for (let q = 0; q < n; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q])) {
+    let e = q, sum = 0; while (e < n && sn[e] === sn[q]) { sum += Math.min(1, sc[e]); e++; }
+    notes++; if (sum / (e - q) < 0.5) heard++;
+  }
+  const pts = [];
+  for (let q = 0; q < n; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q]) && at[q] >= 0) pts.push({ k: Math.floor(q / PSTEPS), f: (q % PSTEPS) / PSTEPS, t: at[q], w: 1 });
+  const T = smoothFit(pts, nb, 0.08);
+  return T ? { T, at, cost: bc / n, heard: heard / Math.max(1, notes) } : null;
+}
+// Following the playing by what sounds at each pitch: the clef and the key the instrument sounds in
+// tried (as written, an octave either way, a B-flat or E-flat instrument...), and the pace; the best
+// fit kept. Bars of rest before the soloist comes in: from when the music begins to the bar the
+// soloist comes in, evenly (the piano plays them; its notes are not on the page).
+// (the music as written is the likeliest; an octave below it less so than it seems: what sounds an
+// octave lower has every other partial of the note itself)
+const shPen = (sh) => (sh === 0 ? 0 : 0.01 + (sh <= -12 ? (globalThis.__octPen ?? 0.035) * Math.floor(-sh / 12) : 0) + (sh >= 24 ? 0.03 : 0));
+async function followSalience(L, A, B, onProgress, stop) {
+  const fr = await salienceFrames(ST.pcm, ST.sr, A, B, onProgress);
+  if (stop && stop()) return null;
+  if (fr.length < 8) return null;
+  const nb = L.bars.length;
+  const clef = L.clef && CLEFS[L.clef] ? L.clef : 'treble';
+  let best = null;
+  // (the key the music sounds in: every key from a little over an octave below to a little over an
+  // octave above the page — an instrument that sounds as written, a B-flat or E-flat instrument, a
+  // guitar an octave down, a piece played in another key — first each at one pace, then the likeliest
+  // few at every pace)
+  const coarse = [];
+  for (let d = -14; d <= 14; d++) coarse.push(d);
+  coarse.push(-24, 24);
+  const first = [];
+  const s0 = midiSteps(L, clef, 0);
+  if (s0.filter(Boolean).length < 4) return null;
+  for (const shift of coarse) {
+    const sn = midiSteps(L, clef, shift);
+    const r = pacedSalience(sn, nb, fr, 2.2);
+    if (r) first.push({ shift, c: r.cost + shPen(shift) });
+    if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, 2.2, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
+    if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
+  }
+  first.sort((p, q) => p.c - q.c);
+  const shifts = [...new Set([...first.slice(0, 3).map((q) => q.shift), 0])];
+  for (const shift of shifts) {
+    const sn = midiSteps(L, clef, shift);
+    for (const pace of [1.2, 1.8, 2.6, 3.6]) {
+      const r = pacedSalience(sn, nb, fr, pace);
+      if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
+      if (r && (!best || r.cost + shPen(shift) < best.cost + shPen(best.shift))) best = { ...r, shift, pace, sn };
+    }
+    await new Promise((r2) => setTimeout(r2, 0));
+    if (stop && stop()) return null;
+  }
+  if (!best) return null;
+  const T = best.T.slice();
+  // (the bars of rest before the soloist's first note)
+  const items = midiSteps(L, clef, 0), k0 = Math.floor(items.findIndex(Boolean) / PSTEPS);
+  if (k0 >= 1) {
+    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * 0.08) || fr[0]).t - 0.2;
+    if (on < T[k0] - 0.5) for (let k = 0; k < k0; k++) T[k] = on + ((T[k0] - on) * k) / k0;
+  }
+  // the notes as heard: each note's first step, the moment it was matched
+  const evs = [];
+  const sn = best.sn;
+  for (let q = 0; q < sn.length; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q])) {
+    const k = Math.floor(q / PSTEPS), b = L.bars[k];
+    evs.push({ bar: k, x: sn.xAt && sn.xAt.has(q) ? sn.xAt.get(q) : b.x0 + ((q % PSTEPS) / PSTEPS) * (b.x1 - b.x0), t: best.at[q] >= 0 ? best.at[q] : null });
+  }
+  return { T, evs, cost: best.cost, shift: best.shift, clef, good: best.heard, how: 'pitches' };
 }
 // ---- following in time ----
 // The page as pitches through time: each bar cut into small steps, each step with the pitch classes
@@ -1567,10 +1818,11 @@ async function syncBoth() {
     ...(sameRead ? B.notes.map((nt) => ({ ...nt, x: mapX(nt.x, nt.bar), ps: [...nt.ps], src: [{ line: 1, x: nt.x }] })) : []),
   ], (l, e) => { for (const q of e.ps) if (!l.ps.some((r) => r.p === q.p)) l.ps.push(q); });
   const events = merge([
-    ...(A.events || []).map((e) => ({ ...e, pcs: [...e.pcs], src: [{ line: 0, x: e.x }] })),
-    ...(B.events || []).map((e) => ({ ...e, x: mapX(e.x, e.bar), pcs: [...e.pcs], src: [{ line: 1, x: e.x }] })),
-  ], (l, e) => { for (const pc of e.pcs) if (!l.pcs.includes(pc)) l.pcs.push(pc); });
-  const j = { id: a.id, layout: { ...A, notes, events }, times: null, knots: null };
+    ...(A.events || []).map((e) => ({ ...e, pcs: [...e.pcs], ...(e.ms ? { ms: [...e.ms] } : {}), src: [{ line: 0, x: e.x }] })),
+    ...(B.events || []).map((e) => ({ ...e, x: mapX(e.x, e.bar), pcs: [...e.pcs], ...(e.ms ? { ms: [...e.ms] } : {}), src: [{ line: 1, x: e.x }] })),
+  ], (l, e) => { for (const pc of e.pcs) if (!l.pcs.includes(pc)) l.pcs.push(pc); if (l.ms && e.ms) { for (const m of e.ms) if (!l.ms.includes(m)) l.ms.push(m); } else delete l.ms; });
+  // (two lines: neither one's rests are silence)
+  const j = { id: a.id, layout: { ...A, notes, events, rests: [], staffsN: 2 }, times: null, knots: null };
   await autoSync(j);
   if (!j.times || !j._evs) return;
   try { window.__jointRaw = j.times.slice(); } catch {}
