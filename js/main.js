@@ -285,6 +285,9 @@ function hidePanel() {
   if (openPanel === 'tuner') { pauseHarmonicListening(); if (tuner.active && !TU.mini) { tuner.stop(); tuner.onReading(null); updateTunerButtons(); } }
   if (openPanel === 'app' && wink.testing) { wink.testing = false; $('#winkTest').textContent = 'Test'; $('#winkMeter').hidden = true; sendFace(); }
   if (openPanel === 'app' && tapTest.on) { tapTest.on = false; $('#tapTest').textContent = 'Test'; $('#tapLast').textContent = ''; sendTap(); }
+  // (a recording or its video stops with the panel it plays in — except one shown over the score, or
+  // the panel only hidden behind Studio for a moment)
+  if (openPanel === 'takes' && !VF.on && !studioOver) { try { player.pause(); } catch {} try { $('#takeVideo').pause(); } catch {} try { syncPlayerControls(); } catch {} }
   openPanel = null;
 }
 // a window opened in a screen (Layout, Capture, Sound in Compose; Pages, Settings in a score…)

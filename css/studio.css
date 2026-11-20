@@ -99,11 +99,14 @@
 .st-playbtn:active { transform: scale(.94); }
 /* the Tap ball beside play: one touch and you tap along (to set the bars right when the music does not follow) */
 .st-transport { position: relative; }
-.st-tapgo { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); width: 50px; height: 50px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 13%, var(--surface-solid)); color: var(--accent); border: 0; display: grid; place-items: center; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 35%, transparent); }
-.st-tapgo b { font: 700 15px/1 var(--font-num); }
-.st-tapgo:not([hidden]) ~ .st-tzoom { margin-right: 60px; }
-.st-tapgo:active { transform: translateY(-50%) scale(.92); }
+.st-tapgo { position: absolute; right: 22px; bottom: 22px; z-index: 5; width: 92px; height: 92px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); border: 0; display: grid; place-items: center; box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 4px rgba(255,255,255,.22); }
+.st-tapgo b { font: 700 22px/1 var(--font-num); }
+.st-tapgo:active { transform: scale(.94); }
 .studio.tapping .st-tapgo { visibility: hidden; }
+/* while tapping: the big ball in the same corner of the picture */
+.studio:not(.tapping) .st-stage > .st-tap { display: none; }
+.st-stage > .st-tap { position: absolute; right: 18px; bottom: 18px; z-index: 6; margin: 0; width: 132px; height: 132px; }
+.st-stage > .st-tap b { font-size: 26px; }
 .st-tzoom { justify-self: end; display: flex; gap: 4px; }
 .st-tzoom .icon-btn { width: 38px; height: 38px; }
 .st-tzoom .icon-btn.on { color: var(--accent-ink); background: var(--accent); }
@@ -186,6 +189,10 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
   .studio.sheet-tall .st-panel { flex: 1 1 0; max-height: none; }
   .st-panel .seg button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; padding-left: 4px; padding-right: 4px; }
   .st-tap { width: 82px; height: 82px; margin-top: -28px; }
+  .st-tapgo { width: 76px; height: 76px; right: 14px; bottom: 14px; }
+  .st-tapgo b { font-size: 19px; }
+  .st-stage > .st-tap { width: 112px; height: 112px; right: 12px; bottom: 12px; }
+  .st-stage > .st-tap b { font-size: 23px; }
   .st-tap b { font-size: 18px; }
   .st-tapinfo { font-size: 13px; }
   .st-media { height: 46px; }
@@ -209,9 +216,10 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
   .st-tappad { height: 44px; }
   .st-tap { width: 66px; height: 66px; margin-top: -18px; }
   .st-tap b { font-size: 15px; }
-  .st-tapgo { width: 40px; height: 40px; }
-  .st-tapgo b { font-size: 13px; }
-  .st-tapgo:not([hidden]) ~ .st-tzoom { margin-right: 48px; }
+  .st-tapgo { width: 60px; height: 60px; right: 12px; bottom: 12px; }
+  .st-tapgo b { font-size: 16px; }
+  .st-stage > .st-tap { width: 84px; height: 84px; right: 10px; bottom: 10px; }
+  .st-stage > .st-tap b { font-size: 19px; }
 }
 @media (max-width: 600px), (max-height: 500px) {
   .st-empty { bottom: 10px; padding: 6px 6px 6px 12px; gap: 8px; }
@@ -251,6 +259,11 @@ body.st-opening .st-busy { background: var(--bg, #f6f6f8); }
 .st-bars-rm.below { transform: translate(-50%, 0); }
 .st-bars-rm.below::after { bottom: auto; top: -5px; }
 .st-bars-foot { justify-content: space-between; }
+/* how many bars a rest of several bars stands for: one less, one more */
+.st-bars-pop { position: absolute; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface-solid); box-shadow: 0 6px 20px rgba(0,0,0,.2), 0 0 0 1px var(--line); z-index: 3; }
+.st-bars-pop[hidden] { display: none; }
+.st-bars-pop b { min-width: 64px; text-align: center; font: 600 14px var(--font-num, system-ui); font-variant-numeric: tabular-nums; }
+.st-bars-pop .icon-btn { width: 36px; height: 36px; font-size: 20px; font-weight: 600; color: var(--accent-text); }
 .st-bars-count { font: 600 14px var(--font-num, system-ui); color: var(--ink); font-variant-numeric: tabular-nums; }
 .st-bars-view.nope { animation: st-nope .28s ease; }
 @keyframes st-nope { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }

@@ -2930,7 +2930,7 @@ async function openEraser(o, rv = null) {
   if (rv) { cancel.hidden = true; top.replaceChild(reviewSwitch(rv, 'clean', () => { keep(); close2(); saveSoon(); frame(); }), title); }
   const view = el('div', 'st-er-view'); const vc = el('canvas'); const ring = el('div', 'st-er-ring'); ring.hidden = true; view.append(vc, ring);
   const map = el('div', 'st-er-map'); const mc = el('canvas'); const win = el('div', 'st-er-win'); map.append(mc, win);
-  const hint = el('p', 'st-er-hint', 'Paint with one finger over what should go. Two fingers move along the line and closer.');
+  const hint = el('p', 'st-er-hint', 'Paint over the line of music to wipe away · Slide above or below it to move along · Two fingers to zoom');
   const tools = el('div', 'st-er-tools');
   const modeSeg = () => seg([['e', 'Wipe away'], ['r', 'Bring back']], E.mode, (v) => { E.mode = v; tools.replaceChild(modeSeg(), tools.firstChild); });
   const sizeSeg = () => seg([['s', 'Fine'], ['m', 'Medium'], ['l', 'Broad']], E.size, (v) => { E.size = v; tools.replaceChild(sizeSeg(), tools.children[1]); });
@@ -2941,8 +2941,11 @@ async function openEraser(o, rv = null) {
   const dpr = Math.min(2, devicePixelRatio || 1);
   let VW = 0, VH = 0;
   const fit = () => { const r = view.getBoundingClientRect(); VW = r.width; VH = r.height; vc.width = Math.round(VW * dpr); vc.height = Math.round(VH * dpr); vc.style.width = VW + 'px'; vc.style.height = VH + 'px'; };
-  const sMin = () => Math.min(VH / H, VW / Math.min(W, H * 2.2)) * 0.98;
-  const clampView = () => { E.s = clamp(E.s, sMin(), sMin() * 8); const vis = VW / E.s; E.ox = W <= vis ? (W - vis) / 2 : clamp(E.ox, 0, W - vis); };
+  const room = () => (VH < 240 ? 0.6 : 0.78);
+  const sMin = () => Math.min((VH * room()) / H, VW / Math.min(W, H * 2.2)) * 0.98;
+  // (never so close that the line fills the whole height: above and below it, one finger moves along)
+  const sMax = () => Math.max(sMin(), Math.min(sMin() * 8, (VH * room()) / H));
+  const clampView = () => { E.s = clamp(E.s, sMin(), sMax()); const vis = VW / E.s; E.ox = W <= vis ? (W - vis) / 2 : clamp(E.ox, 0, W - vis); };
   const oy = () => (VH - H * E.s) / 2;
   const draw = () => {
     const g = vc.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = getComputedStyle(view).backgroundColor || '#ddd'; g.fillRect(0, 0, vc.width, vc.height);
@@ -2957,7 +2960,7 @@ async function openEraser(o, rv = null) {
   const drawMap = () => { const r = map.getBoundingClientRect(); mc.width = Math.round(r.width * dpr); mc.height = Math.round(r.height * dpr); const g = mc.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, mc.width, mc.height); const k = Math.min(mc.width / W, mc.height / H); g.drawImage(work, 0, (mc.height - H * k) / 2 + 0, W * k, H * k); g.globalCompositeOperation = 'source-over'; if (k * W < mc.width) { /* fills from the left */ } };
   fit(); E.s = sMin(); E.ox = 0; clampView(); draw(); drawMap();
   // painting and moving
-  const P = new Map(); let g2 = null, cur = null;
+  const P = new Map(); let g2 = null, cur = null, pan = null;
   const toStrip = (cx, cy) => { const r = view.getBoundingClientRect(); return [((cx - r.left) / E.s + E.ox) / H, ((cy - r.top - oy()) / E.s) / H]; };
   const showRing = (cx, cy) => { const r = view.getBoundingClientRect(); const d = R[E.size] * H * E.s * 2; ring.hidden = false; ring.style.left = (cx - r.left) + 'px'; ring.style.top = (cy - r.top) + 'px'; ring.style.width = ring.style.height = d + 'px'; ring.style.borderColor = E.mode === 'e' ? 'var(--rec)' : 'var(--good)'; };
   view.addEventListener('pointerdown', (e) => {
@@ -2966,10 +2969,14 @@ async function openEraser(o, rv = null) {
     if (P.size === 2) {
       // (a stroke only just started becomes the start of a move)
       if (cur && cur.p.length <= 8) { strokes.pop(); rebuild(); draw(); }
-      cur = null; ring.hidden = true;
+      cur = null; pan = null; ring.hidden = true;
       const [a, b] = [...P.values()]; g2 = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx0: (a.x + b.x) / 2, s0: E.s, ox0: E.ox }; return;
     }
     if (P.size > 2) return;
+    // (a finger above or below the line of music moves along it; on the line, it paints)
+    { const r = view.getBoundingClientRect(), y0 = r.top + oy(), y1 = y0 + H * E.s;
+      if (e.clientY < y0 || e.clientY > y1) { pan = { x: e.clientX, ox0: E.ox }; cur = null; return; } }
+    pan = null;
     const [x, y] = toStrip(e.clientX, e.clientY);
     cur = { m: E.mode, r: R[E.size], p: [+x.toFixed(4), +y.toFixed(4)] }; strokes.push(cur);
     paintStroke(work, cur, orig.canvas); draw(); showRing(e.clientX, e.clientY);
@@ -2985,6 +2992,7 @@ async function openEraser(o, rv = null) {
       E.s = g2.s0 * (d / g2.d0); clampView(); E.ox = sx - (cx - r.left) / E.s; clampView();
       onceAFrame('er', draw); return;
     }
+    if (pan && P.size === 1) { E.ox = pan.ox0 - (e.clientX - pan.x) / E.s; clampView(); onceAFrame('er', draw); return; }
     if (!cur) return;
     const [x, y] = toStrip(e.clientX, e.clientY);
     const lx = cur.p[cur.p.length - 2], ly = cur.p[cur.p.length - 1];
@@ -2993,7 +3001,7 @@ async function openEraser(o, rv = null) {
     cur.p.push(+x.toFixed(4), +y.toFixed(4));
     paintStroke(work, seg2, orig.canvas); showRing(e.clientX, e.clientY); onceAFrame('er', draw);
   });
-  const up = (e) => { P.delete(e.pointerId); if (P.size < 2) g2 = null; if (!P.size) { if (cur) drawMap(); cur = null; if (e.pointerType !== 'mouse') ring.hidden = true; } };
+  const up = (e) => { P.delete(e.pointerId); if (P.size < 2) g2 = null; if (!P.size) { if (cur) drawMap(); cur = null; pan = null; if (e.pointerType !== 'mouse') ring.hidden = true; } };
   view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up);
   view.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) { const r = view.getBoundingClientRect(); const sx = E.ox + (e.clientX - r.left) / E.s; E.s *= Math.exp(-e.deltaY * 0.01); clampView(); E.ox = sx - (e.clientX - r.left) / E.s; } else E.ox += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / E.s; clampView(); onceAFrame('er', draw); }, { passive: false });
   // the little line: where you are along it; drag or tap to go there
@@ -3005,6 +3013,7 @@ async function openEraser(o, rv = null) {
   undo.addEventListener('click', () => { if (!strokes.length) return; strokes.pop(); rebuild(); draw(); drawMap(); });
   allBack.addEventListener('click', () => { strokes.length = 0; rebuild(); draw(); drawMap(); });
   const ro = new ResizeObserver(() => { fit(); clampView(); draw(); drawMap(); }); ro.observe(view);
+  ST.eraser = { view: E, H, oy, strokes, clampView };
   const close2 = () => { ro.disconnect(); box.hidden = true; box.textContent = ''; orig.canvas.width = orig.canvas.height = 0; if (orig.mask) orig.mask.width = 0; };
   cancel.addEventListener('click', () => { work.width = work.height = 0; close2(); });
   done.addEventListener('click', () => {
@@ -3083,6 +3092,7 @@ async function openBars(o, rv = null) {
   let B = copy(L.bars); const hist = [];
   const key = (bs) => bs.map((b) => `${b.seg}:${Math.round(b.x0)}-${Math.round(b.x1)}`).join(',');
   let sel = -1;   // (the line chosen: the one after bar sel)
+  let popG = null;   // (a rest of several bars whose count is being changed)
   // the bar over everything
   const top = el('div', 'st-er-top');
   const cancel = el('button', 'btn small ghost', 'Cancel');
@@ -3094,7 +3104,12 @@ async function openBars(o, rv = null) {
   // drawn again with the finger, so a line dragged follows it smoothly)
   const view = el('div', 'st-er-view st-bars-view'); const bgc = el('canvas'), vc = el('canvas');
   const rm = el('button', 'st-bars-rm', 'Remove'); rm.hidden = true; rm.setAttribute('aria-label', 'Remove this barline');
-  view.append(bgc, vc, rm);
+  // (a rest of several bars: how many, one less or one more)
+  const pop = el('div', 'st-bars-pop'); pop.hidden = true;
+  const pMinus = el('button', 'icon-btn', '−'), pN = el('b', ''), pPlus = el('button', 'icon-btn', '+');
+  pMinus.setAttribute('aria-label', 'One bar fewer'); pPlus.setAttribute('aria-label', 'One bar more');
+  pop.append(pMinus, pN, pPlus);
+  view.append(bgc, vc, rm, pop);
   const map = el('div', 'st-er-map'); const mc = el('canvas'); const win = el('div', 'st-er-win'); map.append(mc, win);
   // (how it works, in one short line under the music; it says what a tap does next)
   const hint = el('p', 'st-er-hint st-bars-hint');
@@ -3153,7 +3168,7 @@ async function openBars(o, rv = null) {
     // the number of each bar over its middle, as plain figures (fewer when they would crowd: every
     // 2nd, 5th…); a rest of several bars: one number "2–3"; the two bars either side of the line
     // chosen: their numbers in the accent colour
-    g.font = `600 15px ${fontN}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `600 15px ${fontN}`; g.textAlign = 'center'; g.textBaseline = 'middle'; E.groupLabels = []; E.labels = [];
     const wBar = (VW / E.s) / K / Math.max(1, L.width / Math.max(1, B.length));
     const every = [1, 2, 5, 10, 20, 50].find((q) => (VW / Math.max(1, wBar)) * q >= 40) || 100;
     for (const [k0, k1] of groups()) {
@@ -3161,12 +3176,16 @@ async function openBars(o, rv = null) {
       const n0 = k0 + 1, n1 = k1 + 1;
       let shown = every === 1 || n0 === 1; for (let q = n0; q <= n1 && !shown; q++) if (q % every === 0) shown = true;
       if (!shown) continue;
-      const label = n1 > n0 ? `${n0}–${n1}` : String(n0), w = g.measureText(label).width;
-      if (c0 - a0 < w + 6 && every === 1) continue;
+      const label = n1 > n0 ? `${n0}–${n1}` : String(n0);
+      // (every bar keeps its number: in a narrow bar, smaller — a number left out read as a bar missing)
+      let fs = 15; g.font = `600 ${fs}px ${fontN}`; let w = g.measureText(label).width;
+      while (every === 1 && fs > 10 && c0 - a0 < w + 4) { fs--; g.font = `600 ${fs}px ${fontN}`; w = g.measureText(label).width; }
       const cx = clamp((a0 + c0) / 2, Math.max(a0, 0) + w / 2 + 4, Math.min(c0, VW) - w / 2 - 4);
       const on = selBars.some((k) => k >= k0 && k <= k1);
       if (on) { g.fillStyle = accent; rr(g, cx - w / 2 - 9, numY, w + 18, 24, 12); g.fill(); }
       g.fillStyle = on ? '#fff' : (css('--ink') || '#1b2240'); g.globalAlpha = on ? 1 : 0.8; g.fillText(label, cx, numY + 12.5); g.globalAlpha = 1;
+      if (n1 > n0) E.groupLabels.push({ k0, k1, x0: cx - w / 2 - 12, x1: cx + w / 2 + 12 });
+      E.labels.push(label);
     }
     g.textAlign = 'start'; g.textBaseline = 'alphabetic';
     // the barlines: a clear line over the printed one, through the staff, with a round handle under
@@ -3181,7 +3200,7 @@ async function openBars(o, rv = null) {
       g.beginPath(); g.arc(x, yb + r + 3, r, 0, Math.PI * 2); g.fillStyle = on ? accent : '#fff'; g.fill(); g.lineWidth = 2; g.stroke();
       g.globalAlpha = 1;
     }
-    placeRm();
+    placeRm(); if (popG) placePop();
     hint.textContent = sel >= 0 ? HINT.sel : HINT.none;
     const mr = map.getBoundingClientRect(); const vis = VW / E.s;
     win.style.left = (Math.max(0, E.ox) / W * mr.width) + 'px'; win.style.width = Math.min(mr.width, vis / W * mr.width) + 'px';
@@ -3209,26 +3228,46 @@ async function openBars(o, rv = null) {
   // (where the barline printed near a place is: a dark column standing through the staves)
   let px = null;
   const snap = (x, seg) => {
-    const [ra] = rows(seg), r0 = Math.max(0, Math.round(ra)), r1 = Math.min(H - 1, Math.round(ra + sp * 4 * K)), nr = r1 - r0 + 1;
-    // (as far as a fingertip may miss, on the screen, or most of a space)
-    const reach = Math.max(sp * 0.8, 16 / (E.s * K));
+    const [ra, rb] = rows(seg), r0 = Math.max(0, Math.round(ra)), r1 = Math.min(H - 1, Math.round(ra + sp * 4 * K)), nr = r1 - r0 + 1;
+    // (only a printed barline right under the finger: a little under a staff space, or 10 points on the
+    // screen — further off, the line stays exactly where it was put)
+    const reach = Math.max(sp * 0.3, 10 / (E.s * K));
+    const ext = Math.round(sp * K * 0.7), ya = Math.max(0, r0 - ext), yb = Math.min(H - 1, r1 + ext), nh = yb - ya + 1;
     const xa = Math.max(0, Math.floor((x - reach) * K)), xb = Math.min(W - 1, Math.ceil((x + reach) * K));
     if (nr < 4 || xb <= xa) return x;
-    try { px = src.getContext('2d', { willReadFrequently: true }).getImageData(xa, r0, xb - xa + 1, nr); } catch { return x; }
+    try { px = src.getContext('2d', { willReadFrequently: true }).getImageData(xa, ya, xb - xa + 1, nh); } catch { return x; }
     const w = xb - xa + 1, d = px.data; let best = -1, bx = null;
-    // (through every staff line and the spaces between, from the top line to the bottom one: a stem
-    // is shorter; a column either side counts, for a line printed a little slanted)
     const ink = (c, y) => { if (c < 0 || c >= w) return false; const i = (y * w + c) * 4; return d[i + 3] > 0 && d[i] < 150; };
+    const col = (c, y) => ink(c, y) || ink(c - 1, y) || ink(c + 1, y);
     for (let c = 0; c < w; c++) {
-      let n = 0; for (let y = 0; y < nr; y++) if (ink(c, y) || ink(c - 1, y) || ink(c + 1, y)) n++;
-      const near = 1 - Math.abs(xa + c - x * K) / (reach * K + 1) * 0.15;
-      if (n >= nr * 0.93 && n * near > best) { best = n * near; bx = xa + c; }
+      // (ink from the top line to the bottom one…)
+      let n = 0; for (let y = r0 - ya; y <= r1 - ya; y++) if (col(c, y)) n++;
+      if (n < nr * 0.93) continue;
+      // (…and not on beyond the staff: a note's stem through the staff goes on above or below it)
+      let out = 0; for (let y = 0; y < r0 - ya - 2; y++) if (ink(c, y)) out++; for (let y = r1 - ya + 3; y < nh; y++) if (ink(c, y)) out++;
+      if (out > ext * 0.5) continue;
+      const near = -Math.abs(xa + c - x * K);
+      if (best === -1 || near > best) { best = near; bx = xa + c; }
     }
-    let at = bx == null ? x : bx / K;
-    // (where a barline was read at first, it goes back exactly there: its bar keeps its time)
-    for (const b of read) if (b.seg === seg && Math.abs(b.x0 - at) < Math.max(sp * 0.35, 6 / (E.s * K)) && Math.abs(b.x0 - at) > 0) { at = b.x0; break; }
-    return at;
+    void rb;
+    return bx == null ? x : bx / K;
   };
+  // (the rest of several bars from k0 to k1 made n bars, its span shared evenly)
+  const setCount = (k0, k1, n) => {
+    const a = B[k0].x0, z = B[k1].x1, seg = B[k0].seg, part = (z - a) / n;
+    const nb = Array.from({ length: n }, (_, i) => ({ x0: a + part * i, x1: i === n - 1 ? z : a + part * (i + 1), seg, ...(n > 1 ? { mm: { n, i } } : {}) }));
+    push(); B.splice(k0, k1 - k0 + 1, ...nb); popG = { k0, k1: k0 + n - 1 }; sel = -1; redraw(); placePop();
+  };
+  const placePop = () => {
+    if (!popG || popG.k1 >= B.length) { pop.hidden = true; return; }
+    const n = popG.k1 - popG.k0 + 1; pN.textContent = n === 1 ? '1 bar' : `${n} bars`; pMinus.disabled = n <= 1; pPlus.disabled = n >= 99;
+    const cx = (sx(B[popG.k0].x0) + sx(B[popG.k1].x1)) / 2; pop.hidden = false;
+    pop.style.left = clamp(cx, 80, VW - 80) + 'px'; pop.style.top = Math.max(8, (E.numY ?? 40) - 46) + 'px';
+  };
+  const openCount = (gl) => { popG = { k0: gl.k0, k1: gl.k1 }; sel = -1; draw(); placePop(); };
+  pMinus.addEventListener('click', (e) => { e.stopPropagation(); if (popG && popG.k1 > popG.k0) setCount(popG.k0, popG.k1, popG.k1 - popG.k0); });
+  pPlus.addEventListener('click', (e) => { e.stopPropagation(); if (popG) setCount(popG.k0, popG.k1, popG.k1 - popG.k0 + 2); });
+  pop.addEventListener('pointerdown', (e) => e.stopPropagation());
   const push = () => { hist.push(copy(B)); if (hist.length > 60) hist.shift(); };
   const addAt = (x) => {
     const j = B.findIndex((b) => x > b.x0 + minW && x < b.x1 - minW);
@@ -3238,10 +3277,19 @@ async function openBars(o, rv = null) {
   };
   const removeLine = (j) => { if (j < 0 || j + 1 >= B.length || B[j].seg !== B[j + 1].seg) return; push(); B.splice(j, 2, { x0: B[j].x0, x1: B[j + 1].x1, seg: B[j].seg }); sel = -1; redraw(); };
   const moveLine = (j, x) => { const lo = B[j].x0 + minW, hi = B[j + 1].x1 - minW; if (hi <= lo) return; x = clamp(x, lo, hi); B[j].x1 = B[j + 1].x0 = x; };
-  const hitLine = (cx, cy) => {
-    const r = view.getBoundingClientRect(), x = cx - r.left; let best = -1, bd = 22;
-    for (const j of lines()) { const d = Math.abs(sx(B[j].x1) - x); if (d < bd) { bd = d; best = j; } }
-    void cy; return best;
+  // (a line is taken only by itself — a finger on it, over the staff — or by its round handle under
+  // the staff: a finger sliding along the music near a line moves the music, never the line)
+  const hitLine = (cx, cy, wide = false) => {
+    const r = view.getBoundingClientRect(), x = cx - r.left, y = cy - r.top; let best = -1, bd = Infinity;
+    const u = sp * K * E.s, y0 = oy();
+    for (const j of lines()) {
+      const lxs = sx(B[j].x1), [ra, rb] = rows(B[j].seg), top = y0 + ra * E.s - u * 0.8, bot = y0 + rb * E.s + u * 0.8;
+      const onHandle = Math.hypot(x - lxs, y - (bot + 12)) < 24;
+      const onLine = Math.abs(x - lxs) < (wide ? 18 : 11) && y > top - 6 && y < bot + 6;
+      if (!onHandle && !onLine) continue;
+      const d = Math.abs(x - lxs); if (d < bd) { bd = d; best = j; }
+    }
+    return best;
   };
   rm.addEventListener('click', (e) => { e.stopPropagation(); removeLine(sel); });
   rm.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -3257,6 +3305,7 @@ async function openBars(o, rv = null) {
       const [a, b] = [...P.values()]; g2 = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx0: (a.x + b.x) / 2, s0: E.s, ox0: E.ox }; redraw(); return;
     }
     if (P.size > 2) return;
+    if (popG) { popG = null; pop.hidden = true; }
     const j = hitLine(e.clientX, e.clientY);
     one = { x: e.clientX, y: e.clientY, t: performance.now(), j, moved: false, ox0: E.ox, drag: j >= 0, before: null };
   });
@@ -3281,11 +3330,19 @@ async function openBars(o, rv = null) {
     const u = one; one = null;
     if (e.type === 'pointercancel') { if (u.drag && u.moved) { B = u.before; hist.pop(); redraw(); } return; }
     if (u.drag && u.moved) { const j = u.j; moveLine(j, snap(B[j].x1, B[j].seg)); redraw(); return; }
+    void 0;
     if (u.moved) { drawMap(); return; }
     // a tap: on a line, it is chosen (again: no longer); elsewhere, a new barline there
     // (one tap always does something: a line chosen, or a barline added there, even with another
     // line chosen; right beside a line, that line is chosen rather than a bar too thin to play)
-    if (u.j >= 0) { sel = sel === u.j ? -1 : u.j; draw(); return; }
+    // (a tap on the number of a rest of several bars: how many bars it is)
+    { const r = view.getBoundingClientRect(), tx = e.clientX - r.left, ty = e.clientY - r.top; const gl = (E.groupLabels || []).find((q) => tx > q.x0 && tx < q.x1 && ty > (E.numY ?? 0) - 8 && ty < (E.numY ?? 0) + 32); if (gl) { openCount(gl); return; } }
+    // (only a tap on the line of music itself chooses or adds a line: above or below it, nothing
+    // happens but a line chosen let go)
+    { const r = view.getBoundingClientRect(), ty = e.clientY - r.top, u2 = sp * K * E.s, sg = (B.find((b) => lx(e.clientX) >= b.x0 && lx(e.clientX) <= b.x1) || B[0] || {}).seg ?? 0, [ra, rb] = rows(sg);
+      if (u.j < 0 && (ty < oy() + ra * E.s - u2 * 1.2 || ty > oy() + rb * E.s + u2 * 1.2)) { if (sel >= 0) { sel = -1; draw(); } return; } }
+    const jt = u.j >= 0 ? u.j : hitLine(e.clientX, e.clientY, true);
+    if (jt >= 0) { sel = sel === jt ? -1 : jt; draw(); return; }
     const x = lx(e.clientX);
     if (addAt(x)) return;
     const near = lines().find((j) => Math.abs(B[j].x1 - x) <= minW + 1);
@@ -3300,7 +3357,7 @@ async function openBars(o, rv = null) {
   map.addEventListener('pointerdown', (e) => { mapDown = true; try { map.setPointerCapture(e.pointerId); } catch {} goMap(e.clientX); });
   map.addEventListener('pointermove', (e) => { if (mapDown) goMap(e.clientX); });
   map.addEventListener('pointerup', () => { mapDown = false; }); map.addEventListener('pointercancel', () => { mapDown = false; });
-  undo.addEventListener('click', () => { if (!hist.length) return; B = hist.pop(); sel = -1; redraw(); });
+  undo.addEventListener('click', () => { if (!hist.length) return; B = hist.pop(); sel = -1; popG = null; pop.hidden = true; redraw(); });
   asRead.addEventListener('click', () => { if (key(B) === key(read)) return; push(); B = copy(read); sel = -1; redraw(); });
   // (keys: Delete takes the chosen line away, the arrows move it a little)
   const onKey = (e) => {
@@ -3321,7 +3378,7 @@ async function openBars(o, rv = null) {
     if (!changed) return;
     D.toast(`${B.length} bars now. The times of the bars you left as they were are kept.`, 2600);
   });
-  ST.barsEditor = { get bars() { return B; }, addAt, removeLine, moveLine, snap, lines, sx,
+  ST.barsEditor = { get bars() { return B; }, view: E, rows, oy, addAt, removeLine, moveLine, snap, lines, sx,
     center: (j) => { const b = B[clamp(j, 0, B.length - 1)]; E.ox = b.x1 * K - VW / E.s / 2; clampView(); draw(); }, choose: (j) => { sel = j; draw(); }, px: () => sp * K * E.s };
 }
 // the new bars taken into the line: for the line of music and its timing
@@ -3836,7 +3893,10 @@ function wire() {
   $('#stTapStop').addEventListener('click', () => finishTap());
   $('#stImageInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) addImage(f); });
   $('#stExport').addEventListener('click', exportVideo);
-  $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); tap(e); });
+  $('#stTap').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); tap(e); });
+  // (the Tap ball, and the ball you tap while tapping: big, over the picture, in its bottom right-hand
+  // corner — where the thumb is, nothing of the timeline under it)
+  { const stg = $('#stStage'); stg.append($('#stTapGo'), $('#stTap')); $('#stTapGo').addEventListener('pointerdown', (e) => e.stopPropagation()); }
   $('#stBusyCancel').addEventListener('click', () => { if (ST.busyCancel) ST.busyCancel(); busy(null); });
   wireTimeline(); wireStage();
   window.addEventListener('resize', () => { if (!$('#studio').hidden && ST.media) { if (!sheetMode() && !ST.tab) ST.tab = 'score'; sizeCanvas(); renderSide(); renderTimeline(); frame(); } });
