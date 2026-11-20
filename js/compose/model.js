@@ -28,6 +28,8 @@ export const barTicks = (time) => (time[2] > 0 ? time[2] : (time[0] * WHOLE) / t
 // Standard values that fit, longest first: [ticks, t, dots]
 const VALUES = [];
 // (128th notes too, as Beethoven writes them: plain only, a dotted one has no whole number of ticks)
+// (and the breve of old music, a double whole note, plain)
+VALUES.push([baseTicks(0.5), 0.5, 0]);
 for (const t of [1, 2, 4, 8, 16, 32, 64, 128]) { for (const [k, d] of [[1.75, 2], [1.5, 1], [1, 0]]) if (Number.isInteger(baseTicks(t) * k)) VALUES.push([baseTicks(t) * k, t, d]); }
 VALUES.sort((a, b) => b[0] - a[0]);
 export function valueOf(ticks) { const v = VALUES.find((x) => x[0] === ticks); return v ? { t: v[1], dots: v[2] } : null; }

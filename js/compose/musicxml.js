@@ -9,7 +9,7 @@ import { beamPlan } from './engrave.js';
 import { hasTab, tabTuning, tabPlan } from './tab.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const TYPE = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th', 128: '128th' };
+const TYPE = { 0.5: 'breve', 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th', 128: '128th' };
 const TYPE_BACK = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, +k]));
 const CLEF_XML = { tab: ['TAB', 5, 0], treble: ['G', 2, 0], bass: ['F', 4, 0], alto: ['C', 3, 0], tenor: ['C', 4, 0], treble8: ['G', 2, -1], bass8: ['F', 4, -1], perc: ['percussion', 0, 0], treble8va: ['G', 2, 1], bass8va: ['F', 4, 1], soprano: ['C', 1, 0], mezzo: ['C', 2, 0], baritoneC: ['C', 5, 0], baritoneF: ['F', 3, 0], frenchviolin: ['G', 1, 0] };
 const ART_XML = { stacc: 'staccato', stacciss: 'staccatissimo', ten: 'tenuto', acc: 'accent', marc: 'strong-accent', breath: 'breath-mark', caes: 'caesura' };

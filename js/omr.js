@@ -806,14 +806,24 @@ function readStaff(s, ctx, header) {
         // nor the middle of a sharp: strokes go on above and below it on both sides
         const inkC = (xx, yy) => { const xi = Math.round(xx), yi = Math.round(yy); if (xi < 1 || yi < 0 || xi >= w - 1 || yi >= h) return false; return !!(C[yi * w + xi] || C[yi * w + xi - 1] || C[yi * w + xi + 1]); };
         const tallSide = (xx) => inkC(xx, cy - sp * 0.75) && inkC(xx, cy + sp * 0.75);
-        const tallNear = (dir) => { for (let k = 0.25; k <= 1.0; k += 0.125) if (tallSide(x + dir * rxK * k)) return true; return false; };
+        // (a breve — old music's double whole note — has a short upright stroke at each side of its
+        // ring, just outside it: not a sharp, whose strokes stand inside)
+        const kIn = kx > 1 && (globalThis.__breveNote ?? 1) ? 0.8 : 1.0;
+        const tallNear = (dir) => { for (let k = 0.25; k <= kIn; k += 0.125) if (tallSide(x + dir * rxK * k)) return true; return false; };
         if (tallNear(-1) && tallNear(1)) continue;
         const vlen = (xx) => { const xi = Math.round(xx); let u = Math.round(cy), d = u; while (u > 0 && (C[(u - 1) * w + xi] || C[(u - 1) * w + xi + 1] || C[(u - 1) * w + xi - 1])) u--; while (d < h - 1 && (C[(d + 1) * w + xi] || C[(d + 1) * w + xi + 1] || C[(d + 1) * w + xi - 1])) d++; return d - u; };
         if (vlen(x - rxK * 0.86) > sp * 1.7 && vlen(x + rxK * 0.86) > sp * 1.7) continue;
         const mid = lightAt(x, cy); if (mid < th + 28) continue;
         let n = 0; for (let i = 0; i < ringPts.length; i += 2) if (dark(x + ringPts[i], cy + ringPts[i + 1])) n++;
         const f = n / (ringPts.length / 2);
-        if (f >= 0.72) ring.push({ cx: x, cy, p, sc: f + (mid - th) / 600, fit: f, comp: null, ringHead: true, wide: kx > 1 });
+        if (f >= 0.72) {
+          let breve = false;
+          if (kIn < 1) {
+            const sideAt = (dir) => { for (let k = 0.9; k <= 1.35; k += 0.075) { const xx = x + dir * rxK * k; if (tallSide(xx) && vlen(xx) < sp * 1.75) return true; } return false; };
+            breve = sideAt(-1) && sideAt(1);
+          }
+          ring.push({ cx: x, cy, p, sc: f + (mid - th) / 600, fit: f, comp: null, ringHead: true, wide: kx > 1, ...(breve ? { breve } : {}) });
+        }
       }
     }
     ring.sort((a, b2) => b2.sc - a.sc);
@@ -1020,6 +1030,43 @@ function readStaff(s, ctx, header) {
   // has a stem of its own or they sit side by side as a second)
   heads = heads.filter((hd) => hd.wRow <= sp * (hd.hollow ? 2.15 : 1.7) || heads.some((q) => q !== hd && Math.abs(q.p - hd.p) === 1 && Math.abs(q.cx - hd.cx) > sp * 0.75 && (Math.abs(q.cx - hd.cx) < sp * 1.5 || (Math.abs(q.cx - hd.cx) < sp * 2.6 && hd.wRow <= sp * 3.4 && q.left >= hd.left - sp * 0.4 && q.right <= hd.right + sp * 0.4 && stemOf(C, w, h, hd, rx, sp) && stemOf(C, w, h, q, rx, sp)))));
   if (TR && typeof heads !== 'undefined') trk(628, heads);
+  // breves (old music's double whole note): a whole note's white hole with a short upright stroke at
+  // each side of its ring. As wide as two heads, they were taken for none; each is one head, a breve.
+  if ((globalThis.__breveNote ?? 1) && ctx.holeComps) {
+    const at = (x, y) => y >= 0 && y < h && x >= 1 && x < w - 1 && (C[y * w + x] || C[y * w + x - 1] || C[y * w + x + 1]);
+    const vrun = (x, cy) => { const xi = Math.round(x); let u = Math.round(cy), d = u; if (!at(xi, u)) return null; while (u > 0 && at(xi, u - 1)) u--; while (d < h - 1 && at(xi, d + 1)) d++; return { len: d - u + 1, mid: (u + d) / 2, u, d }; };
+    for (const c of ctx.holeComps) {
+      if (c.w < sp * 0.3 || c.w > sp * 1.1 || c.h < sp * 0.12 || c.h > sp * 1.0 || c.n < 6) continue;
+      const cx = (c.x0 + c.x1) / 2, cy0 = (c.y0 + c.y1) / 2;
+      if (cx < s.x0 + sp || cx > s.x1 || ctx.staffOf(cy0, cx) !== s || !band(cy0)) continue;
+      // (a staff line through the hole: its middle is on the line)
+      let p = Math.round(pAt(s, cy0, cx)); if (p < -8 || p > 16) continue;
+      if (Math.abs(c.y1 - yAt(s, p + 1, cx)) < T + 2 || Math.abs(c.y0 - yAt(s, p - 1, cx)) < T + 2) { const pl = Math.round(pAt(s, Math.abs(c.y1 - yAt(s, p + 1, cx)) < T + 2 ? c.y1 + T : c.y0 - T, cx)); if (pl % 2 === 0) p = pl; }
+      const cy = yAt(s, p, cx);
+      // the ring round it, then a short upright stroke just outside it, each side
+      const sideX = (dir) => {
+        let x = Math.round(dir < 0 ? c.x0 - 1 : c.x1 + 1); while (Math.abs(x - cx) < sp * 1.0 && at(x, Math.round(cy))) x += dir;   // through the ring
+        for (let k = 0; k < sp * 0.5; k++, x += dir) { const r = vrun(x, cy); if (r && r.len >= sp * 1.05 && r.len <= sp * 1.9 && Math.abs(r.mid - cy) < sp * 0.4) return x; }
+        return null;
+      };
+      const L = sideX(-1), R = sideX(1);
+      if (TR && Math.abs(cx - TR.x) < sp * 2) TR.log.push(['sides', L, R, p, Math.round(cy)]);
+      if (L === null || R === null || R - L < sp * 1.2 || R - L > sp * 2.8) continue;
+      // (not a note with its stem, nor between two barlines: the strokes are short)
+      const xm = (L + R) / 2;
+      // (above or below the staff only on its own ledger line, as any note there)
+      if (!ledgerOk(xm, p)) continue;
+      // (the side strokes thin, and nothing more printed right beside them: not a letter in a word)
+      // (a letter's stem beside an "o" joins the letter's arch at its top or foot: a breve's stroke
+      // stands alone)
+      const onStaffLine = (y, x) => { const q = pAt(s, y, x), pl = Math.round(q / 2) * 2; return pl >= 0 && pl <= 8 && Math.abs(y - yAt(s, pl, x)) <= T + 1.5; };
+      const thin = (x0, dir) => { let x = x0, n = 0; for (let k = 0; k < sp * 0.4; k++) { const r = vrun(x + dir, cy); if (!r || r.len < sp * 0.9) break; x += dir; } const r0 = vrun(x, cy); for (const dy of [-0.3, 0.3, ...(r0 ? [(r0.u + 2 - cy) / sp, (r0.d - 2 - cy) / sp] : [])]) { const y = Math.round(cy + dy * sp); if (onStaffLine(y, x)) continue; for (let k = 2; k <= Math.round(sp * 0.6); k++) { const xx = x + dir * k; if (xx >= 0 && xx < w && y >= 0 && y < h && C[y * w + xx]) n++; } } return n <= sp * 0.2; };
+      if (!thin(L, -1) || !thin(R, 1)) continue;
+      heads = heads.filter((q) => !(Math.abs(q.cx - xm) < sp * 1.3 && Math.abs(q.p - p) <= 1));
+      heads.push({ cx: xm, cy, p, sc: 0.9, fit: 0.9, comp: null, ringHead: true, hollow: true, breve: true, wRow: R - L + 1, left: L, right: R });
+      if (TR && Math.abs(xm - TR.x) < sp * 2) TR.log.push(['breve', Math.round(xm), p]);
+    }
+  }
   // a wide oval read as two heads side by side is one whole note
   heads.sort((a, b2) => a.cx - b2.cx);
   heads = heads.filter((hd, i) => !heads.some((q, j) => j !== i && q.p === hd.p && q.comp === hd.comp && Math.abs(q.cx - hd.cx) < sp * 1.5 && q.wRow > sp * 1.45 && (q.sc > hd.sc || (q.sc === hd.sc && j < i))));
@@ -1287,7 +1334,8 @@ function readStaff(s, ctx, header) {
       const id = labC[y * w + x]; if (id < 0) continue;
       const g = compsC[ctx.groupOf[id]]; if (g) tallest = Math.max(tallest, g.h);
     }
-    return tallest <= sp * 1.5;
+    // (a breve's own side strokes stand a little taller than its ring)
+    return tallest <= sp * (hd.breve ? 2.0 : 1.5);
   });
   if (TR && typeof heads !== 'undefined') trk(713, heads);
   // without a stem only a whole note (wide) is a note
@@ -1958,8 +2006,14 @@ function readStaff(s, ctx, header) {
       if (!ds.length || ds.length > 2) continue;
       // (the digits side by side, over the middle of the bar)
       const dm = (ds[0].x0 + ds[ds.length - 1].x1) / 2; if (Math.abs(dm - m) > (z - a) * 0.25) continue;
+      // (digits that end a word — "Music21", "Op. 12" — are no count: other letters run into them
+      // on the same line, close by)
+      if (globalThis.__multiWord ?? 1) {
+        const ya = Math.min(...ds.map((q) => q.y0)), yb = Math.max(...ds.map((q) => q.y1)), xa = ds[0].x0, xb = ds[ds.length - 1].x1;
+        if (compsC.some((q) => !ds.includes(q) && q.y1 > ya - sp * 0.2 && q.y0 < yb + sp * 0.2 && q.h > sp * 0.3 && ((q.x1 <= xa && q.x1 > xa - sp * 1.2) || (q.x0 >= xb && q.x0 < xb + sp * 1.2)))) continue;
+      }
       let n = 0, okAll = true;
-      const DG = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'];
+      const DG =['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'];
       const one = (q, x0, x1) => classifyLoose(shapeOf(C, w, x0, q.y0, x1, q.y1, sp, labC, q.id), DG)[0];
       for (const q of ds) {
         // (two digits printed bold run into one shape, as a '10': cut where the ink is thinnest)
@@ -2870,7 +2924,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       slurs: marks.slurs[read.indexOf(s)] || [], hairpins: (marks.hairpins && marks.hairpins[read.indexOf(s)]) || [],
       ottavas: ((marks.ottavas && marks.ottavas[read.indexOf(s)]) || []).map((o) => ({ x0: back(o.x0, s.top)[0], x1: back(o.x1, s.top)[0], shift: o.shift })),
       texts: ((marks.texts && marks.texts[read.indexOf(s)]) || []).map((t) => { const [x0, y0] = back(t.x0, t.y0), [x1, y1] = back(t.x1, t.y1); return { x0, y0, x1, y1, above: t.above }; }),
-      heads: s.heads.map((hd) => { const [x, y] = back(hd.left, hd.cy); return { x, y, p: hd.p, kind: hd.kind, acc: hd.acc, dots: hd.dots, beams: hd.beams, w: hd.w / f, sc: hd.sc, id: hd.id, art: hd.art || [], fing: hd.fing || null, dyn: hd.dyn || null, tieTo: hd.tieTo, grace: hd.grace || null, tup3: !!hd.tup3, tupN: hd.tupN || 0, tupG: hd.tupG || 0, bg: hd.bg ?? null, stem: hd.stem ? { x: back(hd.stem.x, hd.stem.end)[0], up: hd.stem.up, len: hd.stem.len / f, end: back(hd.stem.x, hd.stem.end)[1] } : null }; }),
+      heads: s.heads.map((hd) => { const [x, y] = back(hd.left, hd.cy); return { x, y, p: hd.p, kind: hd.kind, acc: hd.acc, dots: hd.dots, beams: hd.beams, w: hd.w / f, sc: hd.sc, id: hd.id, art: hd.art || [], fing: hd.fing || null, dyn: hd.dyn || null, tieTo: hd.tieTo, grace: hd.grace || null, tup3: !!hd.tup3, tupN: hd.tupN || 0, tupG: hd.tupG || 0, bg: hd.bg ?? null, ...(hd.breve ? { breve: true } : {}), stem: hd.stem ? { x: back(hd.stem.x, hd.stem.end)[0], up: hd.stem.up, len: hd.stem.len / f, end: back(hd.stem.x, hd.stem.end)[1] } : null }; }),
       rests: s.rests.map((r) => ({ x: back(r.x, s.top)[0], t: r.t, w: r.w / f, dots: r.dots, multi: r.multi || 0 })),
       bars: s.bars.map((b) => ({ ...b, x: back(b.x, (s.top + s.bottom) / 2)[0], w: b.w / f })),
       signs: (s.signs || []).map((g) => ({ ...g, x: back(g.x, (s.top + s.bottom) / 2)[0], x1: back(g.x1, (s.top + s.bottom) / 2)[0] })), explicitClef: !!s.explicitClef,
@@ -2953,7 +3007,7 @@ export function staffEvents(st) {
     const lead = group.find((g) => g.stem) || group[0];
     const kinds = group.map((g) => g.kind);
     const kind = kinds.includes('whole') && !lead.stem ? 'whole' : kinds.includes('half') && !kinds.includes('black') ? 'half' : lead.kind;
-    let t = kind === 'whole' ? 1 : kind === 'half' ? 2 : 4;
+    let t = kind === 'whole' ? (group.some((g) => g.breve) ? 0.5 : 1) : kind === 'half' ? 2 : 4;
     const beams = Math.max(...group.map((g) => g.beams || 0));
     if (t === 4 && beams) t = 4 * Math.pow(2, beams);
     const acc = {}; for (const g of group) if (g.acc !== undefined) acc[g.p] = g.acc;

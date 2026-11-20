@@ -463,14 +463,78 @@ function boxBlur(src, dst, W, H, r, horiz) {
     for (let y = 0; y < H; y++) { dst[y * W + x] = s / n; s += src[Math.min(H - 1, y + r + 1) * W + x] - src[Math.max(0, y - r) * W + x]; }
   }
 }
+// along each edge of the ink (see cleanStrip), on one piece of the line: dk the ink, sm it smoothed;
+// gives sm smoothed along the edges
+function alongEdges(dk, sm, W, H, gF, sig, spF, grain) {
+  const N = W * H;
+  const so = gblur(dk, W, H, Math.max(1, 0.6 * gF));
+  const gx = new Float32Array(N), gy = new Float32Array(N);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    gx[i] = (so[i - W + 1] + 2 * so[i + 1] + so[i + W + 1]) - (so[i - W - 1] + 2 * so[i - 1] + so[i + W - 1]);
+    gy[i] = (so[i + W - 1] + 2 * so[i + W] + so[i + W + 1]) - (so[i - W - 1] + 2 * so[i - W] + so[i - W + 1]);
+  }
+  const jxx = new Float32Array(N), jxy = new Float32Array(N), jyy = new Float32Array(N);
+  for (let i = 0; i < N; i++) { jxx[i] = gx[i] * gx[i]; jxy[i] = gx[i] * gy[i]; jyy[i] = gy[i] * gy[i]; }
+  // (an edge: anywhere the smoothed ink is neither paper nor solid ink, near enough)
+  const edge = (v) => v > 0.02 && v < 0.98;
+  // (the edge's way, and how clearly it has one, at a given reach)
+  const orient = (R, edgeOf) => {
+    const a = gblur(jxx, W, H, R), b = gblur(jxy, W, H, R), c = gblur(jyy, W, H, R);
+    const tx = new Float32Array(N), ty = new Float32Array(N), coh = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      if (!edge(edgeOf[i])) continue;
+      // (the tensor's eigenvectors: the gradient's way with the larger one, the edge across it)
+      const p = a[i], q = b[i], r = c[i], d = Math.sqrt((p - r) * (p - r) + 4 * q * q), l1 = (p + r + d) / 2;
+      let vx = q, vy = l1 - p; if (Math.abs(vx) + Math.abs(vy) < 1e-9) { vx = l1 - r; vy = q; }
+      const m = Math.hypot(vx, vy) || 1;
+      tx[i] = -vy / m; ty[i] = vx / m; coh[i] = d / (p + r + 1e-6);
+    }
+    return { tx, ty, coh };
+  };
+  const at = (img, x, y) => {
+    x = x < 0 ? 0 : x > W - 1 ? W - 1 : x; y = y < 0 ? 0 : y > H - 1 ? H - 1 : y;
+    const x0 = x | 0, y0 = y | 0, x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1), ax = x - x0, ay = y - y0;
+    return (img[y0 * W + x0] * (1 - ax) + img[y0 * W + x1] * ax) * (1 - ay) + (img[y1 * W + x0] * (1 - ax) + img[y1 * W + x1] * ax) * ay;
+  };
+  const WT = {}; const wts = (n) => WT[n] || (WT[n] = Array.from({ length: 2 * n + 1 }, (_, j) => Math.exp(-2 * ((j - n) / n) ** 2)));
+  const along = (img, o, i, L, n) => {
+    const x = i % W, y = (i / W) | 0, tx = o.tx[i], ty = o.ty[i], w = wts(n); let acc = 0, ws = 0;
+    for (let k = -n; k <= n; k++) { const d = L * k / n; acc += w[k + n] * at(img, x + tx * d, y + ty * d); ws += w[k + n]; }
+    return acc / ws;
+  };
+  { const o = orient(Math.max(1.5, 1.2 * gF), sm), base = gblur(dk, W, H, sig * 0.7), L = Math.min(2.5 * gF, 0.15 * spF), out = new Float32Array(sm);
+    for (let i = 0; i < N; i++) { if (!edge(sm[i])) continue; const c = Math.min(1, Math.max(0, (o.coh[i] - 0.3) / 0.4)); if (c > 0) out[i] = c * along(base, o, i, L, 5) + (1 - c) * sm[i]; }
+    sm = out; }
+  if (grain >= 2) {
+    const o = orient(0.4 * spF, sm), L = 1.2 * spF, out = new Float32Array(sm);
+    for (let i = 0; i < N; i++) { if (!edge(sm[i])) continue; const c = Math.min(1, Math.max(0, (o.coh[i] - 0.75) / 0.15)); if (c > 0) out[i] = c * along(sm, o, i, L, 8) + (1 - c) * sm[i]; }
+    sm = out;
+  }
+
+  return sm;
+}
+// (a soft blur of about a given width: three box blurs each way)
+function gblur(src, W, H, sig) {
+  const out = new Float32Array(src);
+  if (!(sig >= 0.5)) return out;
+  const r = Math.max(1, Math.round((Math.sqrt(1 + 4 * sig * sig) - 1) / 2)), t = new Float32Array(src.length);
+  for (let q = 0; q < 3; q++) { boxBlur(out, t, W, H, r, true); boxBlur(t, out, W, H, r, false); }
+  return out;
+}
 function cleanStrip(st, sp0, top0 = null) {
+  const T0 = performance.now();
   const src = st.canvas, W0 = src.width, H0 = src.height, k0 = st.k || 1;
   const sp = sp0 * k0;
   // (the scan's dot, on the line as it is)
   let grain = 1;
   { const g0 = src.getContext('2d', { willReadFrequently: true }), d0 = g0.getImageData(0, 0, W0, H0).data, n0 = W0 * H0, dk0 = new Float32Array(n0);
     for (let i = 0, j = 0; i < n0; i++, j += 4) dk0[i] = 1 - (d0[j] * 299 + d0[j + 1] * 587 + d0[j + 2] * 114) / 255000;
-    grain = Math.min(Math.max(1, sp * 0.2), grainOf(dk0, W0, H0)); }
+    grain = Math.min(Math.max(1, sp * 0.2), grainOf(dk0, W0, H0));
+    // (how much of it is in squares: a scan in black and white only has almost no grey at the edge
+    // of its ink; a photo or a fine print has a soft edge all round)
+    let mid = 0, ink = 0; for (let i = 0; i < n0; i += 2) { const v = dk0[i]; if (v > 0.5) ink++; if (v > 0.15 && v < 0.85) mid++; }
+    st.squares = Math.min(1, Math.max(0, (0.6 - mid / Math.max(1, ink)) / 0.4)); }
   const LIMIT = /iPhone|iPod/.test(navigator.userAgent) ? 8e6 : 14e6;
   // bigger: a staff space of about 30 pixels (and more where the scan's dots are coarse)
   let f = Math.min(4, Math.max(1, 30 / sp));
@@ -500,17 +564,11 @@ function cleanStrip(st, sp0, top0 = null) {
   { const hs = new Uint32Array(256); let n = 0; for (let i = 0; i < N; i += 3) { const v = Math.round(dk[i] * 255); if (v > 40) { hs[v]++; n++; } }
     let k = 255, acc = 0; const want = Math.max(1, n * 0.08); while (k > 40 && acc + hs[k] < want) acc += hs[k--];
     const top = Math.max(0.25, k / 255); for (let i = 0; i < N; i++) dk[i] = Math.min(1, dk[i] / top); }
-  // the outline smoothed: about as wide as a coarse scan's dots (each square's corner rounded away; a
-  // fine print only a touch softer, still sharp at the size it is shown)
-  const sig = spF * 0.06;
-  const r = Math.max(1, Math.round(sig - 0.5));
-  { const t = new Float32Array(N); for (let q = 0; q < 3; q++) { boxBlur(dk, t, W, H, r, true); boxBlur(t, dk, W, H, r, false); } }
-  // the staff's five lines drawn again, straight and even, where the page has them: each at its own
-  // height and thickness as measured on the line (a scan's lines are beaded and broken, and a thin
-  // line comes out of the smoothing paler)
+  // the staff's five lines: each at its own height and thickness as measured on the line (before any
+  // smoothing), and where along the line the staff is printed (most of its lines there, close by)
+  const ls = []; let t0 = 0, cnt = null, need = 99;
   if (top0 !== null) {
     const prof = new Float32Array(H); for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x += 3) n += dk[y * W + x]; prof[y] = n / Math.ceil(W / 3); }
-    const ls = [];
     for (let k = 0; k < 5; k++) {
       const want = top0 * f + k * spF; let best = -1, bv = -1;
       for (let y = Math.max(0, Math.round(want - spF * 0.3)); y <= Math.min(H - 1, Math.round(want + spF * 0.3)); y++) if (prof[y] > bv) { bv = prof[y]; best = y; }
@@ -518,28 +576,87 @@ function cleanStrip(st, sp0, top0 = null) {
       // (its middle and thickness from the rows above half its darkness)
       let y0 = best, y1 = best; while (y0 > 0 && prof[y0 - 1] > bv * 0.5) y0--; while (y1 < H - 1 && prof[y1 + 1] > bv * 0.5) y1++;
       let sw = 0, sy = 0; for (let y = y0; y <= y1; y++) { sw += prof[y]; sy += prof[y] * y; }
-      ls.push({ y: sy / sw, t: Math.max(1, Math.min(spF * 0.2, y1 - y0 + 1)) });
+      ls.push({ y: sy / sw, t: Math.max(1, Math.min(spF * 0.3, y1 - y0 + 1)) });
     }
     if (ls.length >= 4) {
-      const t = ls.map((q) => q.t).sort((p2, q2) => p2 - q2)[ls.length >> 1];
-      // (where the staff is printed: most of its lines there, close by — then all five are drawn; a
-      // scan's thinnest line, faint in places, is not left broken)
+      t0 = ls.map((q) => q.t).sort((p2, q2) => p2 - q2)[ls.length >> 1];
+      // (where the staff is printed: most of its lines there — then all five are drawn; a scan's
+      // thinnest line, faint in places, is not left broken)
       const win = Math.max(4, Math.round(spF * 1.5));
-      const cnt = new Uint8Array(W);
+      cnt = new Uint8Array(W);
       for (const q of ls) {
         const on = new Uint8Array(W);
-        for (let x = 0; x < W; x++) { let m = 0; for (let y = Math.round(q.y - t); y <= Math.round(q.y + t); y++) if (y >= 0 && y < H && dk[y * W + x] > m) m = dk[y * W + x]; on[x] = m > 0.3 ? 1 : 0; }
+        for (let x = 0; x < W; x++) { let m = 0; for (let y = Math.round(q.y - t0); y <= Math.round(q.y + t0); y++) if (y >= 0 && y < H && dk[y * W + x] > m) m = dk[y * W + x]; on[x] = m > 0.3 ? 1 : 0; }
         const cs = new Int32Array(W + 1); for (let x = 0; x < W; x++) cs[x + 1] = cs[x] + on[x];
         for (let x = 0; x < W; x++) { const a0 = Math.max(0, x - win), a1 = Math.min(W, x + win + 1); if (cs[a1] - cs[a0] >= (a1 - a0) * 0.6) cnt[x]++; }
       }
-      const need = Math.ceil(ls.length * 0.6);
-      for (const q of ls) for (let x = 0; x < W; x++) {
-        if (cnt[x] < need) continue;
-        for (let y = Math.floor(q.y - t / 2 - 1); y <= Math.ceil(q.y + t / 2 + 1); y++) {
-          if (y < 0 || y >= H) continue;
-          const v = Math.min(1, Math.max(0, t / 2 + 0.5 - Math.abs(y - q.y)));
-          const i = y * W + x; if (v > dk[i]) dk[i] = v;
+      need = Math.ceil(ls.length * 0.6);
+      // the printed lines taken away where they are only line (no note, stem or sign on them), to be
+      // drawn again straight and even: a scan's lines are beaded, broken, bent. Beside a wide sign (a
+      // note's head, a C, a clef) a short stretch stays as printed: it may be the sign's own stroke.
+      if (globalThis.__staffOff ?? 1) {
+        const lim = t0 + Math.max(1.5, 0.05 * spF), minL = 0.3 * spF, wideL = 0.25 * spF, keepL = spF;
+        for (const q of ls) {
+          const rem = new Uint8Array(W), ra = new Int32Array(W), rb = new Int32Array(W);
+          const ya = Math.floor(q.y - t0 / 2), yb = Math.ceil(q.y + t0 / 2);
+          for (let x = 0; x < W; x++) {
+            let a = -1, b = -1;
+            for (let y = Math.max(0, ya); y <= Math.min(H - 1, yb); y++) if (dk[y * W + x] > 0.5) { if (a < 0) a = y; b = y; }
+            if (a < 0) continue;
+            while (a > 0 && dk[(a - 1) * W + x] > 0.5) a--;
+            while (b < H - 1 && dk[(b + 1) * W + x] > 0.5) b++;
+            if (b - a + 1 <= lim) { rem[x] = 1; ra[x] = a; rb[x] = b; }
+          }
+          const wide = (x0, d) => { let n = 0; for (let x = x0; x >= 0 && x < W && !rem[x] && n < wideL + 1; x += d) n++; return n >= wideL; };
+          for (let x = 0; x < W;) {
+            if (!rem[x]) { x++; continue; }
+            let e = x; while (e + 1 < W && rem[e + 1]) e++;
+            const len = e - x + 1, near = (x > 0 && wide(x - 1, -1)) || (e + 1 < W && wide(e + 1, 1));
+            if (len >= minL && !(near && len < keepL)) for (let xx = x; xx <= e; xx++) for (let y = Math.max(0, ra[xx] - 2); y <= Math.min(H - 1, rb[xx] + 2); y++) dk[y * W + xx] = 0;
+            x = e + 1;
+          }
         }
+      }
+    }
+  }
+  // the outline smoothed: about as wide as the scan's own dots, or a touch for a fine print (still sharp
+  // at the size it is shown)
+  // (the scan's own squares count only as far as the scan is made of squares: a soft photo's
+  // "grain" is its blur, not squares to be smoothed away)
+  const sq = st.squares ?? 0, gF = f * (1 + (grain - 1) * sq);
+  const sig = Math.max(spF * 0.06, 0.45 * gF * sq);
+  let sm = gblur(dk, W, H, sig);
+  // then along each edge: a coarse scan's stairs and beads smoothed out along the stroke (a curve's
+  // too), and along an edge straight for a space or more (a beam, a hairpin, a slur) the stairs made
+  // one straight edge. Only where there is an edge.
+  if ((globalThis.__alongEdge ?? 1) && sq > 0) {
+    // (in pieces along the line, each with a margin, so a long line never needs much memory at once)
+    const M = Math.ceil(1.2 * spF + 1.2 * spF + 8), step = Math.max(256, Math.floor((globalThis.__tilePx ?? 1.5e6) / H) - 2 * M);
+    if (W <= step + 2 * M) sm = alongEdges(dk, sm, W, H, gF, sig, spF, grain * sq);
+    else {
+      const out = new Float32Array(sm);
+      for (let x0 = 0; x0 < W; x0 += step) {
+        const a0 = Math.max(0, x0 - M), a1 = Math.min(W, x0 + step + M), w = a1 - a0;
+        const d1 = new Float32Array(w * H), s1 = new Float32Array(w * H);
+        for (let y = 0; y < H; y++) { d1.set(dk.subarray(y * W + a0, y * W + a1), y * w); s1.set(sm.subarray(y * W + a0, y * W + a1), y * w); }
+        const r1 = alongEdges(d1, s1, w, H, gF, sig, spF, grain * sq);
+        const e1 = Math.min(W, x0 + step);
+        for (let y = 0; y < H; y++) out.set(r1.subarray(y * w + (x0 - a0), y * w + (e1 - a0)), y * W + x0);
+      }
+      sm = out;
+    }
+  }
+  dk = sm;
+  // the staff lines drawn again, straight and even, where the page has them (as thick as printed, but
+  // never heavier than a fifth of a space)
+  if (cnt) {
+    const t = Math.min(Math.max(t0, 0.09 * spF), 0.2 * spF);
+    for (const q of ls) for (let x = 0; x < W; x++) {
+      if (cnt[x] < need) continue;
+      for (let y = Math.floor(q.y - t / 2 - 1); y <= Math.ceil(q.y + t / 2 + 1); y++) {
+        if (y < 0 || y >= H) continue;
+        const v = Math.min(1, Math.max(0, t / 2 + 0.5 - Math.abs(y - q.y)));
+        const i = y * W + x; if (v > dk[i]) dk[i] = v;
       }
     }
   }
@@ -555,6 +672,7 @@ function cleanStrip(st, sp0, top0 = null) {
   st.canvas = c; st.k = k0 * f; st.grain = grain;
   if (st.mask) st.mask.width = st.mask.height = 0;
   st.mask = inkMask(c); st.tinted && st.tinted.clear();
+  globalThis.__cleanMs = Math.round(performance.now() - T0);
 }
 async function buildStripRaw(o) {
   const bmp = await createImageBitmap(o.img);
@@ -3048,7 +3166,7 @@ async function openBars(o, rv = null) {
       const cx = clamp((a0 + c0) / 2, Math.max(a0, 0) + w / 2 + 4, Math.min(c0, VW) - w / 2 - 4);
       const on = selBars.some((k) => k >= k0 && k <= k1);
       if (on) { g.fillStyle = accent; rr(g, cx - w / 2 - 9, numY, w + 18, 24, 12); g.fill(); }
-      g.fillStyle = on ? '#fff' : 'rgba(20,30,60,0.78)'; g.fillText(label, cx, numY + 12.5);
+      g.fillStyle = on ? '#fff' : (css('--ink') || '#1b2240'); g.globalAlpha = on ? 1 : 0.8; g.fillText(label, cx, numY + 12.5); g.globalAlpha = 1;
     }
     g.textAlign = 'start'; g.textBaseline = 'alphabetic';
     // the barlines: a clear line over the printed one, through the staff, with a round handle under

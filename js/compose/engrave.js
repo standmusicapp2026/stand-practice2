@@ -1380,16 +1380,16 @@ function drawFretDiagram(ctx, sh, x, yb) {
   ctx.restore();
 }
 function headGlyph(ev, unpitched, head) {
-  const k = ev.t === 1 ? 0 : ev.t === 2 ? 1 : 2;
+  const k = ev.t <= 1 ? 0 : ev.t === 2 ? 1 : 2;
   if (head && GL.heads[head]) return GL.heads[head][k];
   if (unpitched && !head) return GL.noteX;
-  return ev.t === 1 ? GL.noteWhole : ev.t === 2 ? GL.noteHalf : GL.noteBlack;
+  return ev.t < 1 ? GL.noteDoubleWhole : ev.t === 1 ? GL.noteWhole : ev.t === 2 ? GL.noteHalf : GL.noteBlack;
 }
 export { headGlyph };
 function drawChord(ctx, e, sy, accFor) {
   const ev = e.ev;
   const g = headGlyph(ev, e.unpitched, ev.head);
-  const hw = ev.t === 1 ? 1.69 : HEAD_W;
+  const hw = ev.t < 1 ? 2.53 : ev.t === 1 ? 1.69 : HEAD_W;
   const gOf = (n) => { const h = n.src.head || ev.head; return h && h !== 'ghost' ? headGlyph(ev, e.unpitched, h) : g; };
   // seconds in a chord: put the upper (stem up) or lower (stem down) note on the other side of the stem
   const side = new Map();
