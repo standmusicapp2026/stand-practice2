@@ -1540,7 +1540,8 @@ function pacedSalience(sn, nb, fr0, pace) {
     rows[i] = row;
   }
   // (the sums kept for the last three steps of the page only; the way back, one byte a cell)
-  const SKIP = 0.4, W = m + 1;
+  // (leaving out a moment of the recording costs the same per second at every pace)
+  const SKIP = 0.4 * ((globalThis.__skipTime ?? 1) ? dt / 0.075 : 1), W = m + 1;
   let D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
   const P = new Uint8Array((n + 1) * W);
   for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
@@ -1560,12 +1561,16 @@ function pacedSalience(sn, nb, fr0, pace) {
   }
   let bj = m, bc = 1e9; for (let j = 1; j <= m; j++) { const v = D1[j] + (m - j) * SKIP * 0.5; if (v < bc) { bc = v; bj = j; } }
   const at = new Float64Array(n).fill(-1), sc = new Float32Array(n);
-  let i = n, j = bj;
+  let i = n, j = bj, cells = 0;
   while (i > 0 && j > 0) {
     at[i - 1] = fr[j - 1].t; sc[i - 1] = rows[i - 1][j - 1];
     const h = P[i * W + j];
-    if (h === 1) { i--; j--; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; }
+    if (h === 1) { i--; j--; cells++; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; cells += 2; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; cells += 2; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; cells += 3; }
   }
+  // (the cost of each moment of the path: the same measure whatever the pace — a slow pace, its page
+  // squeezed into few moments, is not cheaper for it)
+  const pm = globalThis.__perMode ?? 1;
+  const per = pm === 2 ? bc / m : pm === 1 ? bc / Math.max(1, cells + (j + (m - bj)) * (dt / 0.075)) : bc / n;
   if (at[0] < 0) return null;
   // (how many of the page's notes were clearly heard where they were put: most of their steps sounding)
   let heard = 0, notes = 0;
@@ -1576,7 +1581,7 @@ function pacedSalience(sn, nb, fr0, pace) {
   const pts = [];
   for (let q = 0; q < n; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q]) && at[q] >= 0) pts.push({ k: Math.floor(q / PSTEPS), f: (q % PSTEPS) / PSTEPS, t: at[q], w: 1 });
   const T = smoothFit(pts, nb, 0.08);
-  return T ? { T, at, cost: bc / n, heard: heard / Math.max(1, notes) } : null;
+  return T ? { T, at, cost: per, costN: bc / n, heard: heard / Math.max(1, notes) } : null;
 }
 // Following the playing by what sounds at each pitch: the clef and the key the instrument sounds in
 // tried (as written, an octave either way, a B-flat or E-flat instrument...), and the pace; the best
@@ -1585,6 +1590,22 @@ function pacedSalience(sn, nb, fr0, pace) {
 // (the music as written is the likeliest; an octave below it less so than it seems: what sounds an
 // octave lower has every other partial of the note itself)
 const shPen = (sh) => (sh === 0 ? 0 : 0.01 + (sh <= -12 ? (globalThis.__octPen ?? 0.035) * Math.floor(-sh / 12) : 0) + (sh >= 24 ? 0.03 : 0));
+// how much of what sounds is what the page has at that moment, with the bars at times T (from each
+// small frame of the recording: the page's notes there, how strongly they sound; a moment of the
+// recording loud with music outside the bars counts as nothing heard)
+function agreeOf(T, sn, nb, fr) {
+  const NP = SAL_HI - SAL_LO + 1, loud = Math.max(...fr.map((f) => f.rms), 1e-6);
+  let ok = 0, all = 0, k = 0;
+  for (const f of fr) {
+    if (f.t < T[0] || f.t >= T[nb]) { if (f.rms > loud * 0.12) all++; continue; }
+    while (k < nb - 1 && f.t >= T[k + 1]) k++;
+    const u = (f.t - T[k]) / Math.max(1e-3, T[k + 1] - T[k]), q = sn[k * PSTEPS + Math.min(PSTEPS - 1, Math.max(0, Math.floor(u * PSTEPS)))];
+    if (!q) continue;
+    let v = 0; for (const m of q) { const p = m - SAL_LO; if (p >= 0 && p < NP) v += f.s[p]; }
+    ok += v / q.length; all++;
+  }
+  return ok / Math.max(1, all);
+}
 async function followSalience(L, A, B, onProgress, stop) {
   const fr = await salienceFrames(ST.pcm, ST.sr, A, B, onProgress);
   if (stop && stop()) return null;
@@ -1596,9 +1617,24 @@ async function followSalience(L, A, B, onProgress, stop) {
   // octave above the page — an instrument that sounds as written, a B-flat or E-flat instrument, a
   // guitar an octave down, a piece played in another key — first each at one pace, then the likeliest
   // few at every pace)
+  // (the key first, from all that sounds against all the page has, by pitch class: with a piano behind
+  // the soloist the whole recording is in the key of the page, moved as the instrument or singer moves
+  // it. Then the octave, by following.)
   const coarse = [];
-  for (let d = -14; d <= 14; d++) coarse.push(d);
-  coarse.push(-24, 24);
+  if (globalThis.__keyFirst ?? 1) {
+    const NP = SAL_HI - SAL_LO + 1, ha = new Float64Array(12), hs = new Float64Array(12);
+    for (const f of fr) for (let p = 0; p < NP; p++) ha[(p + SAL_LO) % 12] += f.s[p];
+    for (const ms of midiSteps(L, clef, 0)) if (ms) for (const m of ms) hs[((m % 12) + 12) % 12] += 1 / ms.length;
+    const z = (a) => { const m = a.reduce((x, y) => x + y, 0) / 12; let v = 0; const o = a.map((x) => x - m); for (const x of o) v += x * x; return o.map((x) => x / Math.sqrt(Math.max(1e-9, v))); };
+    const za = z(Array.from(ha)), zs = z(Array.from(hs));
+    const keys = []; for (let d = 0; d < 12; d++) { let c = 0; for (let q = 0; q < 12; q++) c += zs[q] * za[(q + d) % 12]; keys.push({ d, c }); }
+    keys.sort((a, b) => b.c - a.c);
+    if (globalThis.__salDbg) globalThis.__salDbg.push(['keys', keys.slice(0, 4).map((k) => [k.d, +k.c.toFixed(3)])]);
+    for (const k of keys.slice(0, 2)) for (const o of [-24, -12, 0, 12]) { const d = k.d + o; if (d >= -26 && d <= 14) coarse.push(d); }
+  } else {
+    for (let d = -14; d <= 14; d++) coarse.push(d);
+    coarse.push(-24, 24);
+  }
   const first = [];
   const s0 = midiSteps(L, clef, 0);
   if (s0.filter(Boolean).length < 4) return null;
@@ -1611,15 +1647,29 @@ async function followSalience(L, A, B, onProgress, stop) {
   }
   first.sort((p, q) => p.c - q.c);
   const shifts = [...new Set([...first.slice(0, 3).map((q) => q.shift), 0])];
+  let all = null;
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
     for (const pace of [1.2, 1.8, 2.6, 3.6]) {
       const r = pacedSalience(sn, nb, fr, pace);
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
-      if (r && (!best || r.cost + shPen(shift) < best.cost + shPen(best.shift))) best = { ...r, shift, pace, sn };
+      // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
+      // how much is what the page has there — and loud music outside the bars counts against)
+      if (r && (globalThis.__judgeTime ?? 0)) r.agree = agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5;
+      // (a pace the playing did not keep: the bars found are much longer or shorter than it — the page
+      // stretched or squeezed to fit — counts against)
+      if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
+      if (r && (globalThis.__hybrid ?? 1)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
+      if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
     if (stop && stop()) return null;
+  }
+  // (the key by the page's notes heard step by step; then, in that key, the pace by how well every
+  // moment of the playing fits)
+  if (all && all.length) {
+    let bk = null; for (const r of all) if (!bk || r.costN + shPen(r.shift) < bk.costN + shPen(bk.shift)) bk = r;
+    for (const r of all) if (r.shift === bk.shift && (!best || r.cost < best.cost)) best = r;
   }
   if (!best) return null;
   const T = best.T.slice();
