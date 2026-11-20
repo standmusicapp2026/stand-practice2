@@ -2034,7 +2034,7 @@ function renderPage(i, w, h, zoom = 1, prio = 0) {
   // a page drawn ahead is skipped if the reader has gone elsewhere meanwhile
   // a page drawn ahead (or one turned past quickly) is skipped, or stopped, if the reader has gone elsewhere
   const skip = prio > 0 ? () => V.doc !== doc || (prio === 1 && Math.abs(i - V.page) > 4) : () => V.doc !== doc || i < V.page - 2 || i > V.page + 3;
-  const p = rqAdd(prio, (ctl) => doc.render(i, canvas, pw, ph, { ctl }).then(() => (ctl.aborted ? null : canvas), (e) => { if (ctl.aborted) return null; throw e; }), skip, prio >= 2);
+  const p = rqAdd(prio, (ctl) => doc.render(i, canvas, pw, ph, { ctl }).then(() => (ctl.aborted ? null : canvas), (e) => { if (ctl.aborted) return null; throw e; }), skip);
   p.then((c) => {
     if (!c) { if (V.cache.get(key) === p) V.cache.delete(key); return; }
     if (V.cache.get(key) === p) INCACHE.add(c);
@@ -2627,13 +2627,10 @@ window.__tempo = { marksOf: tempoMarksOf, TEMPO, tapped: tempoTapped };   // (te
 // The next pages (and the ones before) are drawn ahead, after the pages on screen.
 function prefetch(token) {
   if (token !== layoutToken || !V.doc) return;
-  // (the next turn's pages first; the ones behind only when nothing more needed is waiting, and let go
-  // the moment a next page is asked for: drawn at the same rank, going back took the time the pages
-  // ahead needed, and the next turn waited)
-  for (const [start, prio] of [[V.page + V.spread, 1], [V.page - V.spread, (globalThis.__backQuiet ?? 1) ? 2 : 1]]) {   // (one more ahead used memory that a long session needed)
+  for (const start of [V.page + V.spread, V.page - V.spread]) {   // (one more ahead used memory that a long session needed)
     if (start < 0 || start >= V.doc.pages) continue;
     const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
-    pageBox(ids).forEach((b, k) => renderPage(ids[k], innerW(ids[k], b[0]), innerH(ids[k], b[1]), 1, prio));
+    pageBox(ids).forEach((b, k) => renderPage(ids[k], innerW(ids[k], b[0]), innerH(ids[k], b[1]), 1, 1));
   }
   // (soon after a turn, not seconds later: turning through a score for the first time at an easy
   // pace, the pages further on were never ready, as each turn put this off again. It never holds up
