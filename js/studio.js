@@ -649,6 +649,41 @@ function cleanStrip(st, sp0, top0 = null) {
       sm = out;
     }
   }
+  // the thin strokes kept: a stem or a ledger line printed a hair wide (a pixel of a small scan) fades
+  // to grey in the smoothing and would fall away with the paper. Where the ink as printed runs on in a
+  // thin line for most of a space, that line is kept, as wide as printed.
+  if (globalThis.__thinKeep ?? 1) {
+    const th = 0.3, minRun = Math.max(6, 0.7 * spF), thin = Math.max(2, 0.22 * spF), gap = Math.max(2, Math.round(0.25 * spF));
+    const hrun = new Uint16Array(N), vrun = new Uint16Array(N);
+    for (let y = 0; y < H; y++) { let x = 0; while (x < W) { if (dk[y * W + x] <= th) { x++; continue; } let e = x; while (e < W && dk[y * W + e] > th) e++; const L = Math.min(65535, e - x); for (let q = x; q < e; q++) hrun[y * W + q] = L; x = e; } }
+    for (let x = 0; x < W; x++) { let y = 0; while (y < H) { if (dk[y * W + x] <= th) { y++; continue; } let e = y; while (e < H && dk[e * W + x] > th) e++; const L = Math.min(65535, e - y); for (let q = y; q < e; q++) vrun[q * W + x] = L; y = e; } }
+    // (upright and thin: a stem — its pieces joined across a small break, as a worn print has them)
+    const thinV = (i) => dk[i] > th && hrun[i] <= thin, thinH = (i) => dk[i] > th && vrun[i] <= thin;
+    for (let x = 0; x < W; x++) {
+      let y = 0;
+      while (y < H) {
+        if (!thinV(y * W + x)) { y++; continue; }
+        let e = y, last = y;
+        while (e < H) { if (thinV(e * W + x)) { last = e; e++; continue; } if (e - last <= gap) { e++; continue; } break; }
+        if (last - y + 1 >= minRun) for (let q = y; q <= last; q++) { const i = q * W + x; sm[i] = Math.max(sm[i], dk[i] > th ? 0.5 + 0.5 * Math.min(1, dk[i] / 0.6) : 0.85); }
+        y = last + 1;
+      }
+    }
+    // (flat and thin: a ledger line — above or below the staff only: inside it, a flat thin line is a
+    // staff line's, drawn again below)
+    const yTop = ls.length >= 4 ? Math.min(...ls.map((q) => q.y)) - spF * 0.5 : -1, yBot = ls.length >= 4 ? Math.max(...ls.map((q) => q.y)) + spF * 0.5 : -1;
+    for (let y = 0; y < H; y++) {
+      if (yTop >= 0 && y > yTop && y < yBot) continue;
+      let x = 0;
+      while (x < W) {
+        if (!thinH(y * W + x)) { x++; continue; }
+        let e = x, last = x;
+        while (e < W) { if (thinH(y * W + e)) { last = e; e++; continue; } if (e - last <= gap) { e++; continue; } break; }
+        if (last - x + 1 >= minRun) for (let q = x; q <= last; q++) { const i = y * W + q; if (dk[i] > th) sm[i] = Math.max(sm[i], 0.5 + 0.5 * Math.min(1, dk[i] / 0.6)); }
+        x = last + 1;
+      }
+    }
+  }
   dk = sm;
   // the staff lines drawn again, straight and even, where the page has them (as thick as printed, but
   // never heavier than a fifth of a space)
