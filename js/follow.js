@@ -13,6 +13,7 @@
 import { readPage } from './follow-read.js';
 import { getCtx, acquireMic, releaseMic } from './audio.js';
 import { Listener, cosine } from './listen.js';
+import { LiveEar } from './ai/liveear.js';
 
 // The music reader in a thread of its own: reading a page (a second or more) never holds up the
 // score, the drawing or the listening. Pages go one after another. If the thread cannot be had, or
@@ -83,8 +84,14 @@ export class PageFollower {
     // (stopped while the microphone was opening: let it go again, and listen to nothing)
     if (!this.on || tok !== this._tok) { releaseMic(); return; }
     if (this.listener) { try { this.listener.detach(); } catch {} }
-    this.listener = new Listener((o) => this._heard(o));
+    // (each thing heard in turn: the AI's ear may take a moment to say what it heard)
+    this.listener = new Listener((o) => { this._hq = (this._hq || Promise.resolve()).then(() => this._aiObs(o)).then((q) => this._heard(q)).catch((err) => console.warn(err)); });
     this.listener.attach(this.src.context || getCtx(), this.src);
+    // the AI's ear: the neural network listening alongside (if it cannot run here, the listener alone)
+    if ((globalThis.__liveAI ?? 1) && !this.ear) {
+      const ear = new LiveEar(); this.ear = ear;
+      ear.attach(this.src.context || getCtx(), this.src).catch((err) => { console.warn('AI ear off', err); if (this.ear === ear) this.ear = null; });
+    }
     this.onState && this.onState('Listening', false);
     // the sound system was replaced (iOS): listen again through the new one
     // (the microphone held meanwhile: closing it and opening it again moved the sound once more)
@@ -96,6 +103,21 @@ export class PageFollower {
     this.on = false; this._tok = (this._tok || 0) + 1; this._gen = (this._gen || 0) + 1;
     // (the microphone is let go only if it was got: a start still waiting lets go by itself)
     if (this.listener) { this.listener.detach(); this.listener = null; releaseMic(); }
+    if (this.ear) { this.ear.detach(); this.ear = null; }
+  }
+  // What the AI's ear heard at a note or chord the listener caught: the pitch classes sounding, as sure
+  // as the network is of each (measured on Winterreise, a singer's part followed with the piano behind:
+  // on track 77% -> 92% of the notes, lost 10% -> 1%). While a transposing instrument's interval is
+  // still being looked for, the listener's own pitch is kept.
+  async _aiObs(o) {
+    const ear = this.ear;
+    if (!ear || !ear.on || (this.shift === null && o.mono && !(this.fixedShift && this.fixedShift() !== null && this.fixedShift() !== undefined))) return o;
+    const wait = Math.max(0, Math.min(450, o.t + 600 - performance.now()));
+    const c = await ear.chromaAfter(o.t, wait);
+    if (!c) return o;
+    let mx = 0; for (const v of c) if (v > mx) mx = v;
+    if (mx < 0.1) return o;
+    return { ...o, chroma: c, mono: false, pc: null, ai: true };
   }
   // the pages on screen (first and last); called after every turn or jump
   setPages(first, last) {

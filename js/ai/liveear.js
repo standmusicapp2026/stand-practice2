@@ -2,7 +2,7 @@
 // seconds of the microphone, several times a second, so that every note or chord the live listener
 // hears is also told by the network — which notes really sound, a piano behind a cello or a singer
 // told apart from the overtones of either. All on this device; nothing is recorded or kept.
-import { loadNet, resample, NET_SR, NET_FPS, NET_KEYS, NET_LO } from './pitchnet.js';
+import { netWindow, resample, NET_SR, NET_FPS, NET_KEYS, NET_LO } from './pitchnet.js';
 
 const WIN = NET_SR * 2 - 256;     // the samples the network takes at a time (two seconds)
 const KEEP = 4;                   // seconds of what was heard kept
@@ -11,7 +11,8 @@ const EDGE = 8;                   // frames at the very end of a window are less
 export class LiveEar {
   constructor() { this.on = false; this.frames = []; this.waiters = []; this.busy = false; }
   async attach(ctx, src) {
-    this.net = await loadNet();
+    // (the network made ready first: if it cannot run here, the ear stays off)
+    await netWindow(new Float32Array(WIN));
     this.ctx = ctx; this.sr = ctx.sampleRate;
     this.raw = new Float32Array(Math.ceil(this.sr * 2.3)); this.filled = 0; this.tEnd = 0;
     // (the sound taken as it comes, through a node that plays nothing)
@@ -41,17 +42,13 @@ export class LiveEar {
     if (!this.on || this.busy || this.filled < this.sr * 0.5) return;
     this.busy = true;
     try {
-      const end = this.tEnd, { tf, model } = this.net;
+      const end = this.tEnd;
       const x = resample(this.raw, this.sr);
       const pad = new Float32Array(WIN); pad.set(x.subarray(Math.max(0, x.length - WIN)), Math.max(0, WIN - x.length));
-      const inp = tf.tensor3d(pad, [1, WIN, 1]);
-      const outs = model.execute(inp, ['Identity_1', 'Identity_2']);
-      const [fr, on] = await Promise.all([outs[0].data(), outs[1].data()]);
-      const T = outs[0].shape[1];
-      inp.dispose(); outs.forEach((o) => o.dispose());
+      const { T, fr, on } = await netWindow(pad);
+      if (!this.on) return;
       // frame f stands for the moment (end - two seconds) + f frames
       const t0 = end - (WIN / NET_SR) * 1000, dt = 1000 / NET_FPS;
-      const last = this.frames.length ? this.frames[this.frames.length - 1].t : -Infinity;
       // (the frames this run tells better than the last one: from where that one's sure part ended)
       const keepFrom = this.sureTo ?? -Infinity;
       this.frames = this.frames.filter((f) => f.t < keepFrom && f.t > end - KEEP * 1000);
@@ -63,7 +60,6 @@ export class LiveEar {
       }
       this.sureTo = t0 + (T - EDGE) * dt;
       this.heardTo = t0 + T * dt;
-      void last;
       // the notes waiting for this moment
       this.waiters = this.waiters.filter((w) => { if (this.heardTo >= w.t1) { w.res(this._chroma(w.t0, w.t1)); return false; } return true; });
     } catch (err) { console.warn('AI ear', err); }

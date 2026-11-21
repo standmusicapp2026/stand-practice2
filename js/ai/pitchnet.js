@@ -122,23 +122,75 @@ export async function runNet(tf, model, x, onProgress, stop) {
   return { n, note, onset };
 }
 
+// ---- the network in a thread of its own (net-worker.js); here, on the page, if that cannot be ----
+let W = null, wBroken = false, wSeq = 0;
+const wWait = new Map();
+function worker() {
+  if (wBroken || typeof Worker === 'undefined' || typeof document === 'undefined') return null;
+  if (!W) {
+    try {
+      W = new Worker(new URL('./net-worker.js', import.meta.url));
+      W.onmessage = (e) => {
+        const d = e.data || {}, w = wWait.get(d.id); if (!w) return;
+        if (d.p !== undefined && d.n === undefined) { w.prog && w.prog(d.p); return; }
+        wWait.delete(d.id);
+        if (d.error) w.rej(new Error(d.error)); else w.res(d);
+      };
+      W.onerror = (e) => { console.warn('AI worker', e && e.message); wBroken = true; for (const w of wWait.values()) w.rej(new Error('worker')); wWait.clear(); try { W.terminate(); } catch {} W = null; };
+    } catch { wBroken = true; return null; }
+  }
+  return W;
+}
+function ask(msg, transfer, prog) {
+  const w = worker(); if (!w) return Promise.reject(new Error('no worker'));
+  const id = ++wSeq;
+  return new Promise((res, rej) => { wWait.set(id, { res, rej, prog }); w.postMessage({ id, ...msg }, transfer || []); });
+}
+let mode = null;   // 'worker' or 'page', once known
+async function ensure() {
+  if (mode) return mode;
+  try { await ask({ op: 'load' }); mode = 'worker'; } catch (err) { console.warn('AI: no worker, on the page', err); wBroken = true; await loadNet(); mode = 'page'; }
+  return mode;
+}
+// The whole network over audio at 22 050 Hz: { n, note, onset }.
+export async function netRun(x, onProgress, stop) {
+  if ((await ensure()) === 'worker') {
+    try { const r = await ask({ op: 'run', x }, [x.buffer], onProgress); return { n: r.n, note: r.note, onset: r.onset }; } catch (err) { console.warn('AI worker run', err); }
+  }
+  const { tf, model } = await loadNet();
+  return runNet(tf, model, x, onProgress, stop);
+}
+// One two-second window (the live ear): { T, fr, on }.
+export async function netWindow(x) {
+  if ((await ensure()) === 'worker') {
+    try { return await ask({ op: 'win', x }, [x.buffer]); } catch (err) { console.warn('AI worker window', err); }
+  }
+  const { tf, model } = await loadNet();
+  const inp = tf.tensor3d(x, [1, x.length, 1]);
+  const outs = model.execute(inp, ['Identity_1', 'Identity_2']);
+  const [fr, on] = await Promise.all([outs[0].data(), outs[1].data()]);
+  const T = outs[0].shape[1];
+  inp.dispose(); outs.forEach((o) => o.dispose());
+  return { T, fr, on };
+}
+
 // The notes heard in a recording (from a to b seconds), with the frames' loudness.
 // Returns { t0, fps, n, note, onset, rms } or null if the network cannot run here.
 const cache = new WeakMap();
 export async function hearNotes(pcm, sr, a, b, onProgress, stop) {
   const key = `${sr}|${a.toFixed(3)}|${b.toFixed(3)}`;
   const c = cache.get(pcm); if (c && c.key === key) return c.res;
-  const { tf, model } = await loadNet();
   const x = resample(pcm, sr, a, b);
-  const r = await runNet(tf, model, x, onProgress, stop);
-  if (!r) return null;
-  const rms = new Float32Array(r.n);
-  for (let i = 0; i < r.n; i++) {
+  // (the loudness first: the samples go to the network's thread)
+  const nF = Math.floor((x.length * NET_FPS) / NET_SR), rms = new Float32Array(nF);
+  for (let i = 0; i < nF; i++) {
     const s0 = Math.max(0, i * NET_HOP - NET_HOP), s1 = Math.min(x.length, i * NET_HOP + 2 * NET_HOP);
     let m = 0; for (let j = s0; j < s1; j++) m += x[j] * x[j];
     rms[i] = Math.sqrt(m / Math.max(1, s1 - s0));
   }
-  const res = { t0: Math.max(0, a), fps: NET_FPS, n: r.n, note: r.note, onset: r.onset, rms };
+  const r = state && !W ? await runNet(state.tf, state.model, x, onProgress, stop) : await netRun(x, onProgress, stop);
+  if (!r) return null;
+  const res = { t0: Math.max(0, a), fps: NET_FPS, n: Math.min(r.n, nF), note: r.note, onset: r.onset, rms };
   cache.set(pcm, { key, res });
   return res;
 }
