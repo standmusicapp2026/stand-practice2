@@ -1,0 +1,44 @@
+name: Stand AI self-test (simulator)
+
+# The AI's own checks, in the real app on one iPad simulator. Runs when the 'ai-simtest' branch is pushed.
+on:
+  push:
+    branches: [ai-simtest]
+  workflow_dispatch:
+
+jobs:
+  aitest:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bundle the web app (with the AI self-test)
+        run: |
+          mkdir -p ios/Stand/www
+          cp -R index.html media.html manifest.webmanifest css js vendor icons ios/Stand/www/
+          if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
+          if [ -d examples ]; then cp -R examples ios/Stand/www/; fi
+          cp ios/simtest/aitest.js ios/Stand/www/js/selftest.js
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+      - name: Build for the simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          cd ios
+          xcodebuild -project Stand.xcodeproj -target Stand -configuration Debug -sdk iphonesimulator -arch $(uname -m) \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" ONLY_ACTIVE_ARCH=NO \
+            build | tail -n 30
+      - name: Run on one iPad simulator
+        run: |
+          sed -e 's/BID=com.paulo.stand$/BID=com.paulo.stand.ai/' -e '/^  "iPad mini\|^  "iPad Pro\|^  "iPhone/d' ios/simtest/run.sh > ios/simtest/run-ai.sh
+          grep -n "BID=\|WANT" ios/simtest/run-ai.sh | head
+          bash ios/simtest/run-ai.sh ios/build/Debug-iphonesimulator/Stand.app simtest-out
+          cat simtest-out/summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aitest
+          path: simtest-out
