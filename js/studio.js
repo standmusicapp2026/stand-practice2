@@ -1692,9 +1692,15 @@ async function followSalience(L, A, B, onProgress, stop) {
   if (!best) return null;
   const T = best.T.slice();
   // (the bars of rest before the soloist's first note)
-  const items = midiSteps(L, clef, 0), k0 = Math.floor(items.findIndex(Boolean) / PSTEPS);
+  const items = midiSteps(L, clef, 0), q0 = items.findIndex(Boolean), k0 = Math.floor(q0 / PSTEPS);
+  // (the bar the soloist comes in during, with rest before the first note: its start is not heard in
+  // the soloist's line, so it is put a bar before the next, at the pace of the bars after)
+  if ((globalThis.__entryBar ?? 1) && (q0 % PSTEPS) / PSTEPS > 0.1 && k0 + 3 < T.length) {
+    const d = [T[k0 + 2] - T[k0 + 1], T[k0 + 3] - T[k0 + 2]].sort((p, q) => p - q), bd = (d[0] + d[1]) / 2, t0 = T[k0 + 1] - bd;
+    if (bd > 0 && (k0 === 0 || t0 > T[k0 - 1])) T[k0] = Math.max(t0, fr[0].t);
+  }
   if (k0 >= 1) {
-    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * 0.08) || fr[0]).t - 0.2;
+    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * (globalThis.__onTh ?? 0.03)) || fr[0]).t - 0.2;
     if (on < T[k0] - 0.5) for (let k = 0; k < k0; k++) T[k] = on + ((T[k0] - on) * k) / k0;
   }
   // the notes as heard: each note's first step, the moment it was matched
