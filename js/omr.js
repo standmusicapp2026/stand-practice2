@@ -2748,6 +2748,67 @@ function readHeader(s, comps, ctx, prev, heads) {
 // ---------- the whole picture ----------
 // opts.notesOnly: only the notes and bars (turning pages by listening): smaller, and none of the
 // signs around the notes, which take much memory
+
+// Staves set apart but played together (a voice over its piano, a cello over the piano, with no
+// barline joining them): their barlines stand at the same places. Two systems one after the other
+// whose barlines line up are one system. (Bars of even width on two lines in a row would line up
+// too: then only when the two have a different number of staves, a part over a piano.)
+function barXsOf(B, w, s) {
+  const xs = []; let run = -1;
+  const x0 = Math.round(s.x0 + s.sp * 0.6), x1 = Math.round(s.x1 - s.sp * 0.3);
+  for (let x = x0; x <= x1 + 1; x++) {
+    let ok = false;
+    if (x <= x1) { const ya = Math.round(yAt(s, 8, x)), yb = Math.round(yAt(s, 0, x)); let n = 0, tot = 0; for (let y = ya; y <= yb; y++) { tot++; if (B[y * w + x]) n++; } ok = tot > 4 && n / tot > 0.96; }
+    if (ok && run < 0) run = x; else if (!ok && run >= 0) { if (x - run < s.sp * 0.9) xs.push((run + x - 1) / 2); run = -1; }
+  }
+  return xs;
+}
+function joinAlike(systems, staves, B, w) {
+  if (!(globalThis.__joinAlike ?? 1) || systems.length < 2) return systems;
+  const xsCache = new Map(); const xsOf = (i) => { if (!xsCache.has(i)) xsCache.set(i, barXsOf(B, w, staves[i])); return xsCache.get(i); };
+  const alike = (a, b) => {
+    const A = staves[a], Bs = staves[b], sp = Math.max(A.sp, Bs.sp);
+    if (Math.abs(A.x0 - Bs.x0) > sp * 2.5 || Math.abs(A.x1 - Bs.x1) > sp * 1.5 || Bs.top - A.bottom > sp * 16 || Bs.top <= A.bottom) return null;
+    const xa = xsOf(a).filter((x) => x < A.x1 - sp * 1.5), xb = xsOf(b).filter((x) => x < Bs.x1 - sp * 1.5);
+    if (globalThis.__joinDbg) globalThis.__joinDbg.push({ a, b, xa: xa.map(Math.round), xb: xb.map(Math.round), sp: +sp.toFixed(1), d: [Math.round(A.x0 - Bs.x0), Math.round(A.x1 - Bs.x1), Math.round(Bs.top - A.bottom)] });
+    // (a chord's stems through a piano staff look like barlines too: the staff with fewer is the
+    // measure, and each of its barlines must be found in the other)
+    const [few, many] = xa.length <= xb.length ? [xa, xb] : [xb, xa];
+    if (few.length < 2 || many.length > few.length * 6 + 4) return null;
+    const hit = few.filter((x) => many.some((y) => Math.abs(x - y) < sp * 0.6)).length, m = hit / few.length;
+    // (one mark taken for a barline on the plainer staff is let pass, among four or more)
+    if (m < 0.85 && !(hit >= 3 && m >= 0.6)) return null;
+    // (even bars: alike by chance)
+    const got = few.filter((x) => many.some((y) => Math.abs(x - y) < sp * 0.6));
+    const ws = got.slice(1).map((x, i) => x - got[i]), mean = ws.reduce((p, q) => p + q, 0) / Math.max(1, ws.length);
+    const cv = ws.length ? Math.sqrt(ws.reduce((p, q) => p + (q - mean) ** 2, 0) / ws.length) / mean : 0;
+    const even = cv < 0.06 || got.length < 3;
+    // (bars of even width line up by chance: then every barline must, not most)
+    if (even && m < 0.85) return null;
+    return { m, even };
+  };
+  const out = [systems[0].slice()]; const grown = new Set();
+  for (let k = 1; k < systems.length; k++) {
+    const cur = out[out.length - 1], nx = systems[k];
+    const r = alike(cur[cur.length - 1], nx[0]);
+    // (a system already joined takes another only on clear evidence: bars not of even width)
+    if (r && (!r.even || (cur.length !== nx.length && !grown.has(cur))) && cur.length + nx.length <= 6) { cur.push(...nx); grown.add(cur); } else out.push(nx.slice());
+  }
+  // (only when it gives the page one shape: every system the same staves, the last may be short)
+  const n0 = out[0].length;
+  if (globalThis.__joinDbg) globalThis.__joinDbg.push({ out: out.map((q) => q.join(',')).join(' | '), was: systems.length });
+  if (out.length < systems.length && !out.slice(0, -1).every((sy) => sy.length === n0)) {
+    // (not one shape: the joined systems of the page's usual size kept, any other joined one undone)
+    const sizes = new Map(); for (const sy of out) sizes.set(sy.length, (sizes.get(sy.length) || 0) + 1);
+    const usual = [...sizes.entries()].sort((a, b2) => b2[1] - a[1])[0][0];
+    if (usual === 1 || sizes.get(usual) < out.length * 0.5) return systems;
+    const back = [];
+    for (const sy of out) { if (sy.length === usual || !grown.has(sy)) back.push(sy); else { let k = 0; while (k < sy.length) { const orig = systems.find((q) => q[0] === sy[k]); back.push(orig.slice()); k += orig.length; } } }
+    return back;
+  }
+  return out;
+}
+
 export async function analyse(canvas, dbg, sub = false, opts = {}) {
   const A = await analyseOnce(canvas, dbg, sub, opts);
   // staff lines printed in grey (some editions and notation programs): with the usual threshold
@@ -2841,6 +2902,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       }
       if (joined) prev.push(i); else sysOf.push([i]);
     });
+    { const j = joinAlike(sysOf, staves, B, w).map((q) => q.slice()); sysOf.length = 0; sysOf.push(...j); }
     const back = (x, y) => {
       let X = x, Y = y;
       if (rotated) { const a = (angle * Math.PI) / 180, cx = w / 2, cy = h / 2; const dx = x - cx, dy = y - cy; X = cx + dx * Math.cos(a) - dy * Math.sin(a); Y = cy + dx * Math.sin(a) + dy * Math.cos(a); }
@@ -2965,6 +3027,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     }
     if (joined) prev.push(i); else systems.push([i]);
   });
+  { const j = joinAlike(systems, read, B, w).map((q) => q.slice()); systems.length = 0; systems.push(...j); }
   // the staves of a system (a piano's two hands) share their key: a staff that found nothing,
   // but saw something like the first sharp or flat, takes the key of the others
   for (const sys of systems) {
@@ -2978,6 +3041,16 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     const st = read[idx];
     if (si > 0) { const before = read[systems[si - 1][Math.min(k, systems[si - 1].length - 1)]]; if (!st.clef) st.clef = before.clef; if (!st.time) st.time = before.time; }
   }));
+  // (the little 8 under a tenor's treble clef is easily missed: a part read with it on some lines and
+  // without it on others has it throughout — a voice does not change octave from line to line)
+  if ((globalThis.__eightAll ?? 1) && systems.length >= 2) {
+    const nParts = Math.max(...systems.map((sy) => sy.length));
+    for (let k = 0; k < nParts; k++) {
+      const col = systems.filter((sy) => sy.length === nParts).map((sy) => read[sy[k]]);
+      const n8 = col.filter((st) => st.clef === 'treble8').length, n0 = col.filter((st) => st.clef === 'treble').length;
+      if (n8 && n0 && n8 >= Math.max(1, (n8 + n0) / 4)) for (const st of col) if (st.clef === 'treble') { st.clef = 'treble8'; if (st.head) st.head.clef = 'treble8'; }
+    }
+  }
   // a line whose start was misread (a small or blurred picture): the clef AND the key both unlike
   // the lines around it, which agree with each other, is that misreading; it takes theirs. (A real
   // change of clef at the start of a line keeps the key; a real change of key keeps the clef; and a
@@ -3461,6 +3534,65 @@ let sharpNext = 0, softNext = 0;
 // are soft (a scan drawn bigger than it was made, a photo), read again with its edges made crisper;
 // the reading that finds the same staves and more notes is kept. Soft edges fill the open heads (a
 // half, a whole) and thicken the staff lines into them, and those notes were not read.
+// A long picture of lines put one under another (Studio's strip: the lines chosen in the picker, each
+// in its own rows): read line by line, each at full size, when the whole picture would have to be
+// shrunk to be read at once — a long song came out at a third of its size, its barlines and notes
+// lost in the blur. Each band is one line of music (one system), whatever joins its staves.
+export async function analyseBands(canvas, bands, opts = {}) {
+  const W = canvas.width, H = canvas.height;
+  if (!(globalThis.__bandRead ?? 1) || !Array.isArray(bands) || bands.length < 2 || W * H <= (globalThis.__bandPix ?? 9e6)) return analyseCrisp(canvas, opts);
+  const staves = [], systems = []; let w0 = null;
+  const shiftY = (o, dy) => {
+    if (!o || typeof o !== 'object') return o;
+    if (Array.isArray(o)) return o.map((q) => shiftY(q, dy));
+    const r = { ...o };
+    for (const k of ['y', 'y0', 'y1', 'cy', 'top', 'bottom']) if (typeof r[k] === 'number') r[k] += dy;
+    return r;
+  };
+  for (let i = 0; i < bands.length; i++) {
+    const a = Math.max(0, Math.floor(bands[i][0])), b = Math.min(H, Math.ceil(bands[i][1]));
+    if (b - a < 8) continue;
+    const c = document.createElement('canvas'); c.width = W; c.height = b - a;
+    c.getContext('2d').drawImage(canvas, 0, a, W, b - a, 0, 0, W, b - a);
+    let A = null; try { A = await analyseCrisp(c, opts); } catch (err) { console.warn('band', err); }
+    c.width = c.height = 0;
+    if (!A || !A.staves.length) continue;
+    if (!w0) w0 = A;
+    const sys = [];
+    for (const st of A.staves) {
+      const s2 = { ...st, top: st.top + a, bottom: st.bottom + a, lines: (st.lines || []).map((y) => y + a),
+        heads: (st.heads || []).map((hd) => ({ ...hd, y: hd.y + a })), texts: shiftY(st.texts || [], a), slurs: shiftY(st.slurs || [], a), hairpins: shiftY(st.hairpins || [], a),
+        edge: st.edge ? st.edge.map((e) => [e[0], e[1] + a, e[2] + a]) : st.edge, path: st.path ? st.path.map((col) => col.map(([x, y]) => [x, y + a])) : st.path };
+      sys.push(staves.length); staves.push(s2);
+    }
+    systems.push(sys);
+    if (opts.onBand) opts.onBand((i + 1) / bands.length);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  if (!staves.length) return analyseCrisp(canvas, opts);
+  // (a line of music the picker split in two — a voice over its piano with no barline joining them —
+  // is one: two bands one after the other whose barlines stand at the same places, read at full size)
+  if ((globalThis.__bandJoin ?? 1) && systems.length >= 2) {
+    const xsOf = (st) => (st.bars || []).map((b) => b.x).filter((x) => x > st.x0 + st.sp * 6 && x < st.x1 - st.sp * 1.5);
+    const alike = (a, b) => {
+      const A = staves[a], B2 = staves[b], sp = Math.max(A.sp, B2.sp);
+      if (Math.abs(A.x0 - B2.x0) > sp * 3 || Math.abs(A.x1 - B2.x1) > sp * 2) return false;
+      const xa = xsOf(A), xb = xsOf(B2); const [few, many] = xa.length <= xb.length ? [xa, xb] : [xb, xa];
+      if (few.length < 2) return false;
+      const hit = few.filter((x) => many.some((y) => Math.abs(x - y) < sp * 0.8)).length;
+      const back = many.filter((y) => few.some((x) => Math.abs(x - y) < sp * 0.8)).length;
+      return hit / few.length >= 0.85 && back / many.length >= 0.7;
+    };
+    const out = [systems[0].slice()];
+    for (let k = 1; k < systems.length; k++) {
+      const cur = out[out.length - 1], nx = systems[k];
+      if (cur.length !== nx.length && cur.length + nx.length <= 6 && alike(cur[cur.length - 1], nx[0])) cur.push(...nx); else out.push(nx.slice());
+    }
+    systems.length = 0; systems.push(...out);
+  }
+  const sps = staves.map((q) => q.sp).sort((x, y) => x - y);
+  return { ...w0, staves, systems, w: W, h: H, sp: sps[sps.length >> 1], bandRead: true };
+}
 export async function analyseCrisp(canvas, opts = {}) {
   softNext = null;
   const a = await analyse(canvas, false, false, opts);

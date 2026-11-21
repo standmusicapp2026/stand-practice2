@@ -7,7 +7,7 @@
 import { db, uid } from './db.js';
 import { getCtx, wantAudio } from './audio.js';
 import { detectPitch } from './tuner.js';
-import { analyseCrisp, staffEvents } from './omr.js';
+import { analyseCrisp, analyseBands, staffEvents } from './omr.js';
 import { makeImpulse, ROOMS, computePeaks, peakOf, encodeWav } from './recorder.js';
 import { videoThumb } from './video.js';
 import { CLEFS, keyAlter, midiOf } from './compose/model.js';
@@ -203,7 +203,7 @@ async function addScore(opt = {}) {
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
-    const A = await analyseCrisp(region.canvas);
+    const A = await analyseBands(region.canvas, region.canvas.bands, { onBand: (f) => busy('Reading the score…', 'Finding the staves and the bars.', 0.2 + 0.7 * f) });
     if (!A.staves.length) { busy(null); D.toast('No staves found there. Draw a little wider than the music, around whole lines.', 5000); return; }
     const blob = await new Promise((res) => region.canvas.toBlob(res, 'image/png'));
     const o = {
@@ -351,7 +351,21 @@ function stripLayout(A, W, H, canvas) {
     let x0 = si === 0 ? Math.max(0, s0.x0 - sp * 0.5) : Math.max(s0.x0, firstHead - sp * 1.6);
     if (si > 0) { const ce = clefEnd(s0); if (ce != null && ce + sp * 0.3 < x0) x0 = ce + sp * 0.3; }
     const x1 = Math.min(W, s0.x1 + sp * 0.4);
-    const lines = s0.bars.map((b) => b.x).filter((x) => x > x0 + sp * 1.2 && x < x1 - sp * 1.2).sort((a, b) => a - b);
+    // (the barlines: with three staves or more — a part over its piano — those found in at least two of
+    // them: a stem or a tie in the voice taken for a barline is not one, and a barline the voice's
+    // reading missed but both hands have is one)
+    let barXs = s0.bars.map((b) => b.x);
+    if ((globalThis.__barVote ?? 1) && sts.length >= 3) {
+      const all = sts.map((st) => (st.bars || []).map((b) => b.x));
+      const cand = [...new Set(all.flat())].sort((a, b) => a - b), kept = [];
+      for (const x of cand) {
+        if (kept.some((y) => Math.abs(y - x) < sp * 0.8)) continue;
+        const near = all.map((xs) => xs.find((y) => Math.abs(y - x) < sp * 0.8)).filter((y) => y !== undefined);
+        if (near.length >= 2) { const mine = s0.bars.find((b) => Math.abs(b.x - x) < sp * 0.8); kept.push(mine ? mine.x : near.reduce((a, b) => a + b, 0) / near.length); }
+      }
+      barXs = kept;
+    }
+    const lines = barXs.filter((x) => x > x0 + sp * 1.2 && x < x1 - sp * 1.2).sort((a, b) => a - b);
     // a barline right at the start belongs to the previous line
     const cuts = [x0, ...lines, x1];
     const seg = { x: x0, y: top, w: x1 - x0, h: bot - top, sx, staff: s0.top - top, sX0: Math.max(0, s0.x0 - x0), sX1: Math.min(x1 - x0, s0.x1 - x0), sys: si };
@@ -359,6 +373,9 @@ function stripLayout(A, W, H, canvas) {
     for (let k = 0; k < cuts.length - 1; k++) {
       const a = cuts[k], b = cuts[k + 1];
       if (b - a < sp * 1.5) continue;
+      // (past the line's last barline, a short stretch with no note on any staff: the next line's clef,
+      // key or time shown in advance, not a bar)
+      if ((globalThis.__tailSkip ?? 1) && k === cuts.length - 2 && k > 0 && b - a < sp * 7 && !sts.some((st) => st.heads.some((h) => h.x >= a + sp * 0.3 && h.x < b))) continue;
       const bi = bars.length;
       // the notes of this bar (top staff), for following the playing
       const inBar = s0.heads.filter((h) => h.x >= a && h.x < b).sort((p, q) => p.x - q.x);
@@ -1731,7 +1748,11 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     const keys = []; for (let d = 0; d < 12; d++) { let c = 0; for (let q = 0; q < 12; q++) c += zs[q] * za[(q + d) % 12]; keys.push({ d, c }); }
     keys.sort((a, b) => b.c - a.c);
     if (globalThis.__salDbg) globalThis.__salDbg.push(['keys', keys.slice(0, 4).map((k) => [k.d, +k.c.toFixed(3)])]);
-    for (const k of keys.slice(0, globalThis.__nKeys ?? 4)) for (const o of [-24, -12, 0, 12]) { const d = k.d + o; if (d >= -26 && d <= 14) coarse.push(d); }
+    // (a note's partials hold its fifth: the key a fifth away from the one played often ranks first.
+    // The likeliest keys, and the keys a fifth either side of the first two)
+    const ds = keys.slice(0, globalThis.__nKeys ?? 4).map((k) => k.d);
+    if (globalThis.__keyFifths ?? 1) for (const k of keys.slice(0, 2)) for (const f of [5, 7]) { const d = (k.d + f) % 12; if (!ds.includes(d)) ds.push(d); }
+    for (const kd of ds) for (const o of [-24, -12, 0, 12]) { const d = kd + o; if (d >= -26 && d <= 14) coarse.push(d); }
   } else {
     for (let d = -14; d <= 14; d++) coarse.push(d);
     coarse.push(-24, 24);
@@ -1750,7 +1771,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
   }
   first.sort((p, q) => p.c - q.c);
-  const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 3).map((q) => q.shift), 0])];
+  const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 5).map((q) => q.shift), 0])];
   let all = null; const cands = [];
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
@@ -1815,11 +1836,38 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   const spread = new Array(nb).fill(0);
   if (others.length) for (let k = 0; k < nb; k++) { const d = others.map((c) => Math.abs(c.T[k] - best.T[k])).sort((a, b) => a - b); spread[k] = d[d.length >> 1]; }
   const conf2 = spread.map((d) => Math.exp(-d / (globalThis.__confD ?? 0.6)));
-  if (globalThis.__confDbg) globalThis.__confDbg.push({ conf: conf.slice(), conf2: conf2.slice(), n: others.length });
+  const ev = barEvidence(sn, nb, fr, T);
+  if (globalThis.__confDbg) globalThis.__confDbg.push({ conf: conf.slice(), conf2: conf2.slice(), n: others.length, ev: ev.map((e) => e && [+e.m.toFixed(4), +e.e0.toFixed(4), e.n]) });
   // (measured on 96 recordings: the ways' agreement tells wrong bars far better than how well the notes
   // fit — of the bars shown sure, 97% were right; of the doubtful ones, half were wrong)
   const sureOf = others.length ? conf2.map((_, k) => (conf2[Math.max(0, k - 1)] + conf2[k] + conf2[Math.min(nb - 1, k + 1)]) / 3) : conf.map((v) => Math.min(1, v / 0.45));
   return { T, evs, conf: sureOf, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches' };
+}
+// How sure each bar is, by the evidence: its written notes heard at their places, against the same
+// notes with the bar moved half a bar or a bar either way. A bar whose notes sound where it was put,
+// and clearly not elsewhere, is sure; one that would fit as well moved is not. Each bar's margin
+// (null where the bar has no notes of its own).
+function barEvidence(sn, nb, fr, T) {
+  const n = fr.length; if (!n) return new Array(nb).fill(null);
+  const t0 = fr[0].t, dt = n > 1 ? (fr[n - 1].t - t0) / (n - 1) : 0.01;
+  const NP = SAL_HI - SAL_LO + 1;
+  const mean = fr.map((f) => { let a = 0; for (let p = 0; p < NP; p++) a += f.s[p]; return a / NP; });
+  const val = (t, ms) => {
+    const i = Math.round((t - t0) / dt); let best = 0;
+    for (let j = i - 1; j <= i + 1; j++) { if (j < 0 || j >= n) continue; const f = fr[j]; let v = 0, c = 0; for (const m of ms) { const p = m - SAL_LO; if (p < 0 || p >= NP) continue; v += f.s[p] + (f.on ? f.on[p] : 0); c++; } if (c) best = Math.max(best, v / c - mean[j]); }
+    return best;
+  };
+  const out = new Array(nb).fill(null);
+  for (let k = 0; k < nb; k++) {
+    const on = []; for (let q = k * PSTEPS; q < (k + 1) * PSTEPS; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q])) on.push([(q - k * PSTEPS) / PSTEPS, sn[q]]);
+    if (!on.length) continue;
+    const d = T[k + 1] - T[k]; if (!(d > 0)) continue;
+    const E = (delta) => on.reduce((a, [fx, ms]) => a + val(T[k] + fx * d + delta, ms), 0) / on.length;
+    const e0 = E(0); let alt = -Infinity;
+    for (const f of [-1, -0.5, 0.5, 1]) { const delta = f * d; if (Math.abs(delta) < 0.45) continue; alt = Math.max(alt, E(delta)); }
+    out[k] = { m: alt === -Infinity ? e0 : e0 - alt, e0, n: on.length };
+  }
+  return out;
 }
 // (the bars put by hand exactly where they were put; the bars between, kept in order)
 function fixAnchors(T, anch, nb) {
@@ -4447,7 +4495,7 @@ export const _posAt = (o, t) => posAt(o, t);
 export const _alignChords = (e, o) => alignChords(e, o);
 // (for the tests: a score put on the video without the picker)
 export async function _addScoreFrom(canvas, opt = {}) {
-  const A = await analyseCrisp(canvas);
+  const A = await analyseBands(canvas, canvas.bands);
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
   const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height, canvas), times: null, synced: 'even' };
   o.times = evenTimes(o.layout.bars.length);
