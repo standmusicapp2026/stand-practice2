@@ -2373,6 +2373,9 @@ function readHeader(s, comps, ctx, prev, heads) {
     let name = null;
     if ((top > 10.3 && bot < -1.2) || (top > 9.4 && bot < -0.9 && (y1 - y0) > sp * 5 && k.cls === 'treble' && k.d < 0.5)) name = 'treble';
     else if (bassDots || (k.cls === 'bass' && k.d < 0.4 && top < 9.8 && bot > 0.6)) name = 'bass';
+    // (a bass clef in a font a little unlike the ones known: no other clef runs from the top line down
+    // to about the second line and stops there)
+    else if ((globalThis.__bassGeo ?? 1) && k.cls === 'bass' && k.d < 0.52 && top > 7 && top < 9.8 && bot > 0.6 && bot < 3.2) name = 'bass';
     else if (top > 7.4 && top < 9.8 && bot > -1.2 && bot < 0.8) name = k.cls === 'bass' && k.d < 0.3 ? 'bass' : 'alto';
     else if (top > 9.6 && top < 11.8 && bot > 1.2 && bot < 2.8) name = 'tenor';
     else if (k.d < 0.33) name = k.cls === 'alto' ? cLine((top + bot) / 2) : k.cls;
