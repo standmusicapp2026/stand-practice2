@@ -3371,6 +3371,8 @@ function chooseTime(st, bars) {
     if (st.timeAlt && st.timeAlt.u) {
       for (const u of st.timeAlt.u[0] || []) for (const l of (st.timeAlt.l && st.timeAlt.l[0]) || []) if (u.d < 0.45 && l.d < 0.45 && [2, 4, 8].includes(l.v) && u.v > 0) alts.push([u.v, l.v]);
     }
+    // (digits that some fonts draw alike — a 3 and a 5, a 6 and an 8: the bars decide)
+    if (globalThis.__timeLook ?? 1) for (const u of { 3: [5, 2], 5: [3], 2: [3], 6: [8, 9], 8: [6], 9: [6] }[read[0]] || []) if (!alts.some((t) => t[0] === u && t[1] === read[1])) alts.push([u, read[1]]);
     // (one or two bars to weigh are not enough to doubt the digits)
     if ((globalThis.__timeFew ?? 1) && inner.length < 3) return pick(read);
     const best = alts.map((t) => ({ t, f: fit(t) + (t === read ? 0.15 : 0) })).sort((a, b) => b.f - a.f)[0];
