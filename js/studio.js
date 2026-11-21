@@ -1450,6 +1450,11 @@ async function salienceFrames(pcm, sr, a, b, onProgress) {
       }
       s[p] = v; if (v > mx) mx = v;
     }
+    // (the plain spectrum by pitch class, from E2 up: what the key is judged by — the partials added up
+    // as above put a note's weight also a fifth below it, and so the key a fifth away)
+    const c = new Float32Array(12);
+    { let fl = 0, cn = 0; for (let p = 12; p < NP; p++) { fl += mag[lob[p * H]]; cn++; } fl /= Math.max(1, cn);
+      for (let p = 12; p < NP; p++) { const a2 = lob[p * H], b2 = hib[p * H]; let m = 0; for (let q = a2; q <= b2 && q < mag.length; q++) if (mag[q] > m) m = mag[q]; c[(p + SAL_LO) % 12] += Math.max(0, m - fl); } }
     // (each semitone against the strongest of that moment)
     for (let p = 0; p < NP; p++) s[p] /= mx;
     // (and how much each has just grown: a note beginning at that pitch)
@@ -1457,7 +1462,7 @@ async function salienceFrames(pcm, sr, a, b, onProgress) {
     if (p1) for (let p = 0; p < NP; p++) on[p] = Math.max(0, s[p] - Math.max(p1.s[p], p2 ? p2.s[p] : 0));
     // (the moment a frame stands for: a little past its middle — a note shows in a frame a little
     // before it begins)
-    frames.push({ t: a + (i * dec + N * dec * 0.75) / sr, s, on, rms: Math.sqrt(ms / N) });
+    frames.push({ t: a + (i * dec + N * dec * 0.75) / sr, s, on, c, rms: Math.sqrt(ms / N) });
     if (++k % 120 === 0) { onProgress && onProgress(i / n); await new Promise((r2) => setTimeout(r2, 0)); }
   }
   return frames;
@@ -1623,14 +1628,16 @@ async function followSalience(L, A, B, onProgress, stop) {
   const coarse = [];
   if (globalThis.__keyFirst ?? 1) {
     const NP = SAL_HI - SAL_LO + 1, ha = new Float64Array(12), hs = new Float64Array(12);
-    for (const f of fr) for (let p = 0; p < NP; p++) ha[(p + SAL_LO) % 12] += f.s[p];
+    const hc = new Float64Array(12); for (const f of fr) { for (let q = 0; q < 12; q++) hc[q] += f.c[q]; for (let p = 0; p < NP; p++) ha[(p + SAL_LO) % 12] += f.s[p]; }
     for (const ms of midiSteps(L, clef, 0)) if (ms) for (const m of ms) hs[((m % 12) + 12) % 12] += 1 / ms.length;
     const z = (a) => { const m = a.reduce((x, y) => x + y, 0) / 12; let v = 0; const o = a.map((x) => x - m); for (const x of o) v += x * x; return o.map((x) => x / Math.sqrt(Math.max(1e-9, v))); };
-    const za = z(Array.from(ha)), zs = z(Array.from(hs));
-    const keys = []; for (let d = 0; d < 12; d++) { let c = 0; for (let q = 0; q < 12; q++) c += zs[q] * za[(q + d) % 12]; keys.push({ d, c }); }
+    // (by both: the partials added up lean a fifth below, the plain spectrum, by a note's third partial,
+    // a fifth above — together they lean neither way)
+    const za = z(Array.from(ha)), zc = z(Array.from(hc)), zs = z(Array.from(hs)), km = globalThis.__keyMix ?? 1;
+    const keys = []; for (let d = 0; d < 12; d++) { let c = 0; for (let q = 0; q < 12; q++) c += zs[q] * ((1 - km) * za[(q + d) % 12] + km * zc[(q + d) % 12]); keys.push({ d, c }); }
     keys.sort((a, b) => b.c - a.c);
     if (globalThis.__salDbg) globalThis.__salDbg.push(['keys', keys.slice(0, 4).map((k) => [k.d, +k.c.toFixed(3)])]);
-    for (const k of keys.slice(0, 2)) for (const o of [-24, -12, 0, 12]) { const d = k.d + o; if (d >= -26 && d <= 14) coarse.push(d); }
+    for (const k of keys.slice(0, 2).filter((k, i) => !i || k.c >= keys[0].c - (globalThis.__keyMargin ?? 0.15))) for (const o of [-24, -12, 0, 12]) { const d = k.d + o; if (d >= -26 && d <= 14) coarse.push(d); }
   } else {
     for (let d = -14; d <= 14; d++) coarse.push(d);
     coarse.push(-24, 24);
@@ -1646,11 +1653,18 @@ async function followSalience(L, A, B, onProgress, stop) {
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
   }
   first.sort((p, q) => p.c - q.c);
-  const shifts = [...new Set([...first.slice(0, 3).map((q) => q.shift), 0])];
+  const shifts = [...new Set([...first.slice(0, 3).map((q) => q.shift), ...((globalThis.__zeroAlways ?? 1) || coarse.includes(0) ? [0] : [])])];
   let all = null;
+  // (and the pace the whole sounding length gives the page's bars, when it is none of these)
+  const paces = [1.2, 1.8, 2.6, 3.6];
+  if (globalThis.__spanPace ?? 1) {
+    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = fr.filter((f) => f.rms > loud * 0.08);
+    const sp = on.length > 1 ? (on[on.length - 1].t - on[0].t) / nb : 0;
+    if (sp > 0.6 && sp < 8 && paces.every((q) => Math.abs(Math.log(sp / q)) > 0.15)) paces.push(+sp.toFixed(2));
+  }
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
-    for (const pace of [1.2, 1.8, 2.6, 3.6]) {
+    for (const pace of paces) {
       const r = pacedSalience(sn, nb, fr, pace);
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
@@ -1660,7 +1674,11 @@ async function followSalience(L, A, B, onProgress, stop) {
       // stretched or squeezed to fit — counts against)
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
       if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
-      if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
+      // (and how many of the page's notes were clearly heard where they were put: a path that slips
+      // past the music in a hurry costs little per moment, but hears few of the notes)
+      const hw = globalThis.__heardW ?? 0.1;
+      if (r) r.score = r.cost + shPen(shift) - hw * r.heard;
+      if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.score < best.score))) best = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
     if (stop && stop()) return null;
