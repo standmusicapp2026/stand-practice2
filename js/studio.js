@@ -1541,7 +1541,7 @@ function pacedSalience(sn, nb, fr0, pace) {
   }
   // (the sums kept for the last three steps of the page only; the way back, one byte a cell)
   // (leaving out a moment of the recording costs the same per second at every pace)
-  const SKIP = 0.4 * ((globalThis.__skipTime ?? 1) ? dt / 0.075 : 1), W = m + 1;
+  const SKIP = 0.4 * ((globalThis.__skipTime ?? 0) ? dt / 0.075 : 1), W = m + 1;
   let D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
   const P = new Uint8Array((n + 1) * W);
   for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
@@ -1659,7 +1659,7 @@ async function followSalience(L, A, B, onProgress, stop) {
       // (a pace the playing did not keep: the bars found are much longer or shorter than it — the page
       // stretched or squeezed to fit — counts against)
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
-      if (r && (globalThis.__hybrid ?? 1)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
+      if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
       if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
