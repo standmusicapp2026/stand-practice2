@@ -3184,9 +3184,30 @@ export function fitBar(bar, total, opts = {}) {
     b.forEach((it, i) => { if (it.tupG) { const g = marked.get(it.tupG) || { from: i, to: i, n: it.tupN || 3 }; g.to = i; marked.set(it.tupG, g); } });
     for (const g of marked.values()) {
       if (b.slice(g.from, g.to + 1).some((x) => x.tup || x.full)) continue;
-      const t2 = b.slice(); apply(t2, g.from, g.to, g.n);
+      let t2 = b.slice(); apply(t2, g.from, g.to, g.n);
+      // (a digit drawn alike, 6 read as 5: the count of notes under it, when that adds up better)
+      if (globalThis.__tupCount ?? 1) {
+        const c = b.slice(g.from, g.to + 1).filter((x) => !x.rest).length;
+        if (c !== g.n && [3, 5, 6, 7].includes(c) && b.slice(g.from, g.to + 1).every((x) => !x.rest)) {
+          const t3 = b.slice(); apply(t3, g.from, g.to, c);
+          if (Math.abs(sum(t3) - total) < Math.abs(sum(t2) - total) - 0.5) t2 = t3;
+        }
+      }
       const before = Math.abs(sum(b) - total), after = Math.abs(sum(t2) - total);
       if (after < before - 1 || after < 1) b = t2;
+    }
+    // unmarked sextuplets: one beam of exactly six equal notes, in a bar that runs over (the 6 is
+    // often printed small, or only once at the start and then left out)
+    if (globalThis.__sextFit ?? 1) {
+      const groups = new Map();
+      b.forEach((it, i) => { if (it.bg !== null && it.bg !== undefined) { const g = groups.get(it.bg) || []; g.push(i); groups.set(it.bg, g); } });
+      for (const idx of groups.values()) {
+        if (sum(b) <= total + 1) break;
+        if (idx.length !== 6 || idx[5] - idx[0] !== 5) continue;
+        const g = idx.map((k) => b[k]);
+        if (g.some((x) => x.full || x.tup || x.rest || x.t < 8 || x.t !== g[0].t || x.dots || !x.beamed)) continue;
+        const t2 = b.slice(); apply(t2, idx[0], idx[5], 6); if (sum(t2) >= total - 1) b = t2;
+      }
     }
     // then unmarked: three equal beamed notes of one beam (not in 6/8 and the like, where three
     // beamed quavers are simply its beat)
