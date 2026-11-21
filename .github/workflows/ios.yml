@@ -2,7 +2,7 @@ name: Build iPad app (IPA)
 
 on:
   push:
-    branches: [main, 'stand-2*']
+    branches: [main, 'stand-2*', ai-lab]
   workflow_dispatch:
     inputs:
       runner:

@@ -19,7 +19,7 @@ targets:
     info:
       path: Stand/Info.plist
       properties:
-        CFBundleDisplayName: Stand
+        CFBundleDisplayName: Stand AI
         CFBundleName: Stand
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -112,7 +112,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.paulo.stand
+        PRODUCT_BUNDLE_IDENTIFIER: com.paulo.stand.ai
         PRODUCT_NAME: Stand
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"

@@ -13,6 +13,7 @@ import { videoThumb } from './video.js';
 import { CLEFS, keyAlter, midiOf } from './compose/model.js';
 import { onsetsOf, template, cosine, chromaOf, fftMag } from './listen.js';
 import { Grader, LOOKS, lookParams, isNeutral, autoLook } from './grade.js';
+import { hearNotes, NET_LO, NET_KEYS } from './ai/pitchnet.js';
 const grader = new Grader();
 
 const $ = (s) => document.querySelector(s);
@@ -1462,6 +1463,28 @@ async function salienceFrames(pcm, sr, a, b, onProgress) {
   }
   return frames;
 }
+// What sounds at each pitch, heard by the AI (the neural network in ai/pitchnet.js): for each semitone,
+// how likely it is sounding, and beginning — the same picture as salienceFrames, but learned from a
+// great many recordings: the piano behind a singer, a choir, an orchestra, a bowed note's partials are
+// told apart from the note itself. Returns frames as salienceFrames does, or null (the network could not
+// run here: then the old way is used).
+async function salienceFramesAI(pcm, sr, a, b, onProgress, stop) {
+  let h = null;
+  try { h = await hearNotes(pcm, sr, a, b, onProgress, stop); } catch (err) { console.warn('AI hearing', err); return null; }
+  if (!h || h.n < 8) return null;
+  const NP = SAL_HI - SAL_LO + 1, frames = [];
+  const G = globalThis.__aiGamma ?? 0.5, OFF = globalThis.__aiOff ?? 0, OW = globalThis.__aiOnW ?? 1;
+  for (let i = 0; i < h.n; i++) {
+    const s = new Float32Array(NP), on = new Float32Array(NP);
+    for (let p = 0; p < NP; p++) {
+      const k = p + SAL_LO - NET_LO; if (k < 0 || k >= NET_KEYS) continue;
+      s[p] = Math.pow(h.note[i * NET_KEYS + k], G);
+      on[p] = Math.min(1, h.onset[i * NET_KEYS + k] * OW);
+    }
+    frames.push({ t: h.t0 + i / h.fps + OFF, s, on, rms: h.rms[i] });
+  }
+  return frames;
+}
 // The page as pitches through time (as pitchSamples, but the notes' own pitches, octave and all): each
 // bar cut into steps; each step the notes sounding there. A bar's music begins a little after its
 // barline (as far as its first note usually stands); a bar that begins with a rest begins with it.
@@ -1607,7 +1630,11 @@ function agreeOf(T, sn, nb, fr) {
   return ok / Math.max(1, all);
 }
 async function followSalience(L, A, B, onProgress, stop) {
-  const fr = await salienceFrames(ST.pcm, ST.sr, A, B, onProgress);
+  // (the AI's hearing first; the old way if the network cannot run on this device)
+  let fr = (globalThis.__useAI ?? 1) ? await salienceFramesAI(ST.pcm, ST.sr, A, B, onProgress, stop) : null;
+  if (stop && stop()) return null;
+  const ai = !!fr;
+  if (!fr) fr = await salienceFrames(ST.pcm, ST.sr, A, B, onProgress);
   if (stop && stop()) return null;
   if (fr.length < 8) return null;
   const nb = L.bars.length;
@@ -1686,7 +1713,7 @@ async function followSalience(L, A, B, onProgress, stop) {
     const k = Math.floor(q / PSTEPS), b = L.bars[k];
     evs.push({ bar: k, x: sn.xAt && sn.xAt.has(q) ? sn.xAt.get(q) : b.x0 + ((q % PSTEPS) / PSTEPS) * (b.x1 - b.x0), t: best.at[q] >= 0 ? best.at[q] : null });
   }
-  return { T, evs, cost: best.cost, shift: best.shift, clef, good: best.heard, how: 'pitches' };
+  return { T, evs, cost: best.cost, shift: best.shift, clef, good: best.heard, how: ai ? 'ai' : 'pitches' };
 }
 // ---- following in time ----
 // The page as pitches through time: each bar cut into small steps, each step with the pitch classes
