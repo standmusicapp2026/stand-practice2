@@ -1543,7 +1543,7 @@ function midiSteps(L, clef, shift) {
 // The page through the recording (dynamic time warping with the pace held, as pacedAlign): at each
 // moment, how strongly the page's notes sound. Returns { T: bar starts (nb + 1), at: the moment of each
 // step, cost } or null.
-function pacedSalience(sn, nb, fr0, pace) {
+function pacedSalience(sn, nb, fr0, pace, onw) {
   if (!(pace > 0.2) || fr0.length < 4) return null;
   const dt = pace / PSTEPS, NP = SAL_HI - SAL_LO + 1;
   // (what sounds in moments a page step long at this pace: the strongest of the frames in each)
@@ -1560,7 +1560,7 @@ function pacedSalience(sn, nb, fr0, pace) {
   const loud = Math.max(...fr.map((f) => f.rms), 1e-6);
   // (the cost of each step at each moment, worked out once per distinct set of notes; each step keeps
   // only a reference to its row — little memory, even for a long recording)
-  const rows = new Array(n), seen = new Map(), ONW = globalThis.__onW ?? 0.8;
+  const rows = new Array(n), seen = new Map(), ONW = onw ?? globalThis.__onW ?? 0.8;
   for (let i = 0; i < n; i++) {
     const ms = sn[i];
     // (a note's first step: where the note begins, it should be heard beginning)
@@ -1654,6 +1654,8 @@ async function followSalience(L, A, B, onProgress, stop) {
   if (stop && stop()) return null;
   const ai = !!fr;
   if (!fr) fr = await salienceFrames(ST.pcm, ST.sr, A, B, onProgress);
+  // (with the AI, where each note begins counts for more: the network hears beginnings well)
+  const onw = ai ? (globalThis.__onWai ?? 1.6) : undefined;
   if (stop && stop()) return null;
   if (fr.length < 8) return null;
   const nb = L.bars.length;
@@ -1686,7 +1688,7 @@ async function followSalience(L, A, B, onProgress, stop) {
   if (s0.filter(Boolean).length < 4) return null;
   for (const shift of coarse) {
     const sn = midiSteps(L, clef, shift);
-    const r = pacedSalience(sn, nb, fr, 2.2);
+    const r = pacedSalience(sn, nb, fr, 2.2, onw);
     if (r) first.push({ shift, c: r.cost + shPen(shift) });
     if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, 2.2, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
@@ -1697,7 +1699,7 @@ async function followSalience(L, A, B, onProgress, stop) {
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
     for (const pace of [1.2, 1.8, 2.6, 3.6]) {
-      const r = pacedSalience(sn, nb, fr, pace);
+      const r = pacedSalience(sn, nb, fr, pace, onw);
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
       // how much is what the page has there — and loud music outside the bars counts against)
