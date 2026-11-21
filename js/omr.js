@@ -1723,6 +1723,9 @@ function readStaff(s, ctx, header) {
         // (a C clef only loosely like one must at least mirror itself above and below its middle: two
         // beamed notes with their stems down, a tie over them, have the shape of one but not that)
         && !(lz[0].cls === 'alto' && (globalThis.__cSymLoose ?? 1) && cSymOf(x0, x1, y0, y1) < 0.55)) k = { cls: lz[0].cls, d: 0.3 };
+      // (a treble clef tied with a C clef in the loose likeness, and no C clef's upright bars: treble)
+      if ((globalThis.__trebleTie ?? 1) && !(['treble', 'bass', 'alto'].includes(k.cls) && k.d <= 0.38) && lz[0] && lz[1] && lz[0].d < 0.2 && lz[1].d - lz[0].d <= 0.015
+        && [lz[0].cls, lz[1].cls].includes('treble') && [lz[0].cls, lz[1].cls].includes('alto') && !cBars()) k = { cls: 'treble', d: 0.29, tie: true };
       // (but a bass clef's two dots, either side of its line, are not a note's)
       const inkDots = () => { const tY = yAt(s, 8, x1), bY = yAt(s, 0, x1); const full = (x) => { for (let y = Math.round(tY) + 1; y < bY - 1; y++) if (!C[y * w + x]) return false; return true; };
         const dot = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = x1 + 1; x <= Math.round(x1 + sp * 0.8); x++) { if (full(x)) continue; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) if (C[yy * w + x]) n++; } return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
@@ -1736,6 +1739,7 @@ function readStaff(s, ctx, header) {
         if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ bassGeo: x0, tp: +tp.toFixed(1), bp: +bp.toFixed(1), lb: lb && +lb.d.toFixed(3) });
         if (tp > 7 && tp < 10.3 && bp > 0.3 && bp < 3.6 && x1 - x0 >= sp * 1.2 && x1 - x0 <= sp * 2.8 && lb && lb.d < 0.35 && inkDots()) k = { cls: 'bass', d: 0.3 };
       }
+      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
       // a note inside it is believed over a weak likeness
 
@@ -1749,6 +1753,8 @@ function readStaff(s, ctx, header) {
       const top = pAt(s, y0, (x0 + x1) / 2), bot = pAt(s, y1, (x0 + x1) / 2);
       let name = null;
       if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4) name = 'treble';
+      // (a clef changed along the line is printed smaller: a clear likeness, still most of the staff high)
+      else if ((globalThis.__smallTreble ?? 1) && k.cls === 'treble' && k.d < 0.28 && top > 7.4 && bot < 2.2 && (y1 - y0) > sp * 2.6) name = 'treble';
       else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22)) name = 'bass';
       // (a grace note with its slash, an accidental before it, has a bass clef's outline but not its two dots)
       else if (k.cls === 'alto') { const mid = (top + bot) / 2; name = cLine(mid); }
@@ -1758,7 +1764,7 @@ function readStaff(s, ctx, header) {
       signs.push({ x: x0, x1, clef: name });
       // what was read inside the clef (its curls look like heads, its bars like stems) goes
       for (let k2 = heads.length - 1; k2 >= 0; k2--) if (heads[k2].cx > x0 - sp * 0.1 && heads[k2].cx < x1 + sp * 0.1 && heads[k2].cy > y0 - sp * 0.2 && heads[k2].cy < y1 + sp * 0.2) heads.splice(k2, 1);
-      for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - sp * 0.2 && merged[k2].x < x1 + sp * 0.2) merged.splice(k2, 1);
+      { const m = name === 'treble' && (globalThis.__trebleBarKeep ?? 1) ? -sp * 0.15 : sp * 0.2; for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - m && merged[k2].x < x1 + m) merged.splice(k2, 1); }
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ clef: name, x0, d: +k.d.toFixed(3) });
     }
     // time signatures: two digits one above the other, filling the staff, with no note there
