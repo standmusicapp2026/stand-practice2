@@ -1698,7 +1698,7 @@ function agreeOf(T, sn, nb, fr) {
 }
 async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // (the AI's hearing first; the old way if the network cannot run on this device)
-  const MIX = globalThis.__aiMix ?? 0.4;   // (measured on 96 recordings with their bar times: 0.4 best)
+  const MIX = globalThis.__aiMix ?? 0.25;   // (measured on 96 recordings with their bar times)
   let fr = (globalThis.__useAI ?? 1) ? (MIX >= 1 ? await salienceFramesAI(ST.pcm, ST.sr, A, B, onProgress, stop) : await salienceFramesBoth(ST.pcm, ST.sr, A, B, onProgress, stop, MIX)) : null;
   if (stop && stop()) return null;
   const ai = !!fr;
@@ -1747,7 +1747,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   }
   first.sort((p, q) => p.c - q.c);
   const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 3).map((q) => q.shift), 0])];
-  let all = null;
+  let all = null; const cands = [];
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
     // (seconds a bar: from a quick two-in-a-bar to a very slow song, seven seconds a bar)
@@ -1761,6 +1761,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       // stretched or squeezed to fit — counts against)
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
       if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
+      if (r) cands.push({ T: r.T, agree: r.agree });
       if (r && (!best || ((globalThis.__judgeTime ?? 1) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
@@ -1803,8 +1804,18 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   }
   // how sure each bar is: its notes heard where they were put (1 sure .. 0 not at all); a bar with no
   // notes of its own (rests) is as sure as its neighbours
+  // (and where the other likely ways of following put the bar elsewhere: a bar every way puts in the
+  // same place is sure; one they disagree on is not)
   const conf = barConfidence(sn, nb, best.sc);
-  return { T, evs, conf, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches' };
+  const others = cands.filter((c) => c.T !== best.T && c.agree > best.agree - (globalThis.__confAg ?? 0.05));
+  const spread = new Array(nb).fill(0);
+  if (others.length) for (let k = 0; k < nb; k++) { const d = others.map((c) => Math.abs(c.T[k] - best.T[k])).sort((a, b) => a - b); spread[k] = d[d.length >> 1]; }
+  const conf2 = spread.map((d) => Math.exp(-d / (globalThis.__confD ?? 0.6)));
+  if (globalThis.__confDbg) globalThis.__confDbg.push({ conf: conf.slice(), conf2: conf2.slice(), n: others.length });
+  // (measured on 96 recordings: the ways' agreement tells wrong bars far better than how well the notes
+  // fit — of the bars shown sure, 97% were right; of the doubtful ones, half were wrong)
+  const sureOf = others.length ? conf2.map((_, k) => (conf2[Math.max(0, k - 1)] + conf2[k] + conf2[Math.min(nb - 1, k + 1)]) / 3) : conf.map((v) => Math.min(1, v / 0.45));
+  return { T, evs, conf: sureOf, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches' };
 }
 // (the bars put by hand exactly where they were put; the bars between, kept in order)
 function fixAnchors(T, anch, nb) {
@@ -1822,15 +1833,13 @@ function barConfidence(sn, nb, sc) {
   }
   for (let k = 0; k < nb; k++) if (conf[k] === null) { let a = k - 1, b = k + 1; while (a >= 0 && conf[a] === null) a--; while (b < nb && conf[b] === null) b++; const v = [a >= 0 ? conf[a] : null, b < nb ? conf[b] : null].filter((x) => x !== null && x !== undefined); conf[k] = v.length ? Math.min(...v) : 0.5; }
   // (a mistake runs over several bars, and a recording followed badly is followed badly throughout:
-  // each bar with its neighbours, and half the whole recording's own measure. Measured on 96
-  // recordings: of the bars this calls doubtful (under 0.35), 93% were indeed wrong; of the bars it
-  // calls sure (0.45 and over), 93% were right)
+  // each bar with its neighbours, and half the whole recording's own measure)
   const sorted = conf.slice().sort((a, b) => a - b), med = sorted[sorted.length >> 1], out = new Array(nb);
   for (let k = 0; k < nb; k++) { let sum = 0, c = 0; for (let d = -2; d <= 2; d++) { const q = Math.max(0, Math.min(nb - 1, k + d)); sum += conf[q]; c++; } out[k] = 0.5 * (sum / c) + 0.5 * med; }
   return out;
 }
 // (how a bar's confidence is shown: sure, check, doubtful)
-export const CONF_SURE = 0.45, CONF_DOUBT = 0.35;
+export const CONF_SURE = 0.7, CONF_DOUBT = 0.4;
 // ---- following in time ----
 // The page as pitches through time: each bar cut into small steps, each step with the pitch classes
 // the page has sounding there (a note lasts to the next one), or none.
