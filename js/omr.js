@@ -2559,6 +2559,15 @@ function readHeader(s, comps, ctx, prev, heads) {
         if (!k || !(k.d <= 0.38 || (k.d <= 0.48 && k.margin >= 0.1 && (!cnt || k.d <= firstD + 0.06)))) break;
         // (one beside the other, not on top of each other)
         if (cnt >= 1 && k.x0 - prevX < sp * 0.6) break;
+        // (nor far after the one before: the signs of a key stand close, a space or so apart — what
+        // stands further on is the time signature's first digit, or a note's accidental)
+        if (cnt >= 1 && (globalThis.__keyGap ?? 1) && k.x0 - prevX > sp * 1.65) break;
+        // (nor a shape that is more like a digit or the time's C than like the sign)
+        if ((globalThis.__keyDigit ?? 1) && k.x1 > k.x0) {
+          const yA = Math.round(s.top - sp * 2), yB = Math.round(s.bottom + sp * 2);
+          let y0b = Infinity, y1b = -1; for (let y = Math.max(0, yA); y <= Math.min(ctx.h - 1, yB); y++) for (let x = Math.round(k.x0); x <= Math.round(k.x1); x++) if (C[y * w + x]) { if (y < y0b) y0b = y; if (y > y1b) y1b = y; break; }
+          if (y1b > y0b) { const kd = classify(shapeOf(C, w, k.x0, y0b, k.x1, y1b, sp), ['sharp', 'flat', 'natural', 'd2', 'd3', 'd4', 'd5', 'd6', 'd8', 'd9', 'tC', 'tCut']); if (/^d\d$|^tC/.test(kd.cls) && kd.d < k.d - 0.03) break; }
+        }
         // (nor a piece of the sign before: most of it inside that one)
         if (cnt >= 1 && (globalThis.__keyOverlap ?? 1) && k.x1 - lx < sp * 0.45) break;
         // evenly spaced
@@ -2598,7 +2607,15 @@ function readHeader(s, comps, ctx, prev, heads) {
     // (a flat has one, a sharp two), tell how many there are
     if (n && keyFirst && (globalThis.__keyStrokes ?? 1)) {
       const ya = Math.round(s.top - sp * 2.6), yb = Math.round(s.bottom + sp * 1.6);
-      const xEnd = Math.max(keyFirst.x1, Math.min(firstNote - sp * 0.4, keyFirst.x0 + sp * 9));
+      let xEnd = Math.max(keyFirst.x1, Math.min(firstNote - sp * 0.4, keyFirst.x0 + sp * 9));
+      // (not into the time signature: its digits have upright strokes too)
+      if (globalThis.__ksNoTime ?? 1) for (const c of comps) {
+        if (c.x0 <= keyFirst.x1 + sp * 0.2 || c.x0 >= xEnd || c.h < sp * 1.2 || c.h > sp * 4.6) continue;
+        // (the time's two digits run together: one shape the height of the staff, top line to bottom)
+        if (c.h > sp * 3.4 && c.w > sp * 0.9 && c.w < sp * 2.4 && c.y0 < yAt(s, 8, c.x0) + sp * 0.6 && c.y1 > yAt(s, 0, c.x0) - sp * 0.6) { xEnd = Math.max(keyFirst.x1, c.x0 - sp * 0.1); break; }
+        const kt = classify(shapeOf(C, w, c.x0, c.y0, c.x1, c.y1, sp, labC, c.id), ['sharp', 'flat', 'natural', 'd2', 'd3', 'd4', 'd5', 'd6', 'd8', 'd9', 'tC', 'tCut']);
+        if (/^d\d$|^tC/.test(kt.cls) && kt.d < 0.36) { xEnd = Math.max(keyFirst.x1, c.x0 - sp * 0.1); break; }
+      }
       const cols = [];
       const CK = ctx.Cb || C;
       for (let x = Math.round((globalThis.__ksFromEnd ?? 1) && keyFirst.x0 - end < sp * 2.5 ? Math.min(keyFirst.x0 - sp * 0.3, end + sp * 0.1) : keyFirst.x0 - sp * 0.3); x <= xEnd && x < w; x++) {
