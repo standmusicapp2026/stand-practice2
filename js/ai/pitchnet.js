@@ -83,11 +83,12 @@ export function resample(pcm, sr, a = 0, b = Infinity) {
 export async function runNet(tf, model, x, onProgress, stop) {
   const n = Math.floor((x.length * NET_FPS) / NET_SR);
   // (each window gives the frames of its middle; the first window starts half an overlap early)
-  const per = WIN / NET_HOP - OVER, nWin = Math.ceil(n / Math.max(1, Math.floor(per))) + 1;
+  const nWin = Math.ceil((n * NET_HOP) / STEP) + 1;
+  const P0 = Math.floor((OVER * NET_HOP) / 2);
   const padded = new Float32Array(nWin * STEP + WIN);
-  padded.set(x, Math.floor((OVER * NET_HOP) / 2));
+  padded.set(x, P0);
   const starts = []; for (let w = 0; w < nWin; w++) starts.push(w * STEP);
-  const note = new Float32Array(n * NET_KEYS), onset = new Float32Array(n * NET_KEYS);
+  const note = new Float32Array(n * NET_KEYS), onset = new Float32Array(n * NET_KEYS), filled = new Uint8Array(n);
   let at = 0;
   const BATCH = 4;
   for (let w = 0; w < starts.length && at < n; w += BATCH) {
@@ -99,18 +100,26 @@ export async function runNet(tf, model, x, onProgress, stop) {
     const [fr, on] = await Promise.all([outs[0].data(), outs[1].data()]);
     const T = outs[0].shape[1];
     inp.dispose(); outs.forEach((o) => o.dispose());
-    for (let q = 0; q < k && at < n; q++) {
-      for (let f = HALF; f < T - HALF && at < n; f++, at++) {
+    // (each frame put at its own moment: a window is 171.3 frames long, not a whole number, so frames
+    // taken one after another would drift — half a second over a few minutes)
+    for (let q = 0; q < k; q++) {
+      const s0 = starts[w + q] - P0;
+      for (let f = HALF; f < T - HALF; f++) {
+        const i = Math.round((s0 + f * NET_HOP) / NET_HOP);
+        if (i < 0 || i >= n || filled[i]) continue;
         const src = (q * T + f) * NET_KEYS;
-        note.set(fr.subarray(src, src + NET_KEYS), at * NET_KEYS);
-        onset.set(on.subarray(src, src + NET_KEYS), at * NET_KEYS);
+        note.set(fr.subarray(src, src + NET_KEYS), i * NET_KEYS);
+        onset.set(on.subarray(src, src + NET_KEYS), i * NET_KEYS);
+        filled[i] = 1; if (i + 1 > at) at = i + 1;
       }
     }
     onProgress && onProgress(Math.min(1, at / n));
     await new Promise((r) => setTimeout(r, 0));
     if (stop && stop()) return null;
   }
-  return { n: at, note, onset };
+  // (a frame no window gave: the one before it)
+  for (let i = 1; i < n; i++) if (!filled[i]) { note.copyWithin(i * NET_KEYS, (i - 1) * NET_KEYS, i * NET_KEYS); onset.copyWithin(i * NET_KEYS, (i - 1) * NET_KEYS, i * NET_KEYS); }
+  return { n, note, onset };
 }
 
 // The notes heard in a recording (from a to b seconds), with the frames' loudness.
