@@ -1394,7 +1394,11 @@ function finishSync(o, L, from, A, B, fitT, byBar, best) {
     if (!from) o.anchors = []; else if (o.anchors) o.anchors = o.anchors.filter((a) => a.k < from);
     busy(null);
     saveSoon(); renderSide(); renderTimeline(); frame();
-    D.toast(best.how === 'ai' ? (best.good > 0.55 ? `The AI lined up the score with your playing (${Math.round(best.good * 100)}% of the notes heard).` : 'The AI lined it up as well as it could. Check the bars on the timeline, or use Tap along.')
+    // (the AI's message by how sure it is of each bar: how many notes matched says little when a
+    // piano plays with the soloist, and bars that are right were called into doubt)
+    const nChk = o.conf ? barsToCheck(o).length : -1;
+    if (best.how === 'ai' && nChk >= 0) D.toast(!nChk ? 'The AI lined up the score with your playing: it is sure of every bar.' : nChk === 1 ? 'The AI lined up the score with your playing. 1 bar to check: it is marked in amber.' : `The AI lined up the score with your playing. ${nChk} bars to check: they are marked in amber and red.`, 4600);
+    else D.toast(best.how === 'ai' ? (best.good > 0.55 ? `The AI lined up the score with your playing (${Math.round(best.good * 100)}% of the notes heard).` : 'The AI lined it up as well as it could. Check the bars on the timeline, or use Tap along.')
       : best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
 }
@@ -3188,7 +3192,8 @@ function renderTimingTab(side) {
   side.append(el('h3', '', 'Timing'));
   const part = subPick(side, 'timing', [['follow', 'Follow'], ['tap', 'Tap along'], ['bar', 'Bar times']], o.synced === 'even' ? 'follow' : 'bar');
   const show = (k) => !part || part === k;
-  side.append(el('p', 'st-sync-state ' + (o.synced === 'auto' && o.syncInfo && o.syncInfo.good > 0.55 ? 'good' : o.synced === 'even' ? 'warn' : ''),
+  side.append(el('p', 'st-sync-state ' + (o.synced === 'auto' && o.syncInfo && (o.syncInfo.how === 'ai' && o.conf ? !barsToCheck(o).length : o.syncInfo.good > 0.55) ? 'good' : o.synced === 'even' ? 'warn' : ''),
+    o.synced === 'auto' && o.conf && o.syncInfo && o.syncInfo.how === 'ai' ? (() => { const sure = o.conf.length - barsToCheck(o).length; return sure === o.conf.length ? 'Follows your playing: the AI is sure of every bar.' : `Follows your playing: the AI is sure of ${sure} of ${o.conf.length} bars.`; })() :
     o.synced === 'auto' ? `Follows your playing${o.syncInfo ? ` (${Math.round(o.syncInfo.good * 100)}% of notes matched)` : ''}.` : o.synced === 'tap' ? 'Set by your taps.' : o.synced === 'hand' ? 'Adjusted by hand.' : 'Spread evenly for now. Line it up with your playing:'));
   // following the playing (from the start, or from the bar at the red line: the bars before stay)
   const fol = sec('Follow my playing');
@@ -3208,7 +3213,7 @@ function renderTimingTab(side) {
     if (!chk.length) box.append(el('span', 'hint', 'The AI is sure of every bar.'));
     else {
       const red = chk.filter((k2) => o.conf[k2] < CONF_DOUBT).length;
-      box.append(el('span', '', red ? `${chk.length} bars to check (${red} doubtful)` : `${chk.length} bars to check`));
+      box.append(el('span', '', red ? `${chk.length} bars to check (${red} doubtful)` : chk.length === 1 ? '1 bar to check' : `${chk.length} bars to check`));
       const cur = ST.selBar ?? -1, nx = chk.find((k2) => k2 > cur) ?? chk[0];
       const go = el('button', 'btn small'); go.append(el('span', '', `Check bar ${nx + 1}`)); go.addEventListener('click', () => selectBar(nx));
       box.append(go);
@@ -3259,7 +3264,16 @@ function renderTimingTab(side) {
   card.append(nudge);
   bs.append(card);
   const atLine = el('button', 'btn small'); atLine.append(el('span', '', `Start bar ${k + 1} at the red line`));
-  atLine.addEventListener('click', () => { const T = o.times; const v = clamp(nowT(), k > 0 ? T[k - 1] + 0.08 : -1, k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur); nudgeBar(o, k, v - T[k], { stay: true }); });
+  // (the red line may be past the bars around it, when the AI put this bar far off: they make way, and
+  // the AI lines them up again around the bar put right)
+  atLine.addEventListener('click', () => { const T = o.times; const v = clamp(nowT(), -1, ST.dur); const fixed = new Set((o.anchors || []).map((a) => a.k));
+    for (let j = k - 1; j >= 0 && T[j] > v - 0.08 * (k - j); j--) { if (fixed.has(j)) break; T[j] = v - 0.08 * (k - j); }
+    for (let j = k + 1; j < T.length && T[j] < v + 0.08 * (j - k); j++) { if (fixed.has(j)) break; T[j] = Math.min(ST.dur, v + 0.08 * (j - k)); }
+    // (the bars made to give way, spread evenly up to the next one that did not move, until the AI has lined them up)
+    { let m = k + 1; while (m < T.length && T[m] <= v + 0.08 * (m - k) + 1e-6 && !fixed.has(m)) m++; if (m > k + 1 && m < T.length) { const step = (T[m] - v) / (m - k); for (let j = k + 1; j < m; j++) T[j] = v + step * (j - k); } }
+    { let m = k - 1; while (m >= 0 && T[m] >= v - 0.08 * (k - m) - 1e-6 && !fixed.has(m)) m--; if (m < k - 1 && m >= 0) { const step = (v - T[m]) / (k - m); for (let j = m + 1; j < k; j++) T[j] = T[m] + step * (j - m); } }
+    const lo = k > 0 ? T[k - 1] + 0.08 : -1, hi = k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur;
+    nudgeBar(o, k, clamp(v, lo, hi) - T[k], { stay: true }); });
   bs.append(atLine);
   bs.append(el('p', 'hint', 'Tap a bar on the timeline to choose it, or drag its start there. Hold still a moment on it to look closer.'));
   if (!o.reviewed) { const eb = el('button', 'btn small ghost'); eb.append(el('span', '', 'A bar missing, or one too many? Edit the bars'));

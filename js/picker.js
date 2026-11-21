@@ -1,3 +1,4 @@
+import { tr } from './i18n.js';
 // Choose music from a score: pick a score from the library (or a photo / PDF), turn to the page,
 // and draw a loop around the part you want, like the Select tool in Markings. Returns the
 // picture of that part at a good resolution, and where it came from.
@@ -41,7 +42,7 @@ async function showLibrary() {
   // a photo or a PDF from Files works too
   const fb = el('button', 'card pk-file');
   const ft = el('div', 'thumb pk-file-tile'); ft.innerHTML = '<svg><use href="#i-image"/></svg>';
-  fb.append(ft, el('div', 'ttl', 'Photo or file'), el('div', 'cmp', 'An image or a PDF'));
+  fb.append(ft, el('div', 'ttl', tr('Photo or file')), el('div', 'cmp', 'An image or a PDF'));
   const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*,application/pdf,.pdf'; inp.hidden = true;
   inp.addEventListener('change', () => { const f = inp.files[0]; if (f) openFile(f); });
   fb.addEventListener('click', () => inp.click());
