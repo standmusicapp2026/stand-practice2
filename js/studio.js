@@ -1675,8 +1675,9 @@ async function followSalience(L, A, B, onProgress, stop) {
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
       if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
       // (and how many of the page's notes were clearly heard where they were put: a path that slips
-      // past the music in a hurry costs little per moment, but hears few of the notes)
-      const hw = globalThis.__heardW ?? 0.1;
+      // past the music in a hurry, at a pace the players did not keep, costs little per moment, but hears
+      // few of the notes)
+      const hw = globalThis.__heardW ?? 0.3;
       if (r) r.score = r.cost + shPen(shift) - hw * r.heard;
       if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.score < best.score))) best = { ...r, shift, pace, sn };
     }
