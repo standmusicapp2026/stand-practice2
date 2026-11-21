@@ -131,6 +131,13 @@
 .st-bar.cur.sel { box-shadow: inset 0 0 0 2px var(--accent-ink); }
 .st-bar .edge { position: absolute; left: -6px; top: 0; bottom: 0; width: 14px; cursor: ew-resize; }
 .st-bar.end { border: 0; background: transparent; width: 0; overflow: visible; }
+/* how sure the AI is of each bar: to check (amber), doubtful (red); put right by hand (a pin) */
+.st-bar.check { background: color-mix(in srgb, #f5a524 30%, var(--surface-solid)); border-color: color-mix(in srgb, #f5a524 70%, transparent); color: color-mix(in srgb, #f5a524 60%, var(--text)); }
+.st-bar.doubt { background: color-mix(in srgb, #ef4444 30%, var(--surface-solid)); border-color: color-mix(in srgb, #ef4444 75%, transparent); color: color-mix(in srgb, #ef4444 60%, var(--text)); }
+.st-bar.fixed::after { content: ''; position: absolute; left: 1px; top: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-text); }
+.st-bar.check.cur, .st-bar.doubt.cur { color: var(--accent-ink); }
+.st-check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.st-check .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 .st-lanehint { position: absolute; left: 6px; right: 6px; top: 3px; bottom: 3px; border-radius: 6px; border: 1px dashed var(--line); color: var(--muted); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
 .st-img { position: absolute; top: 3px; bottom: 3px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 25%, var(--surface-solid)); border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); font: 600 11px var(--font); color: var(--ink); display: flex; align-items: center; gap: 6px; padding: 0 8px; overflow: hidden; }
 .st-img.sel { box-shadow: 0 0 0 2px var(--warn); }

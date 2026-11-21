@@ -1329,6 +1329,43 @@ async function autoSync(o, { from = 0 } = {}) {
     return finishSync(o, L, from, A, B, fitT, byBar, best);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
 }
+// A bar put right by hand (dragged, nudged, or started at the red line): it is pinned there, and a
+// moment after the last change the AI lines up all the other bars again around the pins — one bar put
+// right usually puts right the bars around it. Only where the following listened (not tapped bars).
+function putRight(o, k) {
+  if (!o || !o.times || !o.layout || k >= o.layout.bars.length) return;
+  const how = o.syncInfo && o.syncInfo.how;
+  if (!(how === 'ai' || how === 'pitches') || !ST.pcm || scoreLines().length > 1) return;
+  o.anchors = (o.anchors || []).filter((a) => a.k !== k); o.anchors.push({ k, t: o.times[k] });
+  if (o.conf) o.conf[k] = 1;
+  clearTimeout(ST.realignT); ST.realignT = setTimeout(() => realign(o), 1100);
+}
+async function realign(o) {
+  if (!o || !o.anchors || !o.anchors.length || !o.layout || !ST.pcm) return;
+  if (ST.realigning) { clearTimeout(ST.realignT); ST.realignT = setTimeout(() => realign(o), 600); return; }
+  ST.realigning = true;
+  const L = o.layout, nb = L.bars.length, A = ST.P.trim.a, B = ST.P.trim.b;
+  const anchors = o.anchors.map((a) => ({ ...a }));
+  const tag = $('#stBarNow'); const was = tag ? tag.textContent : '';
+  if (tag) tag.textContent = 'The AI is lining up the other bars…';
+  try {
+    const sal = await followSalience(L, A, B, null, () => false, { anchors, shift: o.syncInfo && o.syncInfo.shift });
+    // (a newer pin while it listened: that one wins, the work starts again)
+    if (!sal || JSON.stringify(anchors) !== JSON.stringify(o.anchors)) return;
+    const times = sal.T.slice(0, nb + 1);
+    for (const a of anchors) times[a.k] = a.t;
+    times[nb] = Math.max(times[nb], times[nb - 1] + 0.2);
+    o.times = times.map((t) => clamp(t, A, B));
+    for (const a of anchors) o.times[a.k] = a.t;
+    const byBar = Array.from({ length: nb }, () => []);
+    for (const e of sal.evs) byBar[e.bar].push({ x: e.x, t: e.t });
+    o.knots = knotsOf(byBar, o.times, L.bars); o._evs = sal.evs;
+    o.conf = sal.conf.slice(); for (const a of anchors) if (a.k < nb) o.conf[a.k] = 1;
+    o.synced = 'auto';
+    saveSoon(); renderTimeline(); frame(); if (ST.tab === 'timing') renderSide();
+  } catch (err) { console.warn('realign', err); }
+  finally { ST.realigning = false; if (tag && tag.textContent === 'The AI is lining up the other bars…') tag.textContent = was; updateHead(); }
+}
 // The bar times found, put on the line: the last bar's end, the bars kept (from a bar), the line's
 // movement inside each bar.
 function finishSync(o, L, from, A, B, fitT, byBar, best) {
@@ -1352,6 +1389,9 @@ function finishSync(o, L, from, A, B, fitT, byBar, best) {
     // (the bars kept keep their own; one that had none gets none: the line then moves evenly in it)
     o.knots = from ? [...Array.from({ length: from }, (_, k) => (o.knots && o.knots[k]) || []), ...newKnots] : newKnots;
     o.synced = 'auto'; o.syncInfo = { good: best.good, clef: best.clef, shift: best.shift, how: best.how, alt: best.alt };
+    // (how sure each bar is; the bars put right by hand start again)
+    if (best.conf && best.conf.length === nb) o.conf = from ? [...Array.from({ length: from }, (_, k) => (o.conf && o.conf[k] != null ? o.conf[k] : 1)), ...best.conf] : best.conf.slice(); else if (!from) o.conf = null;
+    if (!from) o.anchors = []; else if (o.anchors) o.anchors = o.anchors.filter((a) => a.k < from);
     busy(null);
     saveSoon(); renderSide(); renderTimeline(); frame();
     D.toast(best.how === 'ai' ? (best.good > 0.55 ? `The AI lined up the score with your playing (${Math.round(best.good * 100)}% of the notes heard).` : 'The AI lined it up as well as it could. Check the bars on the timeline, or use Tap along.')
@@ -1543,7 +1583,7 @@ function midiSteps(L, clef, shift) {
 // The page through the recording (dynamic time warping with the pace held, as pacedAlign): at each
 // moment, how strongly the page's notes sound. Returns { T: bar starts (nb + 1), at: the moment of each
 // step, cost } or null.
-function pacedSalience(sn, nb, fr0, pace, onw) {
+function pacedSalience(sn, nb, fr0, pace, onw, anch) {
   if (!(pace > 0.2) || fr0.length < 4) return null;
   const dt = pace / PSTEPS, NP = SAL_HI - SAL_LO + 1;
   // (what sounds in moments a page step long at this pace: the strongest of the frames in each)
@@ -1583,16 +1623,23 @@ function pacedSalience(sn, nb, fr0, pace, onw) {
   // (the sums kept for the last three steps of the page only; the way back, one byte a cell)
   // (leaving out a moment of the recording costs the same per second at every pace)
   const SKIP = 0.4 * ((globalThis.__skipTime ?? 0) ? dt / 0.075 : 1), W = m + 1;
+  // (bars put right by hand: the bar's first step must fall where it was put; the rest follows)
+  const pen = new Array(n).fill(null);
+  if (anch && anch.length) for (const a of anch) {
+    const i = a.k * PSTEPS; if (i < 0 || i >= n) continue;
+    const r = new Float32Array(m); for (let j = 0; j < m; j++) r[j] = Math.abs(fr[j].t - a.t) <= Math.max(0.06, dt * 1.01) ? 0 : 60;
+    pen[i] = r;
+  }
   let D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
   const P = new Uint8Array((n + 1) * W);
   for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
   for (let i = 1; i <= n; i++) {
-    const ri = rows[i - 1], rp = i >= 2 ? rows[i - 2] : null;
+    const ri = rows[i - 1], rp = i >= 2 ? rows[i - 2] : null, pi = pen[i - 1], pp = i >= 2 ? pen[i - 2] : null;
     D0.fill(1e9, 0, 1);
     for (let j = 1; j <= m; j++) {
-      const c = ri[j - 1];
+      const c = ri[j - 1] + (pi ? pi[j - 1] : 0);
       let v = D1[j - 1] + c, how = 1;
-      if (rp) { const v2 = D2[j - 1] + rp[j - 1] + c; if (v2 < v) { v = v2; how = 2; } }
+      if (rp) { const v2 = D2[j - 1] + rp[j - 1] + (pp ? pp[j - 1] : 0) + c; if (v2 < v) { v = v2; how = 2; } }
       if (j >= 2) { const v3 = D1[j - 2] + ri[j - 2] + c; if (v3 < v) { v = v3; how = 3; } }
       // (a note held three times as long: a pause, the end of a phrase)
       if (j >= 3) { const v4 = D1[j - 3] + ri[j - 3] + ri[j - 2] + c + 0.35; if (v4 < v) { v = v4; how = 4; } }
@@ -1621,7 +1668,9 @@ function pacedSalience(sn, nb, fr0, pace, onw) {
   }
   const pts = [];
   for (let q = 0; q < n; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q]) && at[q] >= 0) pts.push({ k: Math.floor(q / PSTEPS), f: (q % PSTEPS) / PSTEPS, t: at[q], w: 1 });
+  if (anch) for (const a of anch) if (a.k >= 0 && a.k <= nb) pts.push({ k: a.k, f: 0, t: a.t, w: 40 });
   const T = smoothFit(pts, nb, 0.08);
+  if (T && anch) fixAnchors(T, anch, nb);
   return T ? { T, at, sc, cost: per, costN: bc / n, heard: heard / Math.max(1, notes) } : null;
 }
 // Following the playing by what sounds at each pitch: the clef and the key the instrument sounds in
@@ -1647,7 +1696,7 @@ function agreeOf(T, sn, nb, fr) {
   }
   return ok / Math.max(1, all);
 }
-async function followSalience(L, A, B, onProgress, stop) {
+async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // (the AI's hearing first; the old way if the network cannot run on this device)
   const MIX = globalThis.__aiMix ?? 0.4;   // (measured on 96 recordings with their bar times: 0.4 best)
   let fr = (globalThis.__useAI ?? 1) ? (MIX >= 1 ? await salienceFramesAI(ST.pcm, ST.sr, A, B, onProgress, stop) : await salienceFramesBoth(ST.pcm, ST.sr, A, B, onProgress, stop, MIX)) : null;
@@ -1678,7 +1727,7 @@ async function followSalience(L, A, B, onProgress, stop) {
     const keys = []; for (let d = 0; d < 12; d++) { let c = 0; for (let q = 0; q < 12; q++) c += zs[q] * za[(q + d) % 12]; keys.push({ d, c }); }
     keys.sort((a, b) => b.c - a.c);
     if (globalThis.__salDbg) globalThis.__salDbg.push(['keys', keys.slice(0, 4).map((k) => [k.d, +k.c.toFixed(3)])]);
-    for (const k of keys.slice(0, 2)) for (const o of [-24, -12, 0, 12]) { const d = k.d + o; if (d >= -26 && d <= 14) coarse.push(d); }
+    for (const k of keys.slice(0, globalThis.__nKeys ?? 4)) for (const o of [-24, -12, 0, 12]) { const d = k.d + o; if (d >= -26 && d <= 14) coarse.push(d); }
   } else {
     for (let d = -14; d <= 14; d++) coarse.push(d);
     coarse.push(-24, 24);
@@ -1686,6 +1735,9 @@ async function followSalience(L, A, B, onProgress, stop) {
   const first = [];
   const s0 = midiSteps(L, clef, 0);
   if (s0.filter(Boolean).length < 4) return null;
+  // (bars put right by hand: the key already found kept, every pace tried through those bars)
+  const anch = opts.anchors && opts.anchors.length ? opts.anchors : null;
+  if (anch && opts.shift !== undefined && opts.shift !== null) coarse.length = 0;
   for (const shift of coarse) {
     const sn = midiSteps(L, clef, shift);
     const r = pacedSalience(sn, nb, fr, 2.2, onw);
@@ -1694,12 +1746,12 @@ async function followSalience(L, A, B, onProgress, stop) {
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
   }
   first.sort((p, q) => p.c - q.c);
-  const shifts = [...new Set([...first.slice(0, 3).map((q) => q.shift), 0])];
+  const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 3).map((q) => q.shift), 0])];
   let all = null;
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
     for (const pace of [1.2, 1.8, 2.6, 3.6]) {
-      const r = pacedSalience(sn, nb, fr, pace, onw);
+      const r = pacedSalience(sn, nb, fr, pace, onw, anch);
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
       // how much is what the page has there — and loud music outside the bars counts against)
@@ -1725,7 +1777,21 @@ async function followSalience(L, A, B, onProgress, stop) {
   const items = midiSteps(L, clef, 0), k0 = Math.floor(items.findIndex(Boolean) / PSTEPS);
   if (k0 >= 1) {
     const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * 0.08) || fr[0]).t - 0.2;
-    if (on < T[k0] - 0.5) for (let k = 0; k < k0; k++) T[k] = on + ((T[k0] - on) * k) / k0;
+    if (on < T[k0] - 0.5 && !(anch && anch.some((a) => a.k <= k0))) for (let k = 0; k < k0; k++) T[k] = on + ((T[k0] - on) * k) / k0;
+  }
+  // (bars where the page has only rests — the piano's interludes — evenly between the bars around them
+  // that have notes, or that were put by hand: nothing on the page says otherwise, and the pace holds)
+  if (globalThis.__restEven ?? 1) {
+    const has = new Array(nb).fill(false);
+    for (let q = 0; q < items.length; q++) if (items[q]) has[Math.floor(q / PSTEPS)] = true;
+    if (anch) for (const a of anch) if (a.k >= 0 && a.k < nb) has[a.k] = true;
+    let i = -1;
+    for (let k = 0; k <= nb; k++) {
+      if (k < nb && !has[k]) continue;
+      // (bars i+1 .. k-1 have no notes; i and k do — or k is the end)
+      if (i >= 0 && k - i > 2 && k < nb) for (let q = i + 2; q < k; q++) T[q] = T[i + 1] + ((q - i - 1) * (T[k] - T[i + 1])) / (k - i - 1);
+      i = k;
+    }
   }
   // the notes as heard: each note's first step, the moment it was matched
   const evs = [];
@@ -1738,6 +1804,13 @@ async function followSalience(L, A, B, onProgress, stop) {
   // notes of its own (rests) is as sure as its neighbours
   const conf = barConfidence(sn, nb, best.sc);
   return { T, evs, conf, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches' };
+}
+// (the bars put by hand exactly where they were put; the bars between, kept in order)
+function fixAnchors(T, anch, nb) {
+  for (const a of anch) if (a.k >= 0 && a.k <= nb) T[a.k] = a.t;
+  const fixed = new Set(anch.map((a) => a.k));
+  for (let k = 1; k <= nb; k++) if (!fixed.has(k) && T[k] <= T[k - 1] + 0.05) T[k] = T[k - 1] + 0.05;
+  for (let k = nb - 1; k >= 0; k--) if (!fixed.has(k) && T[k] >= T[k + 1] - 0.05) T[k] = T[k + 1] - 0.05;
 }
 function barConfidence(sn, nb, sc) {
   const conf = new Array(nb).fill(null);
@@ -2524,7 +2597,7 @@ function renderTimeline() {
   const o = scoreOv();
   if (o && o.times) {
     o.layout.bars.forEach((bar, k) => {
-      const d = el('div', 'st-bar' + (ST.selBar === k ? ' sel' : ''));
+      const d = el('div', 'st-bar' + (ST.selBar === k ? ' sel' : '') + confClass(o, k));
       d.dataset.bar = k;
       const edge = el('span', 'edge'); edge.dataset.k = k; d.append(edge); placeBarEl(d, o, k, z);
       roll.append(d);
@@ -2546,6 +2619,15 @@ function renderTimeline() {
   $('#stZoomOut').hidden = !(zNow() > zFit() * 1.04);
   $('#stLoupe').classList.toggle('on', !!ST.tz && ST.tz > zFit() * 1.5);
 }
+// (how sure the following is of a bar, shown by its colour; a bar put right by hand has a pin)
+function confClass(o, k) {
+  const fixed = o.anchors && o.anchors.some((a) => a.k === k);
+  if (fixed) return ' fixed';
+  if (!o.conf || o.synced === 'tap' || o.synced === 'even' || o.conf[k] == null) return '';
+  return o.conf[k] < CONF_DOUBT ? ' doubt' : o.conf[k] < CONF_SURE ? ' check' : '';
+}
+// the bars still to check (doubtful first), from bar k on
+function barsToCheck(o) { if (!o.conf || o.synced === 'tap' || o.synced === 'even') return []; const fixed = new Set((o.anchors || []).map((a) => a.k)); const out = []; for (let k = 0; k < o.conf.length; k++) if (!fixed.has(k) && o.conf[k] < CONF_SURE) out.push(k); return out; }
 function placeBarEl(d, o, k, z = zNow()) {
   const l0 = Math.max(0, o.times[k]) * z, w = Math.max(2, o.times[k + 1] * z - l0 - 1);
   d.style.left = l0 + 'px'; d.style.width = w + 'px';
@@ -2904,7 +2986,7 @@ function wireTimeline() {
     const d = drag; drag = null; clearTimeout(d.hold); cancelAnimationFrame(autoRaf); autoRaf = 0;
     if (d.loupe) loupeOff(d);
     if (d.kind === 'trim') { $('#stTrimTip').hidden = true; restoreView(); saveSoon(); renderSide(); return; }
-    if (d.kind === 'bar') { restoreView(); saveSoon(); renderTimeline(); if (ST.tab === 'timing') renderSide(); return; }
+    if (d.kind === 'bar') { restoreView(); if (d.moved) putRight(scoreOv(), d.k); saveSoon(); renderTimeline(); if (ST.tab === 'timing') renderSide(); return; }
     if (d.kind === 'img') { restoreView(); saveSoon(); renderTimeline(); return; }
     // the red line: a tap goes there (a bar: to its start, and it is chosen); let go while moving, it runs on
     if (!d.moved) {
@@ -3109,6 +3191,21 @@ function renderTimingTab(side) {
   fol.append(row);
   if (!ST.pcm) fol.append(el('p', 'hint', 'This recording has no sound to listen to: tap along instead.'));
   else if (part) fol.append(el('p', 'hint', 'Stand listens to the recording and puts each bar where you play it. Move the red line to a bar first to follow from there.'));
+  // (the bars the AI is not sure of: one after another, to look at and put right)
+  const chk = barsToCheck(o);
+  if (o.conf && (o.synced === 'auto' || o.synced === 'hand')) {
+    const box = el('div', 'st-check');
+    if (!chk.length) box.append(el('span', 'hint', 'The AI is sure of every bar.'));
+    else {
+      const red = chk.filter((k2) => o.conf[k2] < CONF_DOUBT).length;
+      box.append(el('span', '', red ? `${chk.length} bars to check (${red} doubtful)` : `${chk.length} bars to check`));
+      const cur = ST.selBar ?? -1, nx = chk.find((k2) => k2 > cur) ?? chk[0];
+      const go = el('button', 'btn small'); go.append(el('span', '', `Check bar ${nx + 1}`)); go.addEventListener('click', () => selectBar(nx));
+      box.append(go);
+    }
+    fol.append(box);
+    fol.append(el('p', 'hint', 'Red bars: the AI is doubtful; amber: check them. Put a bar right (drag its start, or the buttons below): the AI lines up the others around it.'));
+  }
   if (show('follow')) side.append(fol);
   // tapping along, from the bar chosen (at first, the first bar with notes: the rests before are counted for you)
   const tp = sec('Tap along');
@@ -3166,6 +3263,7 @@ function nudgeBar(o, k, d, { stay = false } = {}) {
   const T = o.times; if (!T) return;
   T[k] = clamp(T[k] + d, k > 0 ? T[k - 1] + 0.08 : Math.min(-1, T[0]), k < T.length - 1 ? T[k + 1] - 0.08 : ST.dur);
   T[k] = Math.round(T[k] * 1000) / 1000;
+  putRight(o, k);
   o.synced = 'hand'; ST.selBar = k;
   const two = scoreLines().find((x) => x !== o); if (two && two.times && two.times.length === T.length) { two.times[k] = T[k]; two.synced = 'hand'; }
   saveSoon(); renderTimeline(); barCardTime();
