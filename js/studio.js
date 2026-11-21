@@ -1855,6 +1855,22 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       i = k;
     }
   }
+  // (a bar stretched to many times the others beside bars squeezed to slivers: the following lost its
+  // way there — a pace does not jump tenfold. The stretch evenly between its ends)
+  if (globalThis.__unsqueeze ?? 1) {
+    const fixedK = new Set((anch || []).map((a) => a.k));
+    const d = []; for (let k = 0; k < nb; k++) d.push(T[k + 1] - T[k]);
+    const md = d.slice().sort((a, b) => a - b)[nb >> 1];
+    for (let k = 0; k < nb; k++) {
+      if (!(d[k] > md * 3)) continue;
+      let a = k, b = k + 1;
+      while (a > 0 && d[a - 1] < md * 0.75 && !fixedK.has(a)) a--;
+      while (b < nb && d[b] < md * 0.75 && !fixedK.has(b)) b++;
+      if (b - a < 3) continue;
+      for (let j = a + 1; j < b; j++) if (!fixedK.has(j)) T[j] = T[a] + ((T[b] - T[a]) * (j - a)) / (b - a);
+      for (let j = a; j < b; j++) d[j] = T[j + 1] - T[j];
+    }
+  }
   // the notes as heard: each note's first step, the moment it was matched
   const evs = [];
   const sn = best.sn;
