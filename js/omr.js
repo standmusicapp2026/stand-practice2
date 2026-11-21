@@ -1749,7 +1749,8 @@ function readStaff(s, ctx, header) {
       const top = pAt(s, y0, (x0 + x1) / 2), bot = pAt(s, y1, (x0 + x1) / 2);
       let name = null;
       if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4) name = 'treble';
-      else if (k.cls === 'bass' && top > 5 && bot > 0.5) name = 'bass';
+      else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22)) name = 'bass';
+      // (a grace note with its slash, an accidental before it, has a bass clef's outline but not its two dots)
       else if (k.cls === 'alto') { const mid = (top + bot) / 2; name = cLine(mid); }
       if (!name) continue;
       for (const q of all) used.add(q);
