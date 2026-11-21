@@ -1750,7 +1750,8 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   let all = null;
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
-    for (const pace of [1.2, 1.8, 2.6, 3.6]) {
+    // (seconds a bar: from a quick two-in-a-bar to a very slow song, seven seconds a bar)
+    for (const pace of (globalThis.__paces || [0.8, 1.2, 1.8, 2.6, 3.6, 5.0, 7.0])) {
       const r = pacedSalience(sn, nb, fr, pace, onw, anch);
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
