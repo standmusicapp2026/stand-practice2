@@ -3287,6 +3287,23 @@ export async function recognise(canvas, opts = {}) {
   const firstChange = meta.findIndex((m, i) => i > 0 && m.time);
   const before = firstChange > 0 ? bars.slice(0, firstChange) : bars;
   const time = chooseTime(first, before.filter((b) => !(b.length === 1 && b[0].full)));
+  // (a time change along the music that the bars after it do not keep, while they keep the time
+  // before it, was misread: a digit drawn alike, a mark taken for a digit)
+  if (globalThis.__timeChangeCheck ?? 1) {
+    const adds = (b, t) => { if (b.length === 1 && b[0].full) return null; const tot = (WHOLE * t[0]) / t[1]; const f = fitBar(b, tot, { tupletsOnly: true, compound: t[1] === 8 && t[0] % 3 === 0 }); const sm = f.reduce((a, it) => a + (it.full ? tot : ticksOf(it.t, it.dots) * (it.tup ? it.tup.m / it.tup.n : 1)), 0); return Math.abs(sm - tot) < 1; };
+    let cur = time;
+    for (let i = 1; i < meta.length; i++) {
+      const m = meta[i]; if (!m.time) continue;
+      if (m.time[0] === cur[0] && m.time[1] === cur[1]) continue;
+      let j = i + 1; while (j < meta.length && !meta[j].time) j++;
+      const seg = bars.slice(i, Math.min(j, i + 8)).filter((b) => !(b.length === 1 && b[0].full));
+      if (seg.length >= 2) {
+        const okNew = seg.filter((b) => adds(b, m.time)).length, okOld = seg.filter((b) => adds(b, cur)).length;
+        if (okOld >= seg.length * 0.6 && okOld > okNew) { delete m.time; continue; }
+      }
+      cur = m.time;
+    }
+  }
   // the time of each bar
   const times = []; { let t = time; meta.forEach((m, i) => { if (i > 0 && m.time) t = m.time; times.push(t); }); }
   const totalOf = (i) => (WHOLE * times[i][0]) / times[i][1];
