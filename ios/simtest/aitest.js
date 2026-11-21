@@ -24,7 +24,8 @@ async function step(name, fn, ms = 120000) {
     const top = (i) => { let b = 0; for (let k = 1; k < 88; k++) if (h.note[i * 88 + k] > h.note[i * 88 + b]) b = k; return b + 21; };
     const a = top(Math.round(P.NET_FPS * 2)), c = top(Math.round(P.NET_FPS * 6));
     const ok = a === 57 && (c === 73 || c === 76);
-    return ok ? `A3 then C#5/E5 heard, ${Math.round(performance.now() - t0)} ms for 8 s` : `heard ${a}, ${c}` && false;
+    if (!ok) throw new Error(`heard ${a}, ${c}`);
+    return `A3 then C#5/E5 heard, ${Math.round(performance.now() - t0)} ms for 8 s`;
   });
   await step('AI: the live ear', async () => {
     const { LiveEar } = await import('./ai/liveear.js');
@@ -34,9 +35,10 @@ async function step(name, fn, ms = 120000) {
     await sleep(3000);
     const c = await ear.chromaAfter(performance.now() - 300);
     ear.detach(); osc.stop();
-    if (!c) return ctx.state === 'running' ? false : `no sound running here (${ctx.state})`;
+    if (!c) throw new Error(`nothing heard yet (sound ${ctx.state}; a slow simulator)`);
     let b = 0; for (let i = 1; i < 12; i++) if (c[i] > c[b]) b = i;
-    return b === 7 ? `G heard (${c[7].toFixed(2)})` : false;
+    if (b !== 7) throw new Error('heard pitch class ' + b);
+    return `G heard (${c[7].toFixed(2)})`;
   });
   say(`SELFTEST DONE ok ${R.ok} fail ${R.fail}`);
 })();
