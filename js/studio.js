@@ -1741,7 +1741,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   for (const shift of coarse) {
     const sn = midiSteps(L, clef, shift);
     const r = pacedSalience(sn, nb, fr, 2.2, onw);
-    if (r) first.push({ shift, c: r.cost + shPen(shift) });
+    if (r) first.push({ shift, c: (globalThis.__firstAgree ?? 1) ? -(agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5) : r.cost + shPen(shift) });
     if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, 2.2, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
   }
@@ -1756,12 +1756,12 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
       // how much is what the page has there — and loud music outside the bars counts against)
-      if (r && (globalThis.__judgeTime ?? 0)) r.agree = agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5;
+      if (r && (globalThis.__judgeTime ?? 1)) r.agree = agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5;
       // (a pace the playing did not keep: the bars found are much longer or shorter than it — the page
       // stretched or squeezed to fit — counts against)
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
       if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
-      if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
+      if (r && (!best || ((globalThis.__judgeTime ?? 1) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
     if (stop && stop()) return null;
