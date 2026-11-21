@@ -1350,7 +1350,7 @@ function finishSync(o, L, from, A, B, fitT, byBar, best) {
     o.times = allTimes;
     // (the bars kept keep their own; one that had none gets none: the line then moves evenly in it)
     o.knots = from ? [...Array.from({ length: from }, (_, k) => (o.knots && o.knots[k]) || []), ...newKnots] : newKnots;
-    o.synced = 'auto'; o.syncInfo = { good: best.good, clef: best.clef, shift: best.shift, how: best.how, alt: best.alt };
+    o.synced = 'auto'; o.syncInfo = { good: best.good, clef: best.clef, shift: best.shift, how: best.how, alt: best.alt, feat: best.feat || null };
     busy(null);
     saveSoon(); renderSide(); renderTimeline(); frame();
     D.toast(best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
@@ -1535,7 +1535,7 @@ function pacedSalience(sn, nb, fr0, pace) {
       row = new Float32Array(m);
       for (let j = 0; j < m; j++) {
         const f = fr[j];
-        if (!ms) { row[j] = f.rms < loud * 0.05 ? 0.1 : 0.5; continue; }
+        if (!ms) { row[j] = f.rms < loud * 0.05 ? (globalThis.__restQ ?? 0.1) : (globalThis.__restL ?? 0.5); continue; }
         if (f.rms < loud * 0.03) { row[j] = 0.9; continue; }
         let v = 0, c = 0, o2 = 0; for (const mm of ms) { const p = mm - SAL_LO; if (p >= 0 && p < NP) { v += f.s[p]; if (f.on[p] > o2) o2 = f.on[p]; } c++; }
         row[j] = 1 - v / Math.max(1, c) + (first ? ONW * (1 - Math.min(1, o2 * 2.5)) : 0);
@@ -1586,7 +1586,23 @@ function pacedSalience(sn, nb, fr0, pace) {
   const pts = [];
   for (let q = 0; q < n; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q]) && at[q] >= 0) pts.push({ k: Math.floor(q / PSTEPS), f: (q % PSTEPS) / PSTEPS, t: at[q], w: 1 });
   const T = smoothFit(pts, nb, 0.08);
-  return T ? { T, at, cost: per, costN: bc / n, heard: heard / Math.max(1, notes) } : null;
+  return T ? { T, at, sc, cost: per, costN: bc / n, heard: heard / Math.max(1, notes) } : null;
+}
+function barFeatures(best, cands, nb) {
+  const sn = best.sn, fit = new Array(nb).fill(null), notes = new Array(nb).fill(0);
+  if (best.sc) for (let q = 0; q < sn.length; q++) if (sn[q] && (q === 0 || sn[q - 1] !== sn[q])) {
+    const k = Math.floor(q / PSTEPS); let e = q, sum = 0; while (e < sn.length && sn[e] === sn[q]) { sum += Math.min(1.5, best.sc[e]); e++; }
+    fit[k] = (fit[k] || 0) + sum / (e - q); notes[k]++;
+  }
+  for (let k = 0; k < nb; k++) if (notes[k]) fit[k] = +(fit[k] / notes[k]).toFixed(3);
+  const near = cands.filter((c) => c.T !== best.T && c.score < best.score + (globalThis.__nearM ?? 0.03));
+  const spread = new Array(nb).fill(0), spread2 = new Array(nb).fill(0);
+  for (let k = 0; k < nb; k++) {
+    const len = Math.max(0.3, best.T[k + 1] - best.T[k]);
+    for (const c of near) { const d = Math.abs(c.T[k] - best.T[k]) / len; if (d > spread[k]) spread[k] = d; }
+    for (const c of cands) if (c.shift === best.shift && c.T !== best.T) { const d = Math.abs(c.T[k] - best.T[k]) / len; if (d > spread2[k]) spread2[k] = d; }
+  }
+  return { fit, notes, spread: spread.map((v) => +v.toFixed(3)), spread2: spread2.map((v) => +v.toFixed(3)), near: near.length, margin: +((cands.filter((c) => c.T !== best.T).reduce((m, c) => Math.min(m, c.score), 9) - best.score)).toFixed(4) };
 }
 // Following the playing by what sounds at each pitch: the clef and the key the instrument sounds in
 // tried (as written, an octave either way, a B-flat or E-flat instrument...), and the pace; the best
@@ -1654,7 +1670,7 @@ async function followSalience(L, A, B, onProgress, stop) {
   }
   first.sort((p, q) => p.c - q.c);
   const shifts = [...new Set([...first.slice(0, 3).map((q) => q.shift), ...((globalThis.__zeroAlways ?? 1) || coarse.includes(0) ? [0] : [])])];
-  let all = null;
+  let all = null; const cands = [];
   // (and the pace the whole sounding length gives the page's bars, when it is none of these)
   const paces = [1.2, 1.8, 2.6, 3.6];
   if (globalThis.__spanPace ?? 1) {
@@ -1679,6 +1695,7 @@ async function followSalience(L, A, B, onProgress, stop) {
       // few of the notes)
       const hw = globalThis.__heardW ?? 0.3;
       if (r) r.score = r.cost + shPen(shift) - hw * r.heard;
+      if (r) cands.push({ T: r.T, score: r.score, shift, pace });
       if (r && (!best || ((globalThis.__judgeTime ?? 0) ? r.agree > best.agree : r.score < best.score))) best = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
@@ -1711,7 +1728,10 @@ async function followSalience(L, A, B, onProgress, stop) {
     const k = Math.floor(q / PSTEPS), b = L.bars[k];
     evs.push({ bar: k, x: sn.xAt && sn.xAt.has(q) ? sn.xAt.get(q) : b.x0 + ((q % PSTEPS) / PSTEPS) * (b.x1 - b.x0), t: best.at[q] >= 0 ? best.at[q] : null });
   }
-  return { T, evs, cost: best.cost, shift: best.shift, clef, good: best.heard, how: 'pitches' };
+  // (what each bar's place rests on, for how sure it is: how well its notes are heard where they were
+  // put, and how far the other likely ways of following put it)
+  const feat = barFeatures(best, cands, nb);
+  return { T, evs, cost: best.cost, shift: best.shift, clef, good: best.heard, how: 'pitches', feat };
 }
 // ---- following in time ----
 // The page as pitches through time: each bar cut into small steps, each step with the pitch classes
