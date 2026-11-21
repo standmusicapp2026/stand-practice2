@@ -1242,7 +1242,7 @@ async function autoSync(o, { from = 0 } = {}) {
     // behind the soloist as well as alone, and for the piano itself
     let sal = null;
     if ((globalThis.__salFollow ?? 1) && globalThis.__studioHow !== 'notes') {
-      sal = await followSalience(L, A, B, (f) => busy('Following your playing…', 'Listening to the recording.', f * 0.85), () => cancelled);
+      sal = await followSalience(L, A, B, (f) => busy('Following your playing…', (globalThis.__useAI ?? 1) ? 'The AI is listening to the recording.' : 'Listening to the recording.', f * 0.85), () => cancelled);
       if (cancelled) return;
       try { window.__studioPickInfo = { chosen: sal ? 'pitches' : null, good: sal && +sal.good.toFixed(3), cost: sal && +sal.cost.toFixed(3), shift: sal && sal.shift }; } catch {}
     }
@@ -1354,7 +1354,8 @@ function finishSync(o, L, from, A, B, fitT, byBar, best) {
     o.synced = 'auto'; o.syncInfo = { good: best.good, clef: best.clef, shift: best.shift, how: best.how, alt: best.alt };
     busy(null);
     saveSoon(); renderSide(); renderTimeline(); frame();
-    D.toast(best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
+    D.toast(best.how === 'ai' ? (best.good > 0.55 ? `The AI lined up the score with your playing (${Math.round(best.good * 100)}% of the notes heard).` : 'The AI lined it up as well as it could. Check the bars on the timeline, or use Tap along.')
+      : best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
 }
 // One way of listening taken to the end: the bar times from the notes it matched (fitBarTimes),
@@ -1484,6 +1485,23 @@ async function salienceFramesAI(pcm, sr, a, b, onProgress, stop) {
     frames.push({ t: h.t0 + i / h.fps + OFF, s, on, rms: h.rms[i] });
   }
   return frames;
+}
+// Both hearings together: the AI's (which notes sound) and the old one (how strongly each pitch and its
+// partials sound). Each moment of the old picture, with the AI's picture of that moment mixed in.
+async function salienceFramesBoth(pcm, sr, a, b, onProgress, stop, mix) {
+  const ai = await salienceFramesAI(pcm, sr, a, b, (f) => onProgress && onProgress(f * 0.7), stop);
+  if (!ai || (stop && stop())) return null;
+  const old = await salienceFrames(pcm, sr, a, b, (f) => onProgress && onProgress(0.7 + f * 0.3));
+  const NP = SAL_HI - SAL_LO + 1;
+  let q = 0;
+  for (const f of old) {
+    while (q < ai.length - 1 && ai[q + 1].t <= f.t) q++;
+    // (the AI's frames are shorter: the strongest of the ones this frame covers)
+    const s = new Float32Array(NP), on = new Float32Array(NP);
+    for (let j = Math.max(0, q - 1); j <= Math.min(ai.length - 1, q + 1); j++) for (let p = 0; p < NP; p++) { if (ai[j].s[p] > s[p]) s[p] = ai[j].s[p]; if (ai[j].on[p] > on[p]) on[p] = ai[j].on[p]; }
+    for (let p = 0; p < NP; p++) { f.s[p] = (1 - mix) * f.s[p] + mix * s[p]; f.on[p] = (1 - mix) * f.on[p] + mix * on[p]; }
+  }
+  return old;
 }
 // The page as pitches through time (as pitchSamples, but the notes' own pitches, octave and all): each
 // bar cut into steps; each step the notes sounding there. A bar's music begins a little after its
@@ -1631,7 +1649,8 @@ function agreeOf(T, sn, nb, fr) {
 }
 async function followSalience(L, A, B, onProgress, stop) {
   // (the AI's hearing first; the old way if the network cannot run on this device)
-  let fr = (globalThis.__useAI ?? 1) ? await salienceFramesAI(ST.pcm, ST.sr, A, B, onProgress, stop) : null;
+  const MIX = globalThis.__aiMix ?? 0.4;   // (measured on 96 recordings with their bar times: 0.4 best)
+  let fr = (globalThis.__useAI ?? 1) ? (MIX >= 1 ? await salienceFramesAI(ST.pcm, ST.sr, A, B, onProgress, stop) : await salienceFramesBoth(ST.pcm, ST.sr, A, B, onProgress, stop, MIX)) : null;
   if (stop && stop()) return null;
   const ai = !!fr;
   if (!fr) fr = await salienceFrames(ST.pcm, ST.sr, A, B, onProgress);
