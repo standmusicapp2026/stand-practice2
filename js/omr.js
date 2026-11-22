@@ -2335,7 +2335,8 @@ function readStaff(s, ctx, header) {
     // (a line from a head) nor the line's first, where the staff begins
     const V = ctx.vecOf && ctx.vecOf.get(s);
     if (V && V.bars.length && (globalThis.__vecBars ?? 1)) {
-      const isStem = (x) => heads.some((hd) => hd.stem && Math.abs(hd.stem.x - x) < sp * 0.25);
+      // (a barline touches no head: a line at a head's edge is its stem, beam or no beam)
+      const isStem = (x) => heads.some((hd) => (hd.stem && Math.abs(hd.stem.x - x) < sp * 0.25) || Math.abs(hd.right - x) < sp * 0.45 || Math.abs(hd.left - x) < sp * 0.45);
       for (const vb of V.bars) {
         if (vb.x < startX - sp * 0.5 || vb.x < s.x0 + sp * 1.5 || isStem(vb.x)) continue;
         if (merged.some((b) => Math.abs(b.x - vb.x) < sp * 0.9)) continue;
@@ -3238,7 +3239,10 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
           continue;
         }
         // (a line from the top of a staff to its foot, or over several staves: a barline for each)
-        { const ya = Math.min(y0, y1), yb = Math.max(y0, y1); for (const st2 of staves) if (ya <= st2.top + st2.sp * 0.3 && yb >= st2.bottom - st2.sp * 0.3 && (x0 + x1) / 2 > st2.x0 - st2.sp && (x0 + x1) / 2 < st2.x1 + st2.sp) ctx.vecOf.get(st2).bars.push({ x: (x0 + x1) / 2, w: Math.max(1, l.w * f), ya, yb }); }
+        { const ya = Math.min(y0, y1), yb = Math.max(y0, y1);
+          // (its ends on a staff's top line and a staff's bottom line: a stem's do not stop there)
+          const onTop = staves.some((q2) => Math.abs(ya - q2.top) < q2.sp * 0.3), onBot = staves.some((q2) => Math.abs(yb - q2.bottom) < q2.sp * 0.3);
+          if (onTop && onBot) for (const st2 of staves) if (ya <= st2.top + st2.sp * 0.3 && yb >= st2.bottom - st2.sp * 0.3 && (x0 + x1) / 2 > st2.x0 - st2.sp && (x0 + x1) / 2 < st2.x1 + st2.sp) ctx.vecOf.get(st2).bars.push({ x: (x0 + x1) / 2, w: Math.max(1, l.w * f), ya, yb }); }
         const q = near((x0 + x1) / 2, (y0 + y1) / 2); if (!q) continue;
         const len = Math.abs(y1 - y0); if (len < q.sp * 1.5 || l.w * f > q.sp * 0.35) continue;
         ctx.vecOf.get(q).stems.push({ x: (x0 + x1) / 2, ya: Math.min(y0, y1), yb: Math.max(y0, y1) });
@@ -3250,7 +3254,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
         const q = near((xa + xb) / 2, cy); if (!q) continue;
         // (a stem drawn as a thin filled rectangle, as LilyPond draws them)
         { const ys = P.map((p2) => p2[1]), ya = Math.min(...ys), yb = Math.max(...ys);
-          if (xb - xa < q.sp * 0.8 && yb - ya > q.sp * 3.5) for (const st2 of staves) if (ya <= st2.top + st2.sp * 0.3 && yb >= st2.bottom - st2.sp * 0.3) ctx.vecOf.get(st2).bars.push({ x: (xa + xb) / 2, w: Math.max(1, xb - xa), ya, yb });
+          if (xb - xa < q.sp * 0.8 && yb - ya > q.sp * 3.5 && staves.some((q2) => Math.abs(ya - q2.top) < q2.sp * 0.3) && staves.some((q2) => Math.abs(yb - q2.bottom) < q2.sp * 0.3)) for (const st2 of staves) if (ya <= st2.top + st2.sp * 0.3 && yb >= st2.bottom - st2.sp * 0.3) ctx.vecOf.get(st2).bars.push({ x: (xa + xb) / 2, w: Math.max(1, xb - xa), ya, yb });
           if (xb - xa < q.sp * 0.3 && yb - ya > q.sp * 1.5) { ctx.vecOf.get(q).stems.push({ x: (xa + xb) / 2, ya, yb }); continue; } }
         if (xb - xa < q.sp * 0.7) continue;
         // its height at a place: the middle of its upper and lower edges there
