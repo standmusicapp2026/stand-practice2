@@ -1951,6 +1951,12 @@ function readStaff(s, ctx, header) {
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
       // a note inside it is believed over a weak likeness
 
+      // (a treble clef photographed or scanned poorly: a weak likeness, but only a clef is that wide and
+      // stands that far above and below the staff)
+      if ((globalThis.__looseTreble ?? 1) && k.cls === 'treble' && k.d > 0.38 && k.d < 0.48) {
+        const tp = pAt(s, y0, (x0 + x1) / 2), bp = pAt(s, y1, (x0 + x1) / 2), wq = (x1 - x0) / sp, hq = (y1 - y0) / sp;
+        if (tp > 8.4 && tp < 11.5 && bp < -1.2 && bp > -4.5 && hq > 5.2 && hq < 8 && wq > 2.2 && wq < 3.3) k = { cls: 'treble', d: 0.29, loose: true };
+      }
       if (!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) continue;
       const trustBass = ((globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots()) || ((globalThis.__cBars ?? 1) && k.cls === 'alto' && k.d <= 0.38 && cBars());
       if (ctx.dbg && k.cls === 'bass') (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, bassTrust: trustBass, x1, y7: Math.round(yAt(s, 7, x1)), y5: Math.round(yAt(s, 5, x1)) });
@@ -1972,7 +1978,7 @@ function readStaff(s, ctx, header) {
       signs.push({ x: x0, x1, clef: name });
       // what was read inside the clef (its curls look like heads, its bars like stems) goes
       for (let k2 = heads.length - 1; k2 >= 0; k2--) if (heads[k2].cx > x0 - sp * 0.1 && heads[k2].cx < x1 + sp * 0.1 && heads[k2].cy > y0 - sp * 0.2 && heads[k2].cy < y1 + sp * 0.2) heads.splice(k2, 1);
-      { const m = name === 'treble' && (globalThis.__trebleBarKeep ?? 1) ? -sp * 0.15 : sp * 0.2; for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - m && merged[k2].x < x1 + m) merged.splice(k2, 1); }
+      { const m = name === 'treble' && (globalThis.__trebleBarKeep ?? 1) ? -sp * (k.loose ? 0.6 : 0.15) : sp * 0.2; for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - m && merged[k2].x < x1 + m) merged.splice(k2, 1); }
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ clef: name, x0, d: +k.d.toFixed(3) });
     }
     // time signatures: two digits one above the other, filling the staff, with no note there
