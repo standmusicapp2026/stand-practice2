@@ -732,7 +732,8 @@ const glSize = (G) => { const hs = G.filter((g) => GL_HEAD[g.cp]).map((g) => g.s
 function glyphHeads(s, heads, G, sp, rx) {
   const big = glSize(G);
   // (a staff the PDF wrote with no head at all — bars of rest — has none: the C of the time is no note)
-  if (!big) return G.some((g) => GL_CLEF[g.cp] || GL_REST[g.cp]) ? [] : heads;
+  // (but a staff where the picture found notes and the PDF's font gave none it knows: the picture's)
+  if (!big) return G.some((g) => GL_CLEF[g.cp] || GL_REST[g.cp]) && heads.length < 3 ? [] : heads;
   const out = [], used = new Set();
   for (const g of G) {
     const kind = GL_HEAD[g.cp]; if (!kind) continue;

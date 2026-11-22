@@ -288,7 +288,8 @@ async function openDocumentOne(file, known) {
         const vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: Math.round(w) / vp1.width });
         const { pdfVectors } = await import('./pdf-music.js');
         const v = await pdfVectors(page, vp, pdfjsLib.OPS);
-        return v.glyphs.filter((g) => !g.text).length >= 8 ? v : null;
+        // (only a page whose heads are characters this reader knows: a font it does not know reads by its picture)
+        return v.glyphs.filter((g) => g.cp >= 0xe0a0 && g.cp <= 0xe0a4).length >= 4 ? v : null;
       },
       async render(i, canvas, w, h, opts = {}) {
         if (gone) return;   // (the score was closed while this page was waiting to be drawn)

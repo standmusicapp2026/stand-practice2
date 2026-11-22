@@ -1,3 +1,5 @@
+import { SMUFL_ALT } from './smufl-alt.js';
+
 // What a page made by a notation program says of its music, as it wrote it: the signs (heads,
 // clefs, accidentals, rests… characters of a SMuFL music font at their exact places) and the lines
 // drawn (stems, barlines and staff lines stroked; beams filled). In the frame of a picture of the
@@ -32,7 +34,7 @@ export async function pdfVectors(page, vp, OPS) {
   const scaleW = () => Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
   const lines = [], polys = [], glyphs = [];
   // the text state, to place each character exactly (its advance from the font's widths)
-  let Tm = [1, 0, 0, 1, 0, 0], Tlm = [1, 0, 0, 1, 0, 0], fs = 1, Tc = 0, Tw = 0, Th = 1, Ts = 0, TL = 0, fontMat = [0.001, 0, 0, 0.001, 0, 0];
+  let fam = null, Tm = [1, 0, 0, 1, 0, 0], Tlm = [1, 0, 0, 1, 0, 0], fs = 1, Tc = 0, Tw = 0, Th = 1, Ts = 0, TL = 0, fontMat = [0.001, 0, 0, 0.001, 0, 0];
   const tStack = [];
   const flush = (kind) => {
     for (const sub of path) {
@@ -43,10 +45,14 @@ export async function pdfVectors(page, vp, OPS) {
   };
   for (let i = 0; i < ol.fnArray.length; i++) {
     const fn = ol.fnArray[i], a = ol.argsArray[i];
-    if (fn === OPS.save) { stack.push([ctm, lw]); tStack.push([fs, Tc, Tw, Th, Ts, TL, fontMat]); }
-    else if (fn === OPS.restore) { const s = stack.pop(); if (s) [ctm, lw] = s; const t = tStack.pop(); if (t) [fs, Tc, Tw, Th, Ts, TL, fontMat] = t; }
+    if (fn === OPS.save) { stack.push([ctm, lw]); tStack.push([fs, Tc, Tw, Th, Ts, TL, fontMat, fam]); }
+    else if (fn === OPS.restore) { const s = stack.pop(); if (s) [ctm, lw] = s; const t = tStack.pop(); if (t) [fs, Tc, Tw, Th, Ts, TL, fontMat, fam] = t; }
     else if (fn === OPS.beginText) { Tm = [1, 0, 0, 1, 0, 0]; Tlm = Tm.slice(); }
-    else if (fn === OPS.setFont) { fs = a[1]; const f = font && font(a[0]); fontMat = (f && f.fontMatrix) || [0.001, 0, 0, 0.001, 0, 0]; }
+    else if (fn === OPS.setFont) {
+      fs = a[1]; const f = font && font(a[0]); fontMat = (f && f.fontMatrix) || [0.001, 0, 0, 0.001, 0, 0];
+      // (the font's family, for its own characters: Bravura, Leland, Petaluma)
+      const nm = (f && (f.name || f.loadedName || '')) + ''; fam = Object.keys(SMUFL_ALT).find((k) => nm.includes(k)) || null;
+    }
     else if (fn === OPS.setTextMatrix) { Tm = a.slice(0, 6); Tlm = Tm.slice(); }
     else if (fn === OPS.moveText) { Tlm = mul(Tlm, [1, 0, 0, 1, a[0], a[1]]); Tm = Tlm.slice(); }
     else if (fn === OPS.setLeadingMoveText) { TL = -a[1]; Tlm = mul(Tlm, [1, 0, 0, 1, a[0], a[1]]); Tm = Tlm.slice(); }
@@ -61,7 +67,8 @@ export async function pdfVectors(page, vp, OPS) {
       for (const g of run || []) {
         if (typeof g === 'number') { Tm = mul(Tm, [1, 0, 0, 1, (-g / 1000) * fs * Th, 0]); continue; }
         if (!g) continue;
-        const cp = g.unicode && g.unicode.length ? g.unicode.codePointAt(0) : 0;
+        let cp = g.unicode && g.unicode.length ? g.unicode.codePointAt(0) : 0;
+        if (fam && cp >= 0xf400 && SMUFL_ALT[fam][cp]) cp = SMUFL_ALT[fam][cp];
         const adv = ((g.width || 0) * fontMat[0] * fs + Tc + (g.isSpace ? Tw : 0)) * Th;
         if ((cp >= 0xe000 && cp <= 0xf8ff) || (cp >= 0x30 && cp <= 0x39)) {
           const M = mul(ctm, Tm), x = M[4] + M[2] * Ts, y = M[5] + M[3] * Ts;
