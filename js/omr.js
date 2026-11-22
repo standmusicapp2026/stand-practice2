@@ -3370,7 +3370,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
 // ---------- events ----------
 const ticksOf = (t, dots) => (WHOLE / t) * (dots === 1 ? 1.5 : dots === 2 ? 1.75 : 1);
 // Turn one staff's heads and rests into bars of events.
-export function staffEvents(st) {
+export function staffEvents(st, opts = {}) {
   const sp = st.sp;
   const items = [];
   const heads = st.heads.slice().sort((a, b) => a.x - b.x);
@@ -3388,7 +3388,7 @@ export function staffEvents(st) {
       const second = Math.abs(q.x - hd.x) >= sp * 0.45 && Math.abs(q.x - hd.x) < sp * 1.35 && Math.abs(q.p - hd.p) === 1 && rh.p > lh.p && (!hd.stem || !q.stem || Math.abs(hd.stem.x - q.stem.x) < sp * 0.45);
       const sameX = Math.abs(q.x - hd.x) < sp * 0.45 || second;
       // (two heads at one place with stems in opposite directions are two voices, not a chord)
-      const twoVoices = (globalThis.__voices ?? 1) && hd.stem && q.stem && hd.stem.up !== q.stem.up && !sameStem;
+      const twoVoices = opts.voices && (globalThis.__voices ?? 1) && hd.stem && q.stem && hd.stem.up !== q.stem.up && !sameStem;
       if (!twoVoices && (sameStem || (sameX && (q.kind === hd.kind || !q.stem || !hd.stem)))) { group.push(q); used.add(j); }
     }
     const lead = group.find((g) => g.stem) || group[0];
@@ -3449,8 +3449,7 @@ export function staffEvents(st) {
   for (const it of items) delete it.tieNext;
   // two voices in a bar: notes with stems up and down at the same places. Those with stems down (and
   // the rests below the middle of the staff) are the second voice
-  if (globalThis.__voices ?? 1) {
-    const mid = st.L ? null : null; void mid;
+  if (opts.voices && (globalThis.__voices ?? 1)) {
     for (let i = 0; i < bars.length; i++) {
       const b = bars[i];
       const ups = b.filter((it) => !it.rest && it.up === true), dns = b.filter((it) => !it.rest && it.up === false);
@@ -3610,7 +3609,7 @@ export async function recognise(canvas, opts = {}) {
   let pending = {};
   A.systems.forEach((sys, si) => {
     const st = staffIn(sys);
-    const b = staffEvents(st);
+    const b = staffEvents(st, { voices: true });
     if (!b.length) { Object.assign(pending, b.after || {}); return; }
     const m = b.meta.map((q) => ({ ...q }));
     const head = { ...pending };
