@@ -733,7 +733,7 @@ function glyphHeads(s, heads, G, sp, rx) {
   const big = glSize(G);
   // (a staff the PDF wrote with no head at all — bars of rest — has none: the C of the time is no note)
   // (but a staff where the picture found notes and the PDF's font gave none it knows: the picture's)
-  if (!big) return G.some((g) => GL_CLEF[g.cp] || GL_REST[g.cp]) && heads.length < 3 ? [] : heads;
+  if (!big) return G.known || (G.some((g) => GL_CLEF[g.cp] || GL_REST[g.cp]) && heads.length < 3) ? [] : heads;
   const out = [], used = new Set();
   for (const g of G) {
     const kind = GL_HEAD[g.cp]; if (!kind) continue;
@@ -777,7 +777,8 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
   for (const hd of heads) if (hd.stem) { const mates = heads.filter((q) => q.stem && Math.abs(q.stem.x - hd.stem.x) < sp * 0.45); const d = Math.max(...mates.map((q) => q.dots || 0)); for (const q of mates) q.dots = d; }
   // stems and beams as the PDF drew them
   const V = ctx_vec(s);
-  if (V) {
+  // (only where the PDF drew the stems: otherwise the picture's stems and beams stand)
+  if (V && V.stems.length >= Math.min(3, heads.filter((hd) => hd.gKind !== 'whole').length)) {
     for (const hd of heads) {
       if (hd.gKind === 'whole') { hd.stem = null; hd.beams = 0; hd.bg = null; continue; }
       let best = null, bd = Infinity;
@@ -818,7 +819,7 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
       const near = heads.filter((hd) => Math.abs(hd.cx - dx) < sp * 4);
       if (!near.length) continue;
       let span = null;
-      const br = V.hl.filter((l) => Math.abs(l.y - dy) < sp * 1.2 && (Math.abs(l.xb - (dx - sp * 0.3)) < sp * 1.2 || Math.abs(l.xa - (dx + sp * 0.3)) < sp * 1.2 || (l.xa < dx && l.xb > dx)));
+      const br = V.hl.filter((l) => !inStaff(l.y) && l.xb - l.xa < sp * 24 && Math.abs(l.y - dy) < sp * 1.2 && (Math.abs(l.xb - (dx - sp * 0.3)) < sp * 1.2 || Math.abs(l.xa - (dx + sp * 0.3)) < sp * 1.2 || (l.xa < dx && l.xb > dx)));
       if (br.length) span = [Math.min(...br.map((l) => l.xa)) - sp * 0.3, Math.max(...br.map((l) => l.xb)) + sp * 0.3];
       let grp;
       if (span) grp = heads.filter((hd) => hd.cx >= span[0] && hd.cx <= span[1]);
@@ -3172,6 +3173,9 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       for (const q of staves) { if (x < q.x0 - q.sp * 3 || x > q.x1 + q.sp * 3) continue; const d = y < q.top ? q.top - y : y > q.bottom ? y - q.bottom : 0; if (d < bd) { bd = d; best = q; } }
       if (best && bd < best.sp * 9) ctx.glyphsOf.get(best).push({ cp: g.cp, x, y, size: g.size * f, w: (g.w || 0) * f, ...(g.text ? { text: true } : {}) });
     }
+    // (a page whose heads are characters of a font known here: a staff with none has no notes)
+    // (known: nearly all its music characters standard SMuFL ones — those of a font's own range, not)
+    { const mus = canvas.glyphs.filter((g) => !g.text); const known = mus.length >= 3 && mus.filter((g) => g.cp >= 0xe000 && g.cp < 0xf400).length >= mus.length * 0.9; for (const L of ctx.glyphsOf.values()) L.known = known; }
     // and its lines: stems (stroked, upright) and beams (filled, four-sided), with the staff nearest
     if (canvas.vec && (globalThis.__vec ?? 1)) {
       ctx.vecOf = new Map(staves.map((q) => [q, { stems: [], beams: [], hl: [] }]));
@@ -3192,6 +3196,8 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
         const xs = P.map((p2) => p2[0]), xa = Math.min(...xs), xb = Math.max(...xs);
         const cy = P.reduce((a, p2) => a + p2[1], 0) / P.length;
         const q = near((xa + xb) / 2, cy); if (!q) continue;
+        // (a stem drawn as a thin filled rectangle, as LilyPond draws them)
+        { const ys = P.map((p2) => p2[1]), ya = Math.min(...ys), yb = Math.max(...ys); if (xb - xa < q.sp * 0.3 && yb - ya > q.sp * 1.5) { ctx.vecOf.get(q).stems.push({ x: (xa + xb) / 2, ya, yb }); continue; } }
         if (xb - xa < q.sp * 0.7) continue;
         // its height at a place: the middle of its upper and lower edges there
         const at = (x) => { const ys = []; for (let i = 0; i < P.length; i++) { const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length]; if ((x - ax) * (x - bx) <= 0 && ax !== bx) ys.push(ay + ((by - ay) * (x - ax)) / (bx - ax)); } return ys.length >= 2 ? [Math.min(...ys), Math.max(...ys)] : null; };

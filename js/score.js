@@ -18,6 +18,8 @@ const PIX_MAX = 7e6, PIX_SLOW = 120;
 // were what made iOS close Stand.
 const PHONE_UA = typeof navigator !== 'undefined' && /iPhone|iPod/.test(navigator.userAgent || '');
 const PDF_OPTS = {
+  // (the names of a font's glyphs: LilyPond's music font is read by them, see pdf-music.js)
+  fontExtraProperties: true,
   canvasMaxAreaInBytes: (globalThis.__pdfMaxPix || (PHONE_UA ? 5e6 : 8e6)) * 4,
   cMapUrl: new URL('../vendor/cmaps/', import.meta.url).href,
   cMapPacked: true,
@@ -289,7 +291,8 @@ async function openDocumentOne(file, known) {
         const { pdfVectors } = await import('./pdf-music.js');
         const v = await pdfVectors(page, vp, pdfjsLib.OPS);
         // (only a page whose heads are characters this reader knows: a font it does not know reads by its picture)
-        return v.glyphs.filter((g) => g.cp >= 0xe0a0 && g.cp <= 0xe0a4).length >= 4 ? v : null;
+        const mus = v.glyphs.filter((g) => !g.text);
+        return mus.length >= 3 && mus.filter((g) => g.cp >= 0xe000 && g.cp < 0xf400).length >= mus.length * 0.9 ? v : null;
       },
       async render(i, canvas, w, h, opts = {}) {
         if (gone) return;   // (the score was closed while this page was waiting to be drawn)
