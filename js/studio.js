@@ -1909,6 +1909,12 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       const ka = Math.max(0, k - 6), kb = Math.min(nb, k + 2); redo(ka, kb, T[ka], kb < nb ? T[kb] : null); for (let j = ka; j < kb; j++) d[j] = T[j + 1] - T[j];
     }
   }
+  // (the pace changes within a song — a quick part, then a slow one: each few bars followed again
+  // between their ends at their own pace, kept where they then fit the playing better)
+  if (ai && !(anch && anch.length) && (globalThis.__localRe ?? 1)) {
+    const W = globalThis.__localW ?? 3;
+    for (let ka = 1; ka + W <= nb; ka += Math.max(1, W >> 1)) redo(ka, ka + W, T[ka], ka + W < nb ? T[ka + W] : T[nb]);
+  }
   // (each bar that begins with notes: its start put where those notes are struck, when that is clearly
   // a little before or after where the following put it)
   if (ai && !(anch && anch.length) && (globalThis.__snap ?? 1)) {
