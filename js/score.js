@@ -151,6 +151,7 @@ export function rotateDoc(doc, rot) {
       tmp.width = tmp.height = 0;
     },
     pixHas: (i, w, h) => (deg(i) || !doc.pixHas ? Promise.resolve(true) : doc.pixHas(i, w, h)),
+    music: (i, w, h) => (deg(i) || !doc.music ? Promise.resolve(null) : doc.music(i, w, h)),
     renderView: (i, canvas, view, w, h, opts) => (deg(i) || !doc.renderView ? Promise.resolve(false) : doc.renderView(i, canvas, view, w, h, opts)),
     destroy: () => doc.destroy(),
   };
@@ -165,6 +166,7 @@ async function openJoined(file, known) {
       kindOf: (i) => kinds[at[i][0]] || file.kind,
       pages: at.length, sizes: parts.flatMap((d) => d.sizes), pdf: own.pdf, ownPages: own.pages,
       render(i, canvas, w, h, opts) { const [k, j] = at[i]; return parts[k].render(j, canvas, w, h, opts); },
+      music(i, w, h) { const [k, j] = at[i]; return parts[k].music ? parts[k].music(j, w, h) : Promise.resolve(null); },
       pixHas: (i, w, h) => { const [k, j] = at[i]; return parts[k].pixHas ? parts[k].pixHas(j, w, h) : Promise.resolve(true); },
       renderView(i, canvas, view, w, h, opts) { const [k, j] = at[i]; return parts[k].renderView ? parts[k].renderView(j, canvas, view, w, h, opts) : Promise.resolve(false); },
       destroy() { for (const d of parts) try { d.destroy(); } catch {} },
@@ -278,6 +280,16 @@ async function openDocumentOne(file, known) {
     };
     return {
       pages: pdf.numPages, sizes, pdf,
+      // the page's music as the PDF wrote it (signs of a music font, stems and beams), in the frame of
+      // a picture of it w × h; nothing for a page without (a scan)
+      async music(i, w, h) {
+        if (gone) return null;
+        const page = await pdf.getPage(i + 1).catch(() => null); if (!page) return null;
+        const vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: Math.round(w) / vp1.width });
+        const { pdfVectors } = await import('./pdf-music.js');
+        const v = await pdfVectors(page, vp, pdfjsLib.OPS);
+        return v.glyphs.filter((g) => !g.text).length >= 8 ? v : null;
+      },
       async render(i, canvas, w, h, opts = {}) {
         if (gone) return;   // (the score was closed while this page was waiting to be drawn)
         const W = Math.round(w), H = Math.round(h);
@@ -701,6 +713,7 @@ export function mapDoc(doc, map, cuts, glue) {
     ...doc,
     pages: pieces.length,
     sizes: pieces.map(sizeOf),
+    music: (i, w, h) => { const p = pieces[i]; return !p || p.parts || p.box || !doc.music ? Promise.resolve(null) : doc.music(p.o, w, h); },
     render: async (i, canvas, w, h, opts) => {
       const p = pieces[i];
       if (!p.parts) return doc.render(p.o, canvas, w, h, opts);

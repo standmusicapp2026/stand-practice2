@@ -365,6 +365,13 @@ async function linesOut() {
     const full = document.createElement('canvas');
     await PK.doc.render(page, full, pw * scale, ph * scale, { sharp: true });
     const W = full.width, H = full.height;
+    // the page's music as the PDF wrote it, when it did (a notation program's page): it goes with
+    // each line into the picture, so the reader can take it as it is
+    let mus = null;
+    if ((globalThis.__pdfMusic ?? 1) && PK.doc.music) { try { mus = await PK.doc.music(page, W, H); } catch (err) { console.warn('music', err); } }
+    // (each sign to the line it is nearest: the middle of the line's staves)
+    const bandsOf = lines.map((L) => (L.staves && L.staves.length ? L.staves : L.top !== undefined ? [[L.top, L.bot]] : [lineSpan(L, null)]).map(([t, b]) => [t * H, b * H]));
+    const lineOf = (y) => { let bi = -1, bd = Infinity; bandsOf.forEach((S, i) => { for (const [t, b] of S) { const d = y < t ? t - y : y > b ? y - b : 0; if (d < bd) { bd = d; bi = i; } } }); return bi; };
     // (each line with its own ink only, every mark of it whole: see ownInk. Some staves only: cut
     // between the staves, as before)
     let own = null;
@@ -386,7 +393,17 @@ async function linesOut() {
       // some of the staves only: the barlines ran on to the staves left out; the pieces of them
       // sticking out past the kept staves are taken away (the reader would not see them as barlines)
       if (pick.cut && L.staves && L.staves.length > 1) for (const c of cv) cutStubs(c, (L.staves[Math.min(pick.cut.from, L.staves.length - 1)][0] * H) - y0, (L.staves[Math.min(pick.cut.to, L.staves.length - 1)][1] * H) - y0, pick.cut.from > 0, pick.cut.to < L.staves.length - 1);
-      parts.push({ h: y1 - y0, cv, gap: Math.max(Math.round(0.01 * H), Math.round((L.sp || 0) * H * 2)) });
+      // its signs and lines: those nearest this line, within one of its pieces, moved with the piece
+      let gl = null, vec = null;
+      if (mus) {
+        gl = []; vec = { lines: [], polys: [] };
+        let off = 0; const spans = pieces.map(([x0, x1]) => { const r = { x0, x1, off }; off += Math.max(1, Math.round(x1 - x0)); return r; });
+        const place = (x, y) => { if (y < y0 || y > y1) return null; for (const r of spans) if (x >= r.x0 && x < r.x1) return [r.off + (x - Math.round(r.x0)), y - y0]; return null; };
+        for (const g of mus.glyphs) { if (lineOf(g.y) !== i) continue; const q = place(g.x, g.y); if (q) gl.push({ ...g, x: q[0], y: q[1] }); }
+        for (const l of mus.lines) { if (lineOf((l.y0 + l.y1) / 2) !== i) continue; const a2 = place(l.x0, l.y0), b2 = place(l.x1, l.y1); if (a2 && b2) vec.lines.push({ x0: a2[0], y0: a2[1], x1: b2[0], y1: b2[1], w: l.w }); }
+        for (const pg of mus.polys) { const cy = pg.reduce((a, q) => a + q[1], 0) / pg.length; if (lineOf(cy) !== i) continue; const P = pg.map(([x, y]) => place(x, y)); if (P.every(Boolean)) vec.polys.push(P); }
+      }
+      parts.push({ h: y1 - y0, cv, gap: Math.max(Math.round(0.01 * H), Math.round((L.sp || 0) * H * 2)), gl, vec });
       if (mine) mine.canvas.width = mine.canvas.height = 0;
     });
     full.width = full.height = 0;
@@ -396,14 +413,23 @@ async function linesOut() {
   const c = document.createElement('canvas'); c.width = outW; c.height = outH;
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, outW, outH);
   let y = 0; const bands = [];
+  const gl = [], vec = { lines: [], polys: [], glyphs: gl }; let withMusic = parts.length > 0;
   for (const p of parts) {
     let x = 10;
     for (const piece of p.cv) { g.drawImage(piece, x, y); x += piece.width; piece.width = piece.height = 0; }
+    if (p.gl) {
+      for (const q of p.gl) gl.push({ ...q, x: q.x + 10, y: q.y + y });
+      for (const l of p.vec.lines) vec.lines.push({ ...l, x0: l.x0 + 10, x1: l.x1 + 10, y0: l.y0 + y, y1: l.y1 + y });
+      for (const P of p.vec.polys) vec.polys.push(P.map(([a, b]) => [a + 10, b + y]));
+    } else withMusic = false;
     bands.push([y, y + p.h]);
     y += p.h + p.gap;
   }
   // (where each line is in the picture: what lies in a line's rows is that line's, see straightStrip)
   c.bands = bands;
+  // (the music as written, only when every line has it: a page of a scan among them reads by its picture)
+  if (withMusic && gl.length) { c.glyphs = gl; c.vec = vec; }
+  if (globalThis.__keepLinesOut) globalThis.__lastLinesOut = c;
   return c;
 }
 // The barlines of a system run from its first staff to its last. Keeping some staves only, what is

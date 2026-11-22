@@ -783,6 +783,8 @@ export function readMarks(read, ctx) {
     let tg = 0;
     const tupNums = [];
     for (const s of read) {
+      // (a staff whose PDF gave its tuplets' numbers: they are read from there)
+      if (s.pdfMusic) continue;
       const sp = s.sp;
       // (a number close to the beam may have been put together with it: its own piece too)
       const own = ctx.rawC.filter((g) => !comps.includes(g) && g.h >= sp * 0.6 && g.h <= sp * 2.3 && g.w >= sp * 0.25 && g.w <= sp * 1.6);

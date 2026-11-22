@@ -716,6 +716,174 @@ export function classifyLoose(shape, classes) {
 }
 
 // ---------- one staff ----------
+// ---- A page made by a notation program (MuseScore, Dorico, Finale, Sibelius with a SMuFL font):
+// its signs are characters of a music font, each at its exact place. Taken as they are, they leave
+// nothing to guess: a filled head from a hollow one, a sharp from a natural, a dot, a flag, a rest,
+// the clef, the key and the time. The lines (staff lines, stems, beams, barlines) are still found in
+// the picture.
+const GL_HEAD = { 0xe0a0: 'breve', 0xe0a1: 'breve', 0xe0a2: 'whole', 0xe0a3: 'half', 0xe0a4: 'black', 0xe0a7: 'whole', 0xe0a8: 'half', 0xe0a9: 'black', 0xe0db: 'half', 0xe0dc: 'half', 0xe0dd: 'black', 0xe0d8: 'whole', 0xe0d9: 'half', 0xe0da: 'black' };
+const GL_ACC = { 0xe260: -1, 0xe261: 0, 0xe262: 1, 0xe263: 2, 0xe264: -2 };
+const GL_REST = { 0xe4e2: 0.5, 0xe4e3: 1, 0xe4e4: 2, 0xe4e5: 4, 0xe4e6: 8, 0xe4e7: 16, 0xe4e8: 32, 0xe4e9: 64, 0xe4ea: 128 };
+const GL_CLEF = { 0xe050: 'treble', 0xe052: 'treble8', 0xe053: 'treble8va', 0xe062: 'bass', 0xe064: 'bass8', 0xe065: 'bass8va', 0xe07a: 'treble', 0xe07b: 'C', 0xe07c: 'bass', 0xe05c: 'C' };
+const glP = (s, x, y) => { const xi = Math.max(0, Math.min(s.L[0].length - 1, Math.round(x))); const top = s.L[0][xi], bot = s.L[4][xi]; return ((bot - y) * 8) / (bot - top); };
+const glSize = (G) => { const hs = G.filter((g) => GL_HEAD[g.cp]).map((g) => g.size).sort((a, b) => a - b); return hs.length ? hs[hs.length >> 1] : null; };
+// the heads: those of the PDF, each taking what the picture found of the same head (its component,
+// its row of ink); a head the picture found that the PDF has not is no head
+function glyphHeads(s, heads, G, sp, rx) {
+  const big = glSize(G);
+  // (a staff the PDF wrote with no head at all — bars of rest — has none: the C of the time is no note)
+  if (!big) return G.some((g) => GL_CLEF[g.cp] || GL_REST[g.cp]) ? [] : heads;
+  const out = [], used = new Set();
+  for (const g of G) {
+    const kind = GL_HEAD[g.cp]; if (!kind) continue;
+    if (g.size < big * 0.8) continue;   // a grace note: read at the end
+    const wd = g.w > sp * 0.5 ? g.w : sp * (kind === 'whole' ? 1.69 : kind === 'breve' ? 2.5 : 1.18);
+    const cx = g.x + wd / 2, cy = g.y, p = Math.round(glP(s, cx, cy));
+    let m = -1, md = Infinity;
+    heads.forEach((hd, i) => { if (used.has(i)) return; const d = Math.abs(hd.cx - cx) + Math.abs(hd.cy - cy); if (d < md && Math.abs(hd.cx - cx) < sp * 0.7 && Math.abs(hd.cy - cy) < sp * 0.6) { md = d; m = i; } });
+    const base = m >= 0 ? heads[m] : { sc: 1, fit: 1, comp: null, ringHead: true };
+    if (m >= 0) used.add(m);
+    out.push({ ...base, cx, cy, p, left: Math.round(g.x), right: Math.round(g.x + wd), wRow: Math.round(wd), hollow: kind !== 'black', gKind: kind === 'breve' ? 'whole' : kind, ...(kind === 'breve' ? { breve: true } : {}), gl: true });
+  }
+  return out.sort((a, b) => a.cx - b.cx);
+}
+// the rest: the kind of each head, its accidental, its dots, the flags of a stem alone; the rests;
+// grace notes; the clef, key and time at the start of the line
+function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () => null) {
+  const big = glSize(G) || sp * 4;
+  for (const hd of heads) if (hd.gKind) { hd.kind = hd.gKind; hd.hollow = hd.gKind !== 'black'; }
+  // accidentals: just left of a head, at its height (those of the key, before the first note, not)
+  const firstX = heads.length ? Math.min(...heads.map((hd) => hd.cx)) : Infinity;
+  for (const g of G) {
+    const a = GL_ACC[g.cp]; if (a === undefined || g.size < big * 0.8) continue;
+    const gp = Math.round(glP(s, g.x, g.y));
+    let tgt = null, bd = Infinity;
+    for (const hd of heads) { const dx = hd.left - (g.x + (g.w || sp)); if (dx < -sp * 0.4 || dx > sp * 3.2 || hd.p !== gp) continue; if (dx < bd) { bd = dx; tgt = hd; } }
+    if (tgt) tgt.acc = a; else if (g.x < firstX) g.key = true;
+  }
+  for (const hd of heads) if (hd.gl && hd.acc !== undefined && !G.some((g) => GL_ACC[g.cp] !== undefined && Math.round(glP(s, g.x, g.y)) === hd.p && g.x < hd.left && g.x > hd.left - sp * 3.6)) delete hd.acc;
+  // dots: to the right of a head, at its height or the space above it
+  for (const hd of heads) hd.dots = 0;
+  const dotsOf = new Map();
+  for (const g of G) {
+    if (g.cp !== 0xe1e7) continue;
+    let tgt = null, bd = Infinity;
+    for (const hd of heads) { const dx = g.x - hd.right; const dy = Math.abs(g.y - hd.cy); if (dx < -sp * 0.2 || dx > sp * 3.5 || dy > sp * 0.8) continue; if (dx + dy < bd) { bd = dx + dy; tgt = hd; } }
+    if (tgt) dotsOf.set(tgt, (dotsOf.get(tgt) || 0) + 1);
+  }
+  for (const [hd, n] of dotsOf) hd.dots = Math.min(2, n);
+  // a chord's dots: the most any of its heads has
+  for (const hd of heads) if (hd.stem) { const mates = heads.filter((q) => q.stem && Math.abs(q.stem.x - hd.stem.x) < sp * 0.45); const d = Math.max(...mates.map((q) => q.dots || 0)); for (const q of mates) q.dots = d; }
+  // stems and beams as the PDF drew them
+  const V = ctx_vec(s);
+  if (V) {
+    for (const hd of heads) {
+      if (hd.gKind === 'whole') { hd.stem = null; hd.beams = 0; hd.bg = null; continue; }
+      let best = null, bd = Infinity;
+      for (const st of V.stems) {
+        const atL = Math.abs(st.x - hd.left), atR = Math.abs(st.x - hd.right); if (Math.min(atL, atR) > sp * 0.3) continue;
+        if (hd.cy < st.ya - sp * 0.7 || hd.cy > st.yb + sp * 0.7) continue;
+        const d = Math.min(Math.abs(st.ya - hd.cy), Math.abs(st.yb - hd.cy)) + Math.min(atL, atR);
+        if (d < bd) { bd = d; best = st; }
+      }
+      if (!best) { hd.stem = null; hd.beams = 0; hd.bg = null; continue; }
+      const up = Math.abs(best.yb - hd.cy) < Math.abs(best.ya - hd.cy);
+      const end = up ? best.ya : best.yb;
+      hd.stem = { ...(hd.stem || {}), x: best.x, up, end, len: best.yb - best.ya };
+      const on = V.beams.filter((bm) => best.x >= bm.xa - sp * 0.25 && best.x <= bm.xb + sp * 0.25).map((bm) => { const yy = bm.at(Math.min(bm.xb - 0.5, Math.max(bm.xa + 0.5, best.x))); return yy ? { bm, d: up ? (yy[0] + yy[1]) / 2 - end : end - (yy[0] + yy[1]) / 2 } : null; }).filter((q) => q && q.d > -sp * 0.6 && q.d < sp * 3.2);
+      hd.beams = on.length;
+      hd.bg = on.length ? 1000 + on.sort((a, b) => a.d - b.d)[0].bm.id : null;
+    }
+  }
+  // flags: at the end of a stem, the number of hooks
+  for (const g of G) {
+    const i = g.cp - 0xe240; if (i < 0 || i > 15 || g.size < big * 0.8) continue;
+    const n = (i >> 1) + 1;
+    const mates = heads.filter((hd) => hd.stem && Math.abs(hd.stem.x - g.x) < sp * 0.6);
+    for (const hd of mates) { hd.beams = n; hd.bg = null; }
+  }
+  // tuplets: the PDF's numbers (text digits) over or under a group, the notes its bracket spans, or
+  // else the notes of the beam under it; the picture's own reading of them is left aside
+  if (V) {
+    for (const hd of heads) { delete hd.tupN; delete hd.tupG; delete hd.tup3; }
+    const inStaff = (y) => y > s.top - sp * 0.2 && y < s.bottom + sp * 0.2;
+    let tg = 1;
+    const digits = G.filter((g) => g.text && g.cp >= 0x32 && g.cp <= 0x39 && !inStaff(g.y));
+    if (globalThis.__tupGl) globalThis.__tupGl.push({ all: G.filter((g) => g.text).map((g) => [g.cp - 0x30, Math.round(g.x), Math.round(g.y)]), top: Math.round(s.top), bot: Math.round(s.bottom), hl: V.hl.length });
+    for (const d of digits) {
+      const n = d.cp - 0x30; if (![2, 3, 5, 6, 7, 9].includes(n)) continue;
+      const dx = d.x + (d.w || sp * 0.5) / 2, dy = d.y - (d.size || sp * 2) * 0.35;
+      // (a measure's number at the start of a line, or a digit far from any note, is no tuplet)
+      const near = heads.filter((hd) => Math.abs(hd.cx - dx) < sp * 4);
+      if (!near.length) continue;
+      let span = null;
+      const br = V.hl.filter((l) => Math.abs(l.y - dy) < sp * 1.2 && (Math.abs(l.xb - (dx - sp * 0.3)) < sp * 1.2 || Math.abs(l.xa - (dx + sp * 0.3)) < sp * 1.2 || (l.xa < dx && l.xb > dx)));
+      if (br.length) span = [Math.min(...br.map((l) => l.xa)) - sp * 0.3, Math.max(...br.map((l) => l.xb)) + sp * 0.3];
+      let grp;
+      if (span) grp = heads.filter((hd) => hd.cx >= span[0] && hd.cx <= span[1]);
+      else {
+        const lead = near.slice().sort((a, b) => Math.abs(a.cx - dx) - Math.abs(b.cx - dx))[0];
+        if (lead.bg === null || lead.bg === undefined) continue;
+        const mates = heads.filter((hd) => hd.bg === lead.bg).sort((a, b) => a.cx - b.cx);
+        // the notes (not the heads of a chord): n of them, centred on the digit
+        const xs = [...new Set(mates.map((hd) => Math.round(hd.stem ? hd.stem.x : hd.cx)))].sort((a, b) => a - b);
+        if (xs.length < n) continue;
+        let bi = 0, bd = Infinity; for (let i = 0; i + n <= xs.length; i++) { const c = (xs[i] + xs[i + n - 1]) / 2; if (Math.abs(c - dx) < bd) { bd = Math.abs(c - dx); bi = i; } }
+        const keep = new Set(xs.slice(bi, bi + n)); grp = mates.filter((hd) => keep.has(Math.round(hd.stem ? hd.stem.x : hd.cx)));
+      }
+      if (!grp.length) continue;
+      const g0 = tg++; for (const hd of grp) { hd.tupN = n; hd.tupG = g0; if (n === 3) hd.tup3 = true; }
+    }
+  }
+  // rests: the PDF's (bars of rest over many bars are kept as the picture found them)
+  const outR = rests.filter((r) => r.multi);
+  for (const g of G) {
+    const t = GL_REST[g.cp]; if (!t || g.size < big * 0.8) continue;
+    if (outR.some((r) => r.multi && Math.abs(r.cx - g.x) < sp * 3)) continue;
+    const wd = g.w > sp * 0.3 ? g.w : sp;
+    let dots = 0; for (const d of G) if (d.cp === 0xe1e7 && d.x > g.x + wd - sp * 0.2 && d.x < g.x + wd + sp * 2.5 && Math.abs(d.y - g.y) < sp * 1.6) dots++;
+    outR.push({ x: Math.round(g.x), t, cx: g.x + wd / 2, w: wd, dots: Math.min(2, dots) });
+  }
+  // grace notes: small heads, on the note after them
+  for (const g of G) {
+    if (!GL_HEAD[g.cp] || g.size >= big * 0.8) continue;
+    const nx = heads.filter((hd) => hd.cx > g.x).sort((a, b) => a.cx - b.cx)[0];
+    if (nx && nx.cx - g.x < sp * 6) nx.grace = { p: Math.round(glP(s, g.x, g.y)) };
+  }
+  // the start of the line: clef, key, time
+  const hx = heads.length ? firstX : s.x1;
+  const lead = G.filter((g) => g.x < hx - sp * 0.4).sort((a, b) => a.x - b.x);
+  const clefG = lead.find((g) => GL_CLEF[g.cp] && g.size >= big * 0.8 && g.x < s.x0 + sp * 6);
+  if (clefG && head) {
+    let c = GL_CLEF[clefG.cp];
+    if (c === 'C') { const p = Math.round(glP(s, clefG.x, clefG.y)); c = p >= 6 ? 'tenor' : p <= 2 ? 'soprano' : 'alto'; }
+    head.clef = c; head.explicitClef = true;
+    const ks = lead.filter((g) => g.x > clefG.x && g.key && (g.cp === 0xe262 || g.cp === 0xe260));
+    const nS = ks.filter((g) => g.cp === 0xe262).length, nF = ks.filter((g) => g.cp === 0xe260).length;
+    head.key = nS && !nF ? nS : nF && !nS ? -nF : 0;
+    const digs = lead.filter((g) => (g.cp >= 0xe080 && g.cp <= 0xe08b) && g.x > clefG.x && g.x < clefG.x + sp * 16);
+    if (digs.some((g) => g.cp === 0xe08a)) head.time = [4, 4];
+    else if (digs.some((g) => g.cp === 0xe08b)) head.time = [2, 2];
+    else if (digs.length >= 2) {
+      const mid = (yAt(s, 4, digs[0].x));
+      const num = (arr) => +arr.sort((a, b) => a.x - b.x).map((g) => g.cp - 0xe080).join('');
+      const top = digs.filter((g) => g.y < mid), bot = digs.filter((g) => g.y >= mid);
+      if (top.length && bot.length) head.time = [num(top), num(bot)];
+    }
+  }
+  // clefs along the line: the PDF's, and only those
+  if (Array.isArray(signs)) {
+    for (let i = signs.length - 1; i >= 0; i--) if (signs[i].clef) signs.splice(i, 1);
+    for (const g of G) {
+      let c = GL_CLEF[g.cp]; if (!c || g === clefG || (clefG && g.x <= clefG.x + sp)) continue;
+      if (!clefG && g.x < s.x0 + sp * 6) continue;
+      if (c === 'C') { const p = Math.round(glP(s, g.x, g.y)); c = p >= 6 ? 'tenor' : p <= 2 ? 'soprano' : 'alto'; }
+      signs.push({ x: Math.round(g.x), clef: c, gl: true });
+    }
+    signs.sort((a, b) => a.x - b.x);
+  }
+  return { heads, rests: outR };
+}
 function readStaff(s, ctx, header) {
   const { B, C, F, O, holes, w, h, compsC, labC, T } = ctx;
   const sp = s.sp;
@@ -1074,6 +1242,8 @@ function readStaff(s, ctx, header) {
   // notes above or below the staff need their ledger lines
   heads = heads.filter((hd) => ledgerOk(hd.cx, hd.p));
   if (TR && typeof heads !== 'undefined') trk(648, heads);
+  let glHeads = null;
+  if (ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length) { heads = glyphHeads(s, heads, ctx.glyphsOf.get(s), sp, rx); if (heads.length && heads.every((hd) => hd.gl)) glHeads = heads.slice(); else if (!heads.length) glHeads = []; }
   // ---- hollow or filled, stem, beams, dot
   for (const hd of heads) {
     hd.stem = stemOf(C, w, h, hd, rx, sp);
@@ -2121,9 +2291,10 @@ function readStaff(s, ctx, header) {
   if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ graces: graces.map((g) => [Math.round(g.cx), g.p]) });
   // ---- what is left are the notes after the header
   // the space between the two strokes of a double or final barline is not a hollow head
-  const notes = heads.filter((hd) => hd.left >= startX - sp * 0.3 && !(hd.ringHead && !hd.stem && merged.some((b) => (b.double || b.thick) && hd.cx > b.x - b.w - sp * 1.6 && hd.cx < b.x + sp * 0.9)));
+  if (ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length) { const r2 = glyphFinal(s, glHeads || heads, rests, head, ctx.glyphsOf.get(s), sp, startX, signs, (q) => ctx.vecOf && ctx.vecOf.get(q)); heads = r2.heads; rests.length = 0; rests.push(...r2.rests); }
+  const notes = heads.filter((hd) => hd.gl || (hd.left >= startX - sp * 0.3 && !(hd.ringHead && !hd.stem && merged.some((b) => (b.double || b.thick) && hd.cx > b.x - b.w - sp * 1.6 && hd.cx < b.x + sp * 0.9))));
   if (TR) trk(1175, heads);
-  return { signTrace: (() => { const t = ctx.signTrace; ctx.signTrace = []; return t; })(), L: s.L, x0: s.x0, x1: s.x1, sp, top: s.top, bottom: s.bottom, lines: s.lines, thick: T, heads: notes, rests, bars: merged, signs, explicitClef: head.explicitClef, clef: head.clef, key: head.key, time: head.time, timeAlt: head.timeAlt, startX, head, barTrace: (() => { const t = ctx.barTrace; ctx.barTrace = []; return t; })(), accTrace: ctx.accTrace, restTrace: ctx.restTrace, allHeads: ctx.allHeads };
+  return { pdfMusic: !!(ctx.vecOf && ctx.vecOf.get(s) && ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length), signTrace: (() => { const t = ctx.signTrace; ctx.signTrace = []; return t; })(), L: s.L, x0: s.x0, x1: s.x1, sp, top: s.top, bottom: s.bottom, lines: s.lines, thick: T, heads: notes, rests, bars: merged, signs, explicitClef: head.explicitClef, clef: head.clef, key: head.key, time: head.time, timeAlt: head.timeAlt, startX, head, barTrace: (() => { const t = ctx.barTrace; ctx.barTrace = []; return t; })(), accTrace: ctx.accTrace, restTrace: ctx.restTrace, allHeads: ctx.allHeads };
 }
 function stemOf(C, w, h, hd, rx, sp, gapK = 0.24) {
   const run = (x, y0, dir) => {
@@ -2988,6 +3159,46 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
   let liteC = null;
   const lite = () => { if (!liteC) { const G2 = B.gray, tl = B.th + (250 - B.th) * 0.35, Bl = new Uint8Array(w * h); for (let i = 0; i < Bl.length; i++) Bl[i] = B[i] || G2[i] < tl ? 1 : 0; liteC = removeLines(Bl, w, h, staves, T); } return liteC; };
   const ctx = { lite, f, dbg, best, B, C, Cb, D, compsD: LD.comps, labD: LD.lab, thinComps: LT.comps, thinLab: LT.lab, F, O, Os, holes, holeComps, holeLab: HL.lab, w, h, T, compsC: groups, rawC: LC.comps, labC: LC.lab, groupOf, staffOf, staffBelow: (s) => staves[staves.indexOf(s) + 1], staffAbove: (s) => staves[staves.indexOf(s) - 1] };
+  // the music's signs as the PDF wrote them (a page made by a notation program: each head, clef,
+  // accidental, rest… a character of a music font at its exact place), into this picture's frame,
+  // each with the staff it is nearest
+  if (Array.isArray(canvas.glyphs) && canvas.glyphs.length && (globalThis.__glyphs ?? 1)) {
+    const fwd = (X, Y) => { let x = X * f, y = Y * f; if (rotated) { const a = (-angle * Math.PI) / 180, cx = w / 2, cy = h / 2; const dx = x - cx, dy = y - cy; x = cx + dx * Math.cos(a) - dy * Math.sin(a); y = cy + dx * Math.sin(a) + dy * Math.cos(a); } return [x, y]; };
+    ctx.glyphsOf = new Map(staves.map((q) => [q, []]));
+    for (const g of canvas.glyphs) {
+      const [x, y] = fwd(g.x, g.y);
+      let best = null, bd = Infinity;
+      for (const q of staves) { if (x < q.x0 - q.sp * 3 || x > q.x1 + q.sp * 3) continue; const d = y < q.top ? q.top - y : y > q.bottom ? y - q.bottom : 0; if (d < bd) { bd = d; best = q; } }
+      if (best && bd < best.sp * 9) ctx.glyphsOf.get(best).push({ cp: g.cp, x, y, size: g.size * f, w: (g.w || 0) * f, ...(g.text ? { text: true } : {}) });
+    }
+    // and its lines: stems (stroked, upright) and beams (filled, four-sided), with the staff nearest
+    if (canvas.vec && (globalThis.__vec ?? 1)) {
+      ctx.vecOf = new Map(staves.map((q) => [q, { stems: [], beams: [], hl: [] }]));
+      const near = (x, y) => { let best = null, bd = Infinity; for (const q of staves) { if (x < q.x0 - q.sp * 3 || x > q.x1 + q.sp * 3) continue; const d = y < q.top ? q.top - y : y > q.bottom ? y - q.bottom : 0; if (d < bd) { bd = d; best = q; } } return best && bd < best.sp * 9 ? best : null; };
+      for (const l of canvas.vec.lines) {
+        const [x0, y0] = fwd(l.x0, l.y0), [x1, y1] = fwd(l.x1, l.y1);
+        if (Math.abs(x1 - x0) > Math.abs(y1 - y0) * 0.05) {
+          // (a nearly level line: perhaps a tuplet's bracket)
+          if (Math.abs(y1 - y0) < Math.abs(x1 - x0) * 0.25) { const q = near((x0 + x1) / 2, (y0 + y1) / 2); if (q && Math.abs(x1 - x0) > q.sp * 0.6) ctx.vecOf.get(q).hl.push({ xa: Math.min(x0, x1), xb: Math.max(x0, x1), y: (y0 + y1) / 2 }); }
+          continue;
+        }
+        const q = near((x0 + x1) / 2, (y0 + y1) / 2); if (!q) continue;
+        const len = Math.abs(y1 - y0); if (len < q.sp * 1.5 || l.w * f > q.sp * 0.35) continue;
+        ctx.vecOf.get(q).stems.push({ x: (x0 + x1) / 2, ya: Math.min(y0, y1), yb: Math.max(y0, y1) });
+      }
+      for (const pg of canvas.vec.polys) {
+        const P = pg.map(([X, Y]) => fwd(X, Y));
+        const xs = P.map((p2) => p2[0]), xa = Math.min(...xs), xb = Math.max(...xs);
+        const cy = P.reduce((a, p2) => a + p2[1], 0) / P.length;
+        const q = near((xa + xb) / 2, cy); if (!q) continue;
+        if (xb - xa < q.sp * 0.7) continue;
+        // its height at a place: the middle of its upper and lower edges there
+        const at = (x) => { const ys = []; for (let i = 0; i < P.length; i++) { const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length]; if ((x - ax) * (x - bx) <= 0 && ax !== bx) ys.push(ay + ((by - ay) * (x - ax)) / (bx - ax)); } return ys.length >= 2 ? [Math.min(...ys), Math.max(...ys)] : null; };
+        const th = at((xa + xb) / 2); if (!th || th[1] - th[0] < q.sp * 0.25 || th[1] - th[0] > q.sp * 0.8) continue;
+        ctx.vecOf.get(q).beams.push({ xa, xb, at, id: ctx.vecOf.get(q).beams.length });
+      }
+    }
+  }
   const read = [];
   staves.forEach((s, i) => { read.push(readStaff(s, ctx, null)); void i; });
   // ties, slurs and the signs around the notes
@@ -3187,7 +3398,7 @@ export function staffEvents(st) {
   }
   // ties and slurs from head to head become marks on the events
   const byHead = new Map(); items.forEach((it) => (it.ids || []).forEach((id) => byHead.set(id, it)));
-  for (const it of items) { it.ties = (it.tiesTo || []).filter((t) => byHead.has(t.to) && byHead.get(t.to) !== it).map((t) => t.p); delete it.tiesTo; }
+  for (const it of items) { it.tieNext = (it.tiesTo || []).filter((t) => byHead.has(t.to) && byHead.get(t.to) !== it).map((t) => ({ p: t.p, to: byHead.get(t.to) })); it.ties = it.tieNext.map((t) => t.p); delete it.tiesTo; }
   for (const sl of st.slurs || []) {
     const a = byHead.get(sl.a), b = byHead.get(sl.b); if (!a || !b || a === b) continue;
     a.slurStart = true; b.slurEnd = true;
@@ -3218,6 +3429,15 @@ export function staffEvents(st) {
     cur.push(it);
   }
   if (cur.length) { bars.push(cur); startX.push(cur.x0); }
+  // a note tied over the barline keeps the accidental it had (the tie carries it, not the bar)
+  if (globalThis.__tieAcc ?? 1) {
+    const barOf = new Map(); bars.forEach((b, i) => b.forEach((it) => barOf.set(it, i)));
+    for (const it of items) for (const t of it.tieNext || []) {
+      const nx = t.to; if (!nx || nx.rest || barOf.get(nx) === barOf.get(it)) continue;
+      if (it.acc[t.p] !== undefined && nx.acc[t.p] === undefined && nx.ps.includes(t.p)) { nx.acc[t.p] = it.acc[t.p]; nx.accTied = true; }
+    }
+  }
+  for (const it of items) delete it.tieNext;
   const meta = bars.map(() => ({}));
   const after = {};
   let prevClef = st.clef || 'treble';
@@ -3507,6 +3727,8 @@ export const _dbg = { grayAt, flatten, binarize, findStaves, removeLines, holeMa
 export async function recogniseBest(canvas, opts = {}) {
   softNext = null;
   const a = await recognise(canvas, opts);
+  // (a page whose signs the PDF gave: nothing to read better from a cleaned copy of its picture)
+  if (Array.isArray(canvas.glyphs) && canvas.glyphs.length && a) return a;
   const soft = softNext ?? 0;
   if (a && a.fitRead >= 0.95) return a;
   let b = null;
@@ -3554,6 +3776,9 @@ export async function analyseBands(canvas, bands, opts = {}) {
     if (b - a < 8) continue;
     const c = document.createElement('canvas'); c.width = W; c.height = b - a;
     c.getContext('2d').drawImage(canvas, 0, a, W, b - a, 0, 0, W, b - a);
+    // (the music as the PDF wrote it, the band's own, moved with it)
+    if (Array.isArray(canvas.glyphs)) c.glyphs = canvas.glyphs.filter((g) => g.y >= a && g.y < b).map((g) => ({ ...g, y: g.y - a }));
+    if (canvas.vec) c.vec = { lines: canvas.vec.lines.filter((l) => Math.min(l.y0, l.y1) >= a && Math.max(l.y0, l.y1) < b).map((l) => ({ ...l, y0: l.y0 - a, y1: l.y1 - a })), polys: canvas.vec.polys.filter((P) => P.every((q) => q[1] >= a && q[1] < b)).map((P) => P.map(([x, y]) => [x, y - a])) };
     let A = null; try { A = await analyseCrisp(c, opts); } catch (err) { console.warn('band', err); }
     c.width = c.height = 0;
     if (!A || !A.staves.length) continue;
