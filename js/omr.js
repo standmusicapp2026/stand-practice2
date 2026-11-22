@@ -2803,9 +2803,9 @@ function readHeader(s, comps, ctx, prev, heads) {
         if (best >= need) { repX = x; break; }
       }
     }
-    let bestFirst = 9, keyFirst = null;
+    let bestFirst = 9, keyFirst = null, keyMgs = [];
     for (const a of [1, -1]) {
-      let cur = end - sp * 0.3, cnt = 0, lx = end, firstD = 9, prevX = 0, step = 0, nLoose = 0, exact = 0, lxExact = end, firstSign = null;
+      let cur = end - sp * 0.3, cnt = 0, lx = end, firstD = 9, prevX = 0, step = 0, nLoose = 0, exact = 0, lxExact = end, firstSign = null; const mgs = [];
       for (const pp of ORDER[a]) {
         let k = null, p = Array.isArray(pp) ? pp[0] : pp;
         for (const q of Array.isArray(pp) ? pp : [pp]) {
@@ -2834,7 +2834,7 @@ function readHeader(s, comps, ctx, prev, heads) {
         if (cnt >= 2 && Math.abs((k.x0 - prevX) - step) > step * 0.45) break;
         if (cnt >= 1) step = cnt === 1 ? k.x0 - prevX : step;
         if (!cnt) { firstD = k.d; firstSign = { x0: k.x0, x1: k.x1, p }; }
-        prevX = k.x0; cnt++; lx = k.x1; cur = k.x0 + sp * 0.55; if (k.loose && !(k.ld < 0.09 && k.lm > 0.03)) nLoose++; else if (!nLoose) { exact = cnt; lxExact = lx; }
+        mgs.push(k.margin); prevX = k.x0; cnt++; lx = k.x1; cur = k.x0 + sp * 0.55; if (k.loose && !(k.ld < 0.09 && k.lm > 0.03)) nLoose++; else if (!nLoose) { exact = cnt; lxExact = lx; }
       }
       // (handwritten signs, known only loosely, count when there are several in their order)
       if (nLoose && cnt < 3) { cnt = exact; lx = lxExact; }
@@ -2861,7 +2861,7 @@ function readHeader(s, comps, ctx, prev, heads) {
         }
       }
       if (cnt === 1 && firstSign && (heads.some((hd) => hd.left - firstSign.x1 > -sp * 0.2 && hd.left - firstSign.x1 < sp * 0.9 && Math.abs(hd.p - firstSign.p) <= 1) || ovalAfter(firstSign))) cnt = 0;
-      if (cnt && (firstD < bestFirst - 0.02 || (Math.abs(firstD - bestFirst) <= 0.02 && cnt > n))) { n = cnt; kind = a; lastX = lx; bestFirst = firstD; keyFirst = firstSign; }
+      if (cnt && (firstD < bestFirst - 0.02 || (Math.abs(firstD - bestFirst) <= 0.02 && cnt > n))) { n = cnt; kind = a; lastX = lx; bestFirst = firstD; keyFirst = firstSign; keyMgs = mgs.slice(0, cnt); }
     }
     // signs that touch each other are hard to read one by one: their upright strokes, counted
     // (a flat has one, a sharp two), tell how many there are
@@ -2910,6 +2910,9 @@ function readHeader(s, comps, ctx, prev, heads) {
       }
       if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ keyStrokes: S, nS, n, kind, pairs, singles, sp: +sp.toFixed(1), from: Math.round(keyFirst.x0), xEnd: Math.round(xEnd), strokes: strokes.map((q) => [q.x0, q.x1 - q.x0 + 1, Math.round(q.y0), Math.round(q.y1)]) });
       if (nS > n && nS <= 7 && lastS) { n = nS; lastX = lastS.x1 + sp * (kind < 0 ? 0.75 : 0.35); }
+      // (flats counted by their strokes fewer than read, the ones beyond barely like a flat: those were
+      // the time signature's or a note's)
+      if ((globalThis.__keyTrim ?? 1) && kind < 0 && mode === 2 && nS >= 1 && nS < n && keyMgs.slice(nS).every((m) => m < 0.06) && lastS) { n = nS; lastX = lastS.x1 + sp * 0.75; }
       if (kind < 0 && pairs >= 2 && pairs >= singles && lastP) { kind = 1; n = Math.min(7, pairs + Math.ceil(singles / 2)); lastX = Math.max(lastX, lastP.x1 + sp * 0.35); }
       let mF = 0;
       for (const q of thin) { const p = ORDER[-1][mF]; if (p === undefined) break; if (Math.abs(q.y1 - (yAt(s, p, q.x0) + sp * 0.45)) > sp * 0.6 || (mF && q.x0 - thin[mF - 1].x1 > sp * 1.7)) break; mF++; }
