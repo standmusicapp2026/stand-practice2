@@ -11,6 +11,8 @@ import asyncio, hashlib, json, os, sys, time
 from playwright.async_api import async_playwright
 SET = sys.argv[1]; D = f'/home/claude/omreval/{SET}'
 META = json.load(open(f'{D}/{SET}.json'))
+# (a set may leave out the files' names: then <key>.pdf and <key>.wav in its folder)
+for _k, _m in META.items(): _m.setdefault('page', f'{_k}.pdf'); _m.setdefault('wav', f'{_k}.wav')
 PORT = os.environ.get('PORT', '8766'); GLOB = os.environ.get('GLOB', '{}')
 ONLY = [x for x in os.environ.get('ONLY', '').split(',') if x]
 PART = os.environ.get('PART', 'all'); OUTJ = os.environ.get('OUTJ'); FRESH = int(os.environ.get('FRESH', '6'))
@@ -77,15 +79,29 @@ async def one(pg, k, m):
     # (the line looked over: Done)
     await pg.wait_for_function("() => { const b = document.querySelector('#stEraser'); return b && !b.hidden && [...b.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Done'); }", timeout=600000, polling=500)
     await J("[...document.querySelectorAll('#stEraser button')].find((x) => x.textContent.trim() === 'Done').click();")
-    await waitjs(pg, "async () => { const S = await import('/js/studio.js'); const o = S._studio.P.overlays.find((q) => q.kind === 'score'); return o && o.syncInfo && o.synced !== 'even'; }", 1200000)
-    return await J("const S = await import('/js/studio.js'); const o = S._studio.P.overlays.find((q) => q.kind === 'score'); return { times: o.times, how: o.syncInfo && o.syncInfo.how, feat: o.syncInfo && o.syncInfo.feat || null };")
+    try: await waitjs(pg, "async () => { const S = await import('/js/studio.js'); const o = S._studio.P.overlays.find((q) => q.kind === 'score'); return o && o.syncInfo && o.synced !== 'even'; }", int(os.environ.get('WAITMAX', '1200')) * 1000)
+    except Exception:
+        st = await J("const S = await import('/js/studio.js'); const o = S._studio.P.overlays.find((q) => q.kind === 'score'); return JSON.stringify({ synced: o && o.synced, pick: window.__studioPickInfo || null, busy: document.querySelector('.st-busy, #stBusy')?.textContent || null, toast: [...document.querySelectorAll('.toast')].map((t) => t.textContent), errs: (window.__standErrors || []).slice(-3), nb: o && o.layout.bars.length, dur: S._studio.dur, trim: S._studio.P.trim });")
+        raise TimeoutError('no result: ' + st)
+    return await J("const S = await import('/js/studio.js'); const o = S._studio.P.overlays.find((q) => q.kind === 'score'); return { lay: { key: o.layout.key, clef: o.layout.clef, staffsN: o.layout.staffsN, staffs: o.layout.staffs ? o.layout.staffs.length : null, n: o.layout.notes.length, ev: (o.layout.events || []).slice(0, 60).map((e) => [e.bar, Math.round(e.x), e.ms]), bars: o.layout.bars.slice(0, 4).map((b) => [Math.round(b.x0), Math.round(b.x1), b.len, b.restFirst]) }, dbg: globalThis.__salDbg || null, shift: o.syncInfo && o.syncInfo.shift, times: o.times, how: o.syncInfo && o.syncInfo.how, feat: o.syncInfo && o.syncInfo.feat || null, segs: o.layout.bars.map((b) => [b.seg, Math.round(b.x0), Math.round(b.x1)]) };")
 async def main():
     R = json.load(open(OUTJ)) if OUTJ and os.path.exists(OUTJ) else []
     done = {r['key'] for r in R}
     async with async_playwright() as p:
         b = pg = None; used = 0
+        def serve():
+            # (the app served on PORT, started here if it is down — a server left running on its own is
+            # stopped after a while; this one lives as long as the bench)
+            import urllib.request, subprocess
+            try: urllib.request.urlopen(f'http://localhost:{PORT}/index.html', timeout=5); return
+            except Exception: pass
+            sp = os.environ.get('SP', '/tmp/claude-0/-home-claude/03421858-f41d-50dc-b20d-e2cac84f0cae/scratchpad')
+            d = os.environ.get('WWW') or {'8765': f'{sp}/base', '8766': f'{sp}/dev'}[PORT]
+            subprocess.Popen(['python3', '-m', 'http.server', PORT], cwd=d, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(2)
         async def fresh():
             nonlocal b, pg, used
+            serve()
             if b:
                 try: await b.close()
                 except Exception: pass
@@ -105,8 +121,10 @@ async def main():
                 except Exception as e:
                     print(k, 'error', str(e)[:200], flush=True); r = None; pg = None
             if r is None: R.append({'key': k, 'bars': sum(1 for i in range(len(m['T']) - 1) if m['T'][i] is not None and m['T'][i + 1] is not None), 'miss': None, 'why': 'error'}); continue
-            nb, miss, err, rel, why = score(m['T'], r['times'])
-            R.append({'key': k, 'bars': nb, 'miss': miss, 'err': err, 'rel': rel, 'why': why, 'how': r['how'], 'conf': r['feat'], 'secs': round(time.time() - t0)})
+            # (Studio's times: each bar's start, then the end of the last bar)
+            got = r['times'][:len(r['segs'])] if r.get('segs') else r['times'][:-1]
+            nb, miss, err, rel, why = score(m['T'], got)
+            R.append({'key': k, 'segs': r.get('segs'), 'times': r['times'], 'bars': nb, 'miss': miss, 'err': err, 'rel': rel, 'why': why, 'how': r['how'], 'conf': r['feat'], 'dbg': r.get('dbg'), 'lay': r.get('lay'), 'shift': r.get('shift'), 'secs': round(time.time() - t0)})
             print(f"{k:34s} {miss:3d}/{nb:3d} missed  {why or ''}  {round(time.time() - t0)}s", flush=True)
             if OUTJ: json.dump(R, open(OUTJ, 'w'))
         if b: await b.close()
