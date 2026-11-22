@@ -1657,6 +1657,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
     const r = new Float32Array(m); for (let j = 0; j < m; j++) r[j] = Math.abs(fr[j].t - a.t) <= Math.max(0.06, dt * 1.01) ? 0 : 60;
     pen[i] = r;
   }
+  const HOLD = globalThis.__hold ?? 0.6;
   let D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
   const P = new Uint8Array((n + 1) * W);
   for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
@@ -1670,6 +1671,8 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
       if (j >= 2) { const v3 = D1[j - 2] + ri[j - 2] + c; if (v3 < v) { v = v3; how = 3; } }
       // (a note held three times as long: a pause, the end of a phrase)
       if (j >= 3) { const v4 = D1[j - 3] + ri[j - 3] + ri[j - 2] + c + 0.35; if (v4 < v) { v = v4; how = 4; } }
+      // (a step held longer still — a pause, a held last chord: each moment more at a small price)
+      if (HOLD > 0 && j >= 2) { const v5 = D0[j - 1] + c + HOLD; if (v5 < v) { v = v5; how = 5; } }
       D0[j] = v; P[i * W + j] = how;
     }
     const t = D2; D2 = D1; D1 = D0; D0 = t;
@@ -1680,7 +1683,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
   while (i > 0 && j > 0) {
     at[i - 1] = fr[j - 1].t; sc[i - 1] = rows[i - 1][j - 1];
     const h = P[i * W + j];
-    if (h === 1) { i--; j--; cells++; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; cells += 2; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; cells += 2; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; cells += 3; }
+    if (h === 1) { i--; j--; cells++; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; cells += 2; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; cells += 2; } else if (h === 5) { j--; cells++; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; cells += 3; }
   }
   // (the cost of each moment of the path: the same measure whatever the pace — a slow pace, its page
   // squeezed into few moments, is not cheaper for it)
