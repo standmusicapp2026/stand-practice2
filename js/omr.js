@@ -1958,7 +1958,7 @@ function readStaff(s, ctx, header) {
       // stands that far above and below the staff)
       if ((globalThis.__looseTreble ?? 1) && k.cls === 'treble' && k.d > 0.38 && k.d < 0.48) {
         const tp = pAt(s, y0, (x0 + x1) / 2), bp = pAt(s, y1, (x0 + x1) / 2), wq = (x1 - x0) / sp, hq = (y1 - y0) / sp;
-        if (tp > 8.4 && tp < 11.5 && bp < -1.2 && bp > -4.5 && hq > 5.2 && hq < 8 && wq > 2.2 && wq < 3.3) k = { cls: 'treble', d: 0.29, loose: true };
+        if (tp > 8.4 && tp < 10.3 && bp < -1.2 && bp > -3.3 && hq > 5.2 && hq < 6.3 && wq > 2.2 && wq < 3.3) k = { cls: 'treble', d: 0.29, loose: true };
       }
       if (!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) continue;
       const trustBass = ((globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots()) || ((globalThis.__cBars ?? 1) && k.cls === 'alto' && k.d <= 0.38 && cBars());
@@ -1981,8 +1981,16 @@ function readStaff(s, ctx, header) {
       signs.push({ x: x0, x1, clef: name });
       // what was read inside the clef (its curls look like heads, its bars like stems) goes
       for (let k2 = heads.length - 1; k2 >= 0; k2--) if (heads[k2].cx > x0 - sp * 0.1 && heads[k2].cx < x1 + sp * 0.1 && heads[k2].cy > y0 - sp * 0.2 && heads[k2].cy < y1 + sp * 0.2) heads.splice(k2, 1);
-      { const m = name === 'treble' && (globalThis.__trebleBarKeep ?? 1) ? -sp * (k.loose ? 0.6 : 0.15) : sp * 0.2; for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - m && merged[k2].x < x1 + m) merged.splice(k2, 1); }
+      { const m = name === 'treble' && (globalThis.__trebleBarKeep ?? 1) ? -sp * (k.loose || k.tie ? 0.6 : 0.15) : sp * 0.2; for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - m && merged[k2].x < x1 + m) merged.splice(k2, 1); }
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ clef: name, x0, d: +k.d.toFixed(3) });
+      // (the barline the clef stands against, read as part of the clef: put back)
+      if ((globalThis.__clefBar ?? 1) && !merged.some((b) => Math.abs(b.x - x1) < sp * 0.8)) {
+        const ya = Math.round(yAt(s, 8, x1)), yb = Math.round(yAt(s, 0, x1)), need = (yb - ya) * 0.92;
+        for (let x = Math.round(x1 + sp * 0.3); x >= Math.round(x1 - sp * 0.4); x--) {
+          let run = 0, best = 0; for (let y = ya - 2; y <= yb + 2; y++) { if (y >= 0 && y < h && C[y * w + x]) { run++; if (run > best) best = run; } else run = 0; }
+          if (best >= need && best <= (yb - ya) + sp * 0.8) { merged.push({ x, w: 2 }); merged.sort((p2, q2) => p2.x - q2.x); break; }
+        }
+      }
     }
     // time signatures: two digits one above the other, filling the staff, with no note there
     const digitsIn = cands.filter((c) => !used.has(c) && !c.cut && c.h > sp * 1.1 && c.h < sp * 2.8 && c.w > sp * 0.6 && c.w < sp * 2.6 && !noteIn(c.x0, c.x1, c.y0, c.y1));
@@ -2763,7 +2771,19 @@ function readHeader(s, comps, ctx, prev, heads) {
     const yc = yAt(s, sg.p, sg.x1);
     let n2 = 0;
     for (let y = Math.round(yc - sp * 0.6); y <= Math.round(yc + sp * 0.6); y++) for (let x = Math.round(sg.x1 + sp * 0.35); x <= Math.round(sg.x1 + sp * 1.3); x++) if (y >= 0 && y < ctx.h && OI[y * w + x]) n2++;
-    return n2 > sp * sp * 0.25;
+    if (!(n2 > sp * sp * 0.25)) return false;
+    // (a time signature's digit there is no head: its ink runs on well above and below a head's height)
+    if (globalThis.__ovalDigit ?? 1) {
+      const x0 = Math.round(sg.x1 + sp * 0.35), x1 = Math.round(sg.x1 + sp * 1.3);
+      let ya = Infinity, yb = -1; for (let y = Math.max(0, Math.round(yc - sp * 2.6)); y <= Math.min(ctx.h - 1, Math.round(yc + sp * 2.6)); y++) for (let x = x0; x <= x1; x++) if (C[y * w + x]) { if (y < ya) ya = y; if (y > yb) yb = y; break; }
+      if (yb - ya > sp * 1.7) { const tm = classify(shapeOf(C, w, x0 - Math.round(sp * 0.2), ya, x1, yb, sp), ['d2', 'd3', 'd4', 'd5', 'd6', 'd8', 'd9', 'tC', 'tCut', 'sharp', 'flat', 'natural']); if (/^d\d$|^tC/.test(tm.cls) && tm.d < 0.45) return false;
+        // (or the two digits one above the other, the staff's height: each half a digit)
+        // (or the two digits one above the other, the staff's height: each a digit)
+        const dg = ctx.compsC.filter((c) => c.x1 > x0 && c.x0 < x1 && c.y1 > yc - sp * 3 && c.y0 < yc + sp * 3 && c.h > sp * 1.2 && c.h < sp * 2.6 && c.w < sp * 2.2).map((c) => classify(shapeOf(C, w, c.x0, c.y0, c.x1, c.y1, sp, labC, c.id), ['d2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9', 'sharp', 'flat', 'natural', 'r4']));
+        if (ctx.compsC.some((c) => c.x1 > x0 && c.x0 < x1 && c.h > sp * 3.3 && c.h < sp * 4.8 && c.w > sp * 0.9 && c.w < sp * 2.4 && c.y0 < yAt(s, 8, c.x0) + sp * 0.6 && c.y1 > yAt(s, 0, c.x0) - sp * 0.6)) return false;
+        if (dg.length >= 2 && dg.filter((q) => /^d\d$/.test(q.cls) && q.d < 0.4).length >= 2) return false; }
+    }
+    return true;
   };
   {
     // (a 'head' inside a sharp or a flat of the key, handwritten, is its middle, not the first note)
