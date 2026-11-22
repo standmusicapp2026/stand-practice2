@@ -1934,6 +1934,9 @@ function readStaff(s, ctx, header) {
       // (a treble clef tied with a C clef in the loose likeness, and no C clef's upright bars: treble)
       if ((globalThis.__trebleTie ?? 1) && !(['treble', 'bass', 'alto'].includes(k.cls) && k.d <= 0.38) && lz[0] && lz[1] && lz[0].d < 0.2 && lz[1].d - lz[0].d <= 0.015
         && [lz[0].cls, lz[1].cls].includes('treble') && [lz[0].cls, lz[1].cls].includes('alto') && !cBars()) k = { cls: 'treble', d: 0.29, tie: true };
+      // (a grace note with its slash and an accidental has a bass clef's outline, but a stem: a bass
+      // clef has no long straight upright)
+      const stemIn = (a0, a1, b0, b1) => { let best = 0; for (let x = Math.round(a0); x <= Math.round(a1); x++) { let run = 0; for (let y = Math.round(b0); y <= Math.round(b1); y++) { if (C[y * w + x]) { run++; if (run > best) best = run; } else run = 0; } } return best > sp * 2.2; };
       // (but a bass clef's two dots, either side of its line, are not a note's)
       const inkDots = () => { const tY = yAt(s, 8, x1), bY = yAt(s, 0, x1); const full = (x) => { for (let y = Math.round(tY) + 1; y < bY - 1; y++) if (!C[y * w + x]) return false; return true; };
         const dot = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = x1 + 1; x <= Math.round(x1 + sp * 0.8); x++) { if (full(x)) continue; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) if (C[yy * w + x]) n++; } return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
@@ -1969,7 +1972,7 @@ function readStaff(s, ctx, header) {
       if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4) name = 'treble';
       // (a clef changed along the line is printed smaller: a clear likeness, still most of the staff high)
       else if ((globalThis.__smallTreble ?? 1) && k.cls === 'treble' && k.d < 0.28 && top > 7.4 && bot < 2.2 && (y1 - y0) > sp * 2.6) name = 'treble';
-      else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22)) name = 'bass';
+      else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22) && !((globalThis.__bassStem ?? 1) && k.d > 0.22 && stemIn(x0, x1, y0, y1))) name = 'bass';
       // (a grace note with its slash, an accidental before it, has a bass clef's outline but not its two dots)
       else if (k.cls === 'alto') { const mid = (top + bot) / 2; name = cLine(mid); }
       if (!name) continue;
