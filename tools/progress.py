@@ -56,7 +56,7 @@ figure {{ margin: 0; }}
 figure img {{ width: 100%; border-radius: 10px; border: 1px solid var(--line); display: block; }}
 </style>
 <div class="wrap">
-<header><h1>Stand</h1><p>Stand 2.10: the fixes and improvements from your list of October 22, newest at the top. Screenshots are taken from the app running in a browser at iPad size.</p></header>
+<header><h1>Stand</h1><p>Live progress on the new version: Studio, Compose, iPhone camera and the rest. Newest at the top. Screenshots are taken from the app running in a browser at iPad size.</p></header>
 <section class="plan"><h3>Plan</h3><ul>{plan}</ul></section>
 {''.join(items)}
 </div>'''

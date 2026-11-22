@@ -19,15 +19,11 @@ async def main():
                                   color_scheme='dark' if dark else 'light', has_touch=True,
                                   user_agent=('Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148' if phone else None))
         page = await ctx.new_page()
-        if '--welcome' not in sys.argv: await page.add_init_script('window.__noTour = true;')
         errs = []
         page.on('console', lambda m: errs.append(f'[{m.type}] {m.text}') if m.type in ('error', 'warning') else None)
         page.on('pageerror', lambda e: errs.append(f'[pageerror] {e}'))
-        await page.goto('http://localhost:' + __import__('os').environ.get('PORT','8765') + '/index.html')
+        await page.goto('http://localhost:8765/index.html')
         await page.wait_for_timeout(1200)
-        if '--welcome' not in sys.argv:
-            await page.evaluate("() => { const w=document.querySelector('#welcome'); if (w && !w.hidden) document.querySelector('#welGo')?.click(); setTimeout(()=>{ document.querySelector('.tour-skip')?.click(); }, 300); }")
-            await page.wait_for_timeout(700)
         for s in steps:
             if s.startswith('WAIT '):
                 await page.wait_for_timeout(int(s[5:])); continue

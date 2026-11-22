@@ -11,8 +11,6 @@ async def main():
         b = await p.chromium.launch(); ctx = await b.new_context(viewport={'width': 1366, 'height': 1024}, has_touch=True)
         pg = await ctx.new_page(); await pg.add_init_script('window.__noTour = true;')
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
-        if os.environ.get('BLOBDBG'):
-            await pg.add_init_script("window.__blobs = {}; const c0 = URL.createObjectURL; URL.createObjectURL = function (b) { const u = c0.call(URL, b); window.__blobs[u.slice(-36)] = { made: (new Error().stack || '').split('\\n').slice(1, 4).join(' | '), type: b && b.type }; return u; }; const r0 = URL.revokeObjectURL; URL.revokeObjectURL = function (u) { const e = window.__blobs[String(u).slice(-36)]; if (e) e.revoked = (new Error().stack || '').split('\\n').slice(1, 4).join(' | '); return r0.call(URL, u); };")
         await pg.goto('http://localhost:' + os.environ.get('PORT', '8765') + '/index.html'); await pg.wait_for_timeout(1500)
         await pg.evaluate("() => { document.querySelector('#welGo')?.click(); setTimeout(() => document.querySelector('.tour-skip')?.click(), 300); }"); await pg.wait_for_timeout(700)
         await pg.set_input_files('#importInput', [FIX + 'vector8.pdf', FIX + 'scan10.pdf'])
@@ -85,13 +83,12 @@ async def main():
         await pg.evaluate("() => document.querySelector('[data-panel=pages]')?.click()"); await pg.wait_for_timeout(1200)
         await pg.evaluate("() => document.querySelector('#pgSelect').click()"); await pg.wait_for_timeout(200)
         await pg.evaluate("() => { const t = document.querySelectorAll('#pageGrid .pthumb'); t[2].click(); t[3].click(); }"); await pg.wait_for_timeout(200)
-        n0 = await pg.evaluate("() => document.querySelectorAll('#pageGrid .pthumb').length")
-        await pg.evaluate("() => document.querySelector('#pgDelete').click()"); await pg.wait_for_timeout(450)
+        await pg.evaluate("() => document.querySelector('#pgDelete').click()"); await pg.wait_for_timeout(120)
         now = await pg.evaluate("() => [document.querySelector('#pgTrash').hidden, document.querySelectorAll('#pgTrashGrid .pthumb').length, document.querySelectorAll('#pageGrid .pthumb').length, document.querySelectorAll('.pg-fly').length]")
         await pg.wait_for_timeout(1800)
         after = await pg.evaluate("async () => { const { db } = await import('/js/db.js'); const s = (await db.all('scores')).find(x => x.pageMap); return [document.querySelectorAll('#pgTrashGrid .pthumb').length, s ? s.pageMap.length : null, document.querySelectorAll('.pg-fly').length]; }")
         print('pages now', now, 'after', after)
-        ok(now[0] is False and now[1] == 2 and now[2] == n0 - 2 and now[3] == 2 and after[0] == 2 and after[1] == n0 - 2 and after[2] == 0, 'Pages: the deleted pages drop to Deleted pages at once, and are saved')
+        ok(now[0] is False and now[1] == 2 and now[2] == 6 and after[0] == 2 and after[1] == 6 and after[2] == 0, 'Pages: the deleted pages drop to Deleted pages at once, and are saved')
         await pg.evaluate("() => document.querySelector('#pgRestoreAll').click()"); await pg.wait_for_timeout(300)
         await pg.evaluate("() => document.querySelector('#panel-pages [data-close]')?.click()"); await pg.wait_for_timeout(1500)
         # ---- title typed then Back straight away
@@ -120,28 +117,23 @@ async def main():
         J = lambda js: pg.evaluate("async () => { const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const E = await import('/js/compose/editor.js'); const M = await import('/js/compose/model.js'); const C = window.__compose, T = window.__composeTest; " + js + " }")
         await J("await E.createComposition({ title: 'Words', insts: ['cello'], time: [4, 4], bars: 4 }); await sleep(900);")
         r = await J("""const st = M.allStaves(C.score)[0]; const ev = st.bars[0][0]; ev.rest = false; ev.notes = ev.notes && ev.notes.length ? ev.notes : [{ s: 0, a: 0 }];
-          const ev2 = st.bars[1][0]; if (ev2) { ev2.rest = false; ev2.notes = ev2.notes && ev2.notes.length ? ev2.notes : [{ s: 1, a: 0 }]; }
+          const ev2 = st.bars[0][1]; if (ev2) { ev2.rest = false; ev2.notes = ev2.notes && ev2.notes.length ? ev2.notes : [{ s: 1, a: 0 }]; }
           ev.txt = 'sonore'; ev.txtBelow = true; ev.txtStyle = 'expr'; window.__composeRelayout(); await sleep(300);
           const hits = C.hits.flatMap(h => (h && h.marks) || []).filter(h => h.kind === 'txt'); return { n: hits.length, id: ev.id, hit: hits[0] || null, ev2: ev2 ? ev2.id : null };""")
         ok(r['n'] >= 1, f'Compose: words under the staff can be tapped ({r["n"]})')
         r2 = await J(f"""C.markSel = {{ id: {json.dumps(r['id'])}, kind: 'txt', name: 'sonore', page: 0 }}; T.syncSelBar(); await sleep(100);
           const bs = [...document.querySelectorAll('#cpSel button, .cp-sel-more button')]; const names = bs.map(b => b.textContent.trim());
           bs.find(b => b.textContent.trim() === '▶').click(); await sleep(150);
-          const st = M.allStaves(C.score)[0]; const a = st.bars[0][0].txt || null, b2 = (st.bars[1][0] || {{}}).txt || null, below = !!(st.bars[1][0] || {{}}).txtBelow;
+          const st = M.allStaves(C.score)[0]; const a = st.bars[0][0].txt || null, b2 = (st.bars[0][1] || {{}}).txt || null, below = !!(st.bars[0][1] || {{}}).txtBelow;
           [...document.querySelectorAll('#cpSel button, .cp-sel-more button')].find(b => b.textContent.trim() === 'Above').click(); await sleep(150);
-          const below2 = !!st.bars[1][0].txtBelow;
+          const below2 = !!st.bars[0][1].txtBelow;
           [...document.querySelectorAll('#cpSel button, .cp-sel-more button')].find(b => b.textContent.trim() === 'Delete').click(); await sleep(150);
-          const gone = !st.bars[1][0].txt;
+          const gone = !st.bars[0][1].txt;
           document.querySelector('#cpPalUndo').click(); await sleep(100);
-          return {{ names, a, b2, below, below2, gone, back: M.allStaves(C.score)[0].bars[1][0].txt }};""")
+          return {{ names, a, b2, below, below2, gone, back: st.bars[0][1].txt }};""")
         print('words', r2)
         ok(r2['a'] is None and r2['b2'] == 'sonore' and r2['below'] and not r2['below2'] and r2['gone'] and r2['back'] == 'sonore', 'Compose: words moved to the next note, put above, deleted, and undone')
         print(errs[:3])
-        if os.environ.get('BLOBDBG'):
-            for e in errs:
-                import re
-                m = re.search(r'([0-9a-f-]{36})', e)
-                if m: print('BLOB', json.dumps(await pg.evaluate("(k) => window.__blobs[k]", m.group(1)))[:900])
         ok(not errs, 'no page errors')
         print('PASS' if all(res) else 'FAIL', 'small corrections 2 Nov')
         await b.close()

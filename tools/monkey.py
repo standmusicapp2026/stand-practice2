@@ -52,7 +52,7 @@ window.__monkey = (() => {
       for (let i = 1; i <= 10; i++) { const f = i / 10; ptr(t, 'pointermove', cx - 50 - sp * f + dx * f, cy + dy * f, 24, 'touch'); ptr(t, 'pointermove', cx + 50 + sp * f + dx * f, cy + dy * f, 25, 'touch', { isPrimary: false }); await sleep(16); }
       ptr(t, 'pointerup', cx - 50 - sp + dx, cy + dy, 24, 'touch'); ptr(t, 'pointerup', cx + 50 + sp + dx, cy + dy, 25, 'touch', { isPrimary: false }); return 'pinch ' + Math.round(sp) + ' move ' + Math.round(dx) + ',' + Math.round(dy);
     },
-    async keys() { const k = pick(['ArrowRight', 'ArrowLeft', 'PageDown', 'PageUp', 'ArrowDown', ' ', 'Escape']); (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true })); return 'key ' + k; },
+    async keys() { const k = pick(['ArrowRight', 'ArrowLeft', 'PageDown', 'PageUp', 'ArrowDown', ' ', 'Escape']); document.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true })); window.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true })); return 'key ' + k; },
     async home() { const b = document.querySelector('#backBtn'); if (b && visible(b)) { b.click(); return 'back'; } const c = document.querySelector('#cpBack, #compose [aria-label="Back"]'); if (c && visible(c)) { c.click(); return 'compose back'; } return 'no back'; },
     async score() { const cs = [...document.querySelectorAll('#grid .card:not(.folder)')].filter(visible); if (!cs.length) return 'no cards'; const c = pick(cs); c.click(); return 'open ' + (c.querySelector('.ttl') || {}).textContent; },
     async escape() { const c = [...document.querySelectorAll('[data-close]')].filter(visible); if (c.length) { pick(c).click(); return 'close panel'; } return 'nothing to close'; },
@@ -76,8 +76,7 @@ async def main():
     async with async_playwright() as p:
         br = os.environ.get('BR', 'chromium')
         b = await getattr(p, br).launch(**({'args': ['--enable-precise-memory-info', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required']} if br == 'chromium' else {}))
-        PH = os.environ.get('PHONE') == '1'
-        ctx = await b.new_context(viewport={'width': 390, 'height': 844} if PH else {'width': 1366, 'height': 1024}, has_touch=True, **({'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148', 'device_scale_factor': 3} if PH else {}))
+        ctx = await b.new_context(viewport={'width': 1366, 'height': 1024}, has_touch=True)
         pg = await ctx.new_page()
         await pg.add_init_script('window.__noTour = true;')
         await pg.add_init_script("window.alert = () => {}; window.confirm = () => true; window.prompt = () => null;")
@@ -85,18 +84,13 @@ async def main():
         def onerr(e):
             errs.append({'t': round(time.time() - T0), 'err': str(e)[:300]})
         pg.on('pageerror', onerr)
-        crashlog = []
-        async def oncrash(_):
-            crashlog.append(round(time.time() - T0)); print('PAGE CRASHED at', round(time.time() - T0), 's', flush=True)
-        pg.on('crash', lambda p_: asyncio.ensure_future(oncrash(p_)))
         pg.on('dialog', lambda d: asyncio.ensure_future(d.dismiss()))
         base = 'http://localhost:' + os.environ.get('PORT', '8765') + '/index.html'
         await pg.goto(base); await pg.wait_for_timeout(1500)
         await pg.evaluate("() => { document.querySelector('#welGo')?.click(); setTimeout(() => document.querySelector('.tour-skip')?.click(), 300); }"); await pg.wait_for_timeout(700)
-        if not PH:
-          await pg.set_input_files('#importInput', [FIX + 'vector8.pdf', FIX + 'scan10.pdf', FIX + 'imslp12.pdf'])
-          await pg.wait_for_function("document.querySelectorAll('#grid .card:not(.folder)').length >= 3", timeout=120000)
-          await pg.evaluate("async () => { const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); document.querySelector('#newNotebookBtn')?.click(); await sleep(1200); document.querySelector('#nbCreate')?.click(); await sleep(2000); document.querySelector('#backBtn')?.click(); await sleep(800); const E = await import('/js/compose/editor.js'); await E.createComposition({ title: 'Monkey', insts: ['cello', 'piano'], time: [3, 4], bars: 8 }); await sleep(1500); document.querySelector('#cpBack')?.click(); await sleep(800); }")
+        await pg.set_input_files('#importInput', [FIX + 'vector8.pdf', FIX + 'scan10.pdf', FIX + 'imslp12.pdf'])
+        await pg.wait_for_function("document.querySelectorAll('#grid .card:not(.folder)').length >= 3", timeout=120000)
+        await pg.evaluate("async () => { const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); document.querySelector('#newNotebookBtn')?.click(); await sleep(1200); document.querySelector('#nbCreate')?.click(); await sleep(2000); document.querySelector('#backBtn')?.click(); await sleep(800); const E = await import('/js/compose/editor.js'); await E.createComposition({ title: 'Monkey', insts: ['cello', 'piano'], time: [3, 4], bars: 8 }); await sleep(1500); document.querySelector('#cpBack')?.click(); await sleep(800); }")
         await pg.add_init_script(MONKEY.replace('%SEED%', str(SEED)))
         await pg.evaluate(MONKEY.replace('%SEED%', str(SEED)))
         cdp = await ctx.new_cdp_session(pg) if br == 'chromium' else None
@@ -114,7 +108,6 @@ async def main():
                     await pg.wait_for_timeout(2000); await pg.evaluate(MONKEY.replace('%SEED%', str(SEED + steps))); continue
                 raise
             steps += 1
-            with open('/tmp/claude-0/monkey_last_%s.txt' % SEED, 'a') as lf: lf.write(str(round(time.time() - T0)) + ' ' + str(s) + '\n')
             await pg.wait_for_timeout(random.Random(SEED + steps).randint(30, 250))
             if len(errs) > lastErrN:
                 log = await pg.evaluate("() => window.__monkey.log.slice()")

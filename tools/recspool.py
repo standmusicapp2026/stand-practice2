@@ -1,4 +1,4 @@
-# A long recording goes into the database every 10 s (never all in memory); stopped, it is one whole
+# A long recording goes into the database every 20 s (never all in memory); stopped, it is one whole
 # take and the pieces go; Stand ended while recording: the next start keeps what was recorded.
 import asyncio, os
 from playwright.async_api import async_playwright
@@ -36,7 +36,7 @@ async def main():
         r = await J("const t = (await db.all('takes')).filter(x => x.name === 'Recovered take'); return [t.length, t[0] ? t[0].dur : 0, t[0] ? !!(await db.get('files', 'audio:' + t[0].id)) : false];")
         left2 = await J(spools)
         print('pieces before ending', before, 'recovered', r, 'pieces left', left2)
-        ok(before >= 1 and r[0] == 1 and r[1] >= 15 and r[2] and left2 == 0, 'Stand ended while recording: what was recorded is kept as a take')
+        ok(before >= 1 and r[0] == 1 and r[1] >= 18 and r[2] and left2 == 0, 'Stand ended while recording: what was recorded is kept as a take')
         print(errs[:3]); ok(not errs, 'no page errors')
         print('PASS' if all(res) else 'FAIL', 'recordings kept safe')
         await b.close()

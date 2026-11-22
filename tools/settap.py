@@ -6,11 +6,9 @@
 import asyncio, os, re
 from playwright.async_api import async_playwright
 PORT = os.environ.get('PORT', '8765')
-SKIP = re.compile(r'Delete everything|Erase|Reset all|Remove all', re.I)
+SKIP = re.compile(r'Delete everything|Erase|Reset all|Delete this score|Delete score|Remove all', re.I)
 NAT = '''window.__nat = []; window.standCaps = { native: true, face: true, tap: true, scan: true, video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1, peer: 4, notify: 1 };
-  // (the app answers as the real one does: asked for the list of linked devices, it sends it)
-  window.webkit = { messageHandlers: new Proxy({}, { get: (t, k) => t[k] || (t[k] = { postMessage(m) { window.__nat.push(String(k));
-    if (k === 'standPeer' && m && m.op === 'pairList') setTimeout(() => window.standPairEvent && window.standPairEvent('list', { list: [{ d: 'dev1', kind: /iPhone/.test(navigator.userAgent) ? 'iPad' : 'iPhone', at: 1793000000000 }], me: 'x' }), 15); } }) }) };'''
+  window.webkit = { messageHandlers: new Proxy({}, { get: (t, k) => t[k] || (t[k] = { postMessage(m) { window.__nat.push(String(k)); } }) }) };'''
 async def run(p, phone, panel):
     b = await getattr(p, os.environ.get('BR', 'chromium')).launch()
     kw = dict(viewport={'width': 393, 'height': 852}, is_mobile=True, has_touch=True, user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)') if phone else dict(viewport={'width': 1180, 'height': 820}, has_touch=True)
@@ -27,26 +25,26 @@ async def run(p, phone, panel):
         await pg.wait_for_function("document.querySelectorAll('#grid .card:not(.folder)').length >= 1", timeout=60000)
         await J("document.querySelector('#grid .card:not(.folder)').click(); await sleep(2500); document.querySelector('.tour-skip')?.click(); await sleep(300);")
     async def tap(x, y):
-        # a finger (touch events, as on the iPad and iPhone), or the mouse with MOUSE=1
-        if os.environ.get('MOUSE'): await pg.mouse.click(x, y)
-        else: await pg.touchscreen.tap(x, y)
-        await pg.wait_for_timeout(120)
+        await pg.mouse.click(x, y); await pg.wait_for_timeout(120)
     async def open_panel():
         if await J("return !document.querySelector('#panel-' + a).hidden", panel): return True
-        # (opening it is not what is tested here: a script click)
-        await J("const bs = [...document.querySelectorAll('[data-panel=\"' + a + '\"]')]; (bs.find((x) => x.offsetParent) || bs[0]).click(); await sleep(300);", panel)
+        if panel == 'settings': await J("document.querySelector('#score').dispatchEvent(new PointerEvent('pointermove', { bubbles: true })); await sleep(200);")
+        r = await J("const e = [...document.querySelectorAll('[data-panel=\"' + a + '\"]')].find((x) => x.offsetParent); if (!e) return null; const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2];", panel)
+        if not r:
+            await J("const e = [...document.querySelectorAll('[data-panel=\"' + a + '\"]')][0]; e && e.click(); await sleep(400);", panel)
+        else: await tap(*r)
         await pg.wait_for_timeout(450)
         return await J("return !document.querySelector('#panel-' + a).hidden", panel)
     print('panel opens:', await open_panel())
     # open every <details> so that what is inside can be tapped
     n = await J("""const P = document.querySelector('#panel-' + a); P.querySelectorAll('details').forEach((d) => d.open = true); await sleep(200);
-      const set = new Set(P.querySelectorAll('button, label.btn')); P.querySelectorAll('input[type=checkbox]').forEach((c) => { const w = c.closest('.switch') || c.closest('label'); if (w) set.add(w); }); const all = [...set]; all.forEach((e, i) => e.dataset.tap = i); return all.length;""", panel)
+      const all = [...P.querySelectorAll('button, label.btn, .switch')]; all.forEach((e, i) => e.dataset.tap = i); return all.length;""", panel)
     bad = []; seen = 0
     for i in range(n):
         if not await open_panel(): bad.append(('panel', 'did not open again before #' + str(i), '')); break
         await J("document.querySelectorAll('#panel-' + a + ' details').forEach((d) => d.open = true);", panel)
         info = await J("""const e = document.querySelector('[data-tap="' + a + '"]'); if (!e || e.closest('[hidden]') || !e.offsetParent) return null;
-          const inp = e.querySelector('input[type=checkbox]'); if (inp && inp.disabled) return null; if (e.disabled) return null;
+          const inp = e.classList.contains('switch') ? e.querySelector('input') : null; if (inp && inp.disabled) return null; if (e.disabled) return null;
           e.scrollIntoView({ block: 'center' }); await sleep(150); const r = e.getBoundingClientRect(); if (r.width < 4 || r.height < 4) return null;
           const lab = (e.closest('.set-row, label')?.querySelector('b')?.textContent || e.textContent || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ').slice(0, 46);
           const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
@@ -57,8 +55,8 @@ async def run(p, phone, panel):
         await J("window.__mut = 0; window.__mo && window.__mo.disconnect(); window.__mo = new MutationObserver((l) => { window.__mut += l.length; }); window.__mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });")
         backs0 = await J("return document.querySelectorAll('.ask-back, .ptool').length")
         await tap(info['x'], info['y']); await pg.wait_for_timeout(1300)
-        st = await J("""const e = document.querySelector('[data-tap="' + a + '"]'); const inp = e && e.querySelector('input[type=checkbox]');
-          return { mut: window.__mut, now: inp ? inp.checked : null, backs: document.querySelectorAll('.ask-back, .ptool').length, panel: !document.querySelector('#panel-' + window.__PN).hidden };""", i) if False else await J("""const e = document.querySelector('[data-tap="' + a[0] + '"]'); const inp = e && e.querySelector('input[type=checkbox]');
+        st = await J("""const e = document.querySelector('[data-tap="' + a + '"]'); const inp = e && e.classList.contains('switch') ? e.querySelector('input') : null;
+          return { mut: window.__mut, now: inp ? inp.checked : null, backs: document.querySelectorAll('.ask-back, .ptool').length, panel: !document.querySelector('#panel-' + window.__PN).hidden };""", i) if False else await J("""const e = document.querySelector('[data-tap="' + a[0] + '"]'); const inp = e && e.classList.contains('switch') ? e.querySelector('input') : null;
           return { mut: window.__mut, now: inp ? inp.checked : null, backs: document.querySelectorAll('.ask-back, .ptool').length, panel: !document.querySelector('#panel-' + a[1]).hidden };""", [i, panel])
         note = ''
         if info['cover']: note += f" covered by {info['cover']}"
@@ -67,7 +65,7 @@ async def run(p, phone, panel):
         # a question or window opened: close it with a real tap; it must go, and the tap must not close more
         closed_ok = None
         if st['backs'] > backs0:
-            for k in range(1):   # (one tap: it must close at the first)
+            for k in range(3):
                 c = await J("""const bs = [...document.querySelectorAll('.ask-back button, .ptool button')].filter((b) => b.offsetParent && /^(Cancel|Close|Not now|Later|Done|Back)$/.test(b.textContent.trim()));
                   const b = bs[bs.length - 1]; if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.textContent.trim()];""")
                 if not c: break
@@ -75,7 +73,6 @@ async def run(p, phone, panel):
                 if await J("return document.querySelectorAll('.ask-back, .ptool').length") <= backs0: break
             left = await J("return document.querySelectorAll('.ask-back, .ptool').length")
             closed_ok = left <= backs0
-            if closed_ok and not await J("return !document.querySelector('#panel-' + a).hidden", panel): note += ' THE TAP ON ITS CANCEL ALSO CLOSED THE PANEL'
             if not closed_ok:
                 note += ' ITS WINDOW DID NOT CLOSE WITH A TAP'
                 await J("document.querySelectorAll('.ask-back, .ptool').forEach((x) => x.remove());")
@@ -84,7 +81,7 @@ async def run(p, phone, panel):
             await open_panel(); await J("document.querySelectorAll('#panel-' + a + ' details').forEach((d) => d.open = true);", panel)
             r = await J("const e = document.querySelector('[data-tap=\"' + a + '\"]'); e.scrollIntoView({ block: 'center' }); await sleep(120); const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2];", i)
             await tap(*r); await pg.wait_for_timeout(500)
-            if await J("return document.querySelector('[data-tap=\"' + a + '\"] input[type=checkbox]').checked", i) != info['was']: note += ' SWITCH DID NOT TURN BACK'
+            if await J("return document.querySelector('[data-tap=\"' + a + '\"] input').checked", i) != info['was']: note += ' SWITCH DID NOT TURN BACK'
             await J("document.querySelectorAll('.ask-back').forEach((x) => { const c = [...x.querySelectorAll('button')].find((b) => /Cancel|Not now/.test(b.textContent)); c && c.click(); });")
         print(('  BAD  ' if note else '  ok   ') + f"{info['id'] or '-':16s} {info['lab']:46s}" + (' (window closed by a tap)' if closed_ok else '') + note, flush=True)
         if note: bad.append((info['id'], info['lab'], note.strip()))

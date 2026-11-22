@@ -122,7 +122,6 @@ async def main():
             r = await pg.evaluate("(o) => window.__keyReal(o)", {'notes': notes, 'secs': secs, 'key': start, 'sens': sens})
             acc, lat, wrong = judge(r['events'], start, [(a, min(bb, secs), pc, mi) for a, bb, pc, mi in bounds], secs)
             accs.append(acc); lats += lat; wrongs += wrong
-            for sn in (r.get('snaps') or []) if os.environ.get('SNAP') else []: print('    ', sn)
             print(f'{name:34s} on key {acc*100:5.1f}%  time to new key {lat}  wrong moves {wrong}  {[e[:2] for e in r["events"]]}', flush=True)
         print(f'SUMMARY on key {sum(accs)/len(accs)*100:.1f}%  mean time to new key {sum(lats)/max(1,len(lats)):.1f} s  (max {max(lats or [0])})  wrong moves {wrongs}')
         print(errs[:3]); await b.close()
