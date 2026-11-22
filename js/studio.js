@@ -203,6 +203,8 @@ async function addScore(opt = {}) {
   if (!region) return;
   busy('Reading the score…', 'Finding the staves and the bars.', 0.2);
   try {
+    // (the PDF's own signs are for Capture: the following was measured on the picture's reading)
+    if (!globalThis.__studioGlyphs) { delete region.canvas.glyphs; delete region.canvas.vec; }
     const A = await analyseBands(region.canvas, region.canvas.bands, { onBand: (f) => busy('Reading the score…', 'Finding the staves and the bars.', 0.2 + 0.7 * f) });
     if (!A.staves.length) { busy(null); D.toast('No staves found there. Draw a little wider than the music, around whole lines.', 5000); return; }
     const blob = await new Promise((res) => region.canvas.toBlob(res, 'image/png'));
@@ -4580,6 +4582,7 @@ export const _posAt = (o, t) => posAt(o, t);
 export const _alignChords = (e, o) => alignChords(e, o);
 // (for the tests: a score put on the video without the picker)
 export async function _addScoreFrom(canvas, opt = {}) {
+  if (!globalThis.__studioGlyphs) { delete canvas.glyphs; delete canvas.vec; }
   const A = await analyseBands(canvas, canvas.bands);
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
   const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height, canvas), times: null, synced: 'even' };
