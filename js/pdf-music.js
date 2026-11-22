@@ -83,7 +83,7 @@ export async function pdfVectors(page, vp, OPS) {
       byName = null;
       // (the music font itself, not its text or special companions: OpusText, OpusSpecial)
       const base = nm.replace(/^[A-Z]{6}\+/, ''); sonata = SONATA_FONT.test(base) && !/Text|Special|Chords|Percussion|Figured|Metronome|Ornaments/i.test(base); special = /(Opus|Maestro)Special/i.test(base);
-      if (f && f.differences && /Emmentaler|feta|Feta/.test(nm)) { byName = new Map(); for (const [code, gn] of Object.entries(f.differences)) if (FETA[gn]) byName.set(+code, FETA[gn]); }
+      if (f && f.differences && /Emmentaler|feta|Feta/.test(nm)) { byName = new Map(); for (const [code, gn] of Object.entries(f.differences)) { const g0 = String(gn).replace(/\.alt$/, ''); if (FETA[g0]) byName.set(+code, FETA[g0]); } }
     }
     else if (fn === OPS.setTextMatrix) { Tm = a.slice(0, 6); Tlm = Tm.slice(); }
     else if (fn === OPS.moveText) { Tlm = mul(Tlm, [1, 0, 0, 1, a[0], a[1]]); Tm = Tlm.slice(); }
@@ -101,7 +101,8 @@ export async function pdfVectors(page, vp, OPS) {
         if (!g) continue;
         let cp = g.unicode && g.unicode.length ? g.unicode.codePointAt(0) : 0;
         if (fam && cp >= 0xf400 && SMUFL_ALT[fam][cp]) cp = SMUFL_ALT[fam][cp];
-        if (byName) { const code = g.originalCharCode ?? (g.unicode ? g.unicode.codePointAt(0) : -1); cp = byName.has(code) ? byName.get(code) : 0; }
+        // (a digit of the music font, by its plain code: a count over bars of rest, a time)
+        if (byName) { const code = g.originalCharCode ?? (g.unicode ? g.unicode.codePointAt(0) : -1); cp = byName.has(code) ? byName.get(code) : g.unicode && /^[0-9]$/.test(g.unicode) ? 0xe080 + +g.unicode : 0; }
         else if (sonata) cp = g.unicode && SONATA[g.unicode] ? SONATA[g.unicode] : 0;
         else if (special) cp = g.unicode && SONATA_SPECIAL[g.unicode] ? SONATA_SPECIAL[g.unicode] : 0;
         const adv = ((g.width || 0) * fontMat[0] * fs + Tc + (g.isSpace ? Tw : 0)) * Th;

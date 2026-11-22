@@ -755,8 +755,24 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
   for (const hd of heads) if (hd.gKind) { hd.kind = hd.gKind; hd.hollow = hd.gKind !== 'black'; }
   // accidentals: just left of a head, at its height (those of the key, before the first note, not)
   const firstX = heads.length ? Math.min(...heads.map((hd) => hd.cx)) : Infinity;
+  // (the key: the run of sharps or flats right after the line's clef, each a little after the one
+  // before — even when the first note stands at the height of the last of them)
+  const clef0 = G.find((g) => GL_CLEF[g.cp] && g.size >= big * 0.8 && g.x < s.x0 + sp * 6);
+  if (clef0) {
+    let lastX = clef0.x + sp * 2.2;
+    const run = G.filter((g) => (g.cp === 0xe262 || g.cp === 0xe260) && g.x > clef0.x).sort((a, b) => a.x - b.x);
+    // (each at its own height: F C G D A E B for sharps, B E A D G C F for flats, by the clef)
+    const SH = [8, 5, 9, 6, 3, 7, 4], FL = [4, 7, 3, 6, 2, 5, 1];
+    const cl = GL_CLEF[clef0.cp], shift = cl === 'bass' || cl === 'bass8' ? -2 : cl === 'C' ? null : 0;
+    let k = 0;
+    for (const g of run) {
+      if (g.x - lastX > sp * 2.2 || g.cp !== run[0].cp || k >= 7) break;
+      if (shift !== null) { const want = (g.cp === 0xe262 ? SH : FL)[k] + shift; if (Math.round(glP(s, g.x, g.y)) !== want) break; }
+      g.key = true; lastX = g.x + (g.w || sp); k++;
+    }
+  }
   for (const g of G) {
-    const a = GL_ACC[g.cp]; if (a === undefined || g.size < big * 0.8) continue;
+    const a = GL_ACC[g.cp]; if (a === undefined || g.size < big * 0.8 || g.key) continue;
     const gp = Math.round(glP(s, g.x, g.y));
     let tgt = null, bd = Infinity;
     for (const hd of heads) { const dx = hd.left - (g.x + (g.w || sp)); if (dx < -sp * 0.4 || dx > sp * 3.2 || hd.p !== gp) continue; if (dx < bd) { bd = dx; tgt = hd; } }
@@ -810,7 +826,7 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
     for (const hd of heads) { delete hd.tupN; delete hd.tupG; delete hd.tup3; }
     const inStaff = (y) => y > s.top - sp * 0.2 && y < s.bottom + sp * 0.2;
     let tg = 1;
-    const digits = G.filter((g) => g.text && g.cp >= 0x32 && g.cp <= 0x39 && !inStaff(g.y));
+    const digits = G.filter((g) => g.text && g.cp >= 0x32 && g.cp <= 0x39 && !inStaff(g.y)).sort((a, b) => a.x - b.x);
     if (globalThis.__tupGl) globalThis.__tupGl.push({ all: G.filter((g) => g.text).map((g) => [g.cp - 0x30, Math.round(g.x), Math.round(g.y)]), top: Math.round(s.top), bot: Math.round(s.bottom), hl: V.hl.length });
     for (const d of digits) {
       const n = d.cp - 0x30; if (![2, 3, 5, 6, 7, 9].includes(n)) continue;
@@ -830,7 +846,10 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
         // the notes (not the heads of a chord): n of them, centred on the digit
         const xs = [...new Set(mates.map((hd) => Math.round(hd.stem ? hd.stem.x : hd.cx)))].sort((a, b) => a - b);
         if (xs.length < n) continue;
-        let bi = 0, bd = Infinity; for (let i = 0; i + n <= xs.length; i++) { const c = (xs[i] + xs[i + n - 1]) / 2; if (Math.abs(c - dx) < bd) { bd = Math.abs(c - dx); bi = i; } }
+        // (notes another number already took are not this one's)
+        const taken = new Set(mates.filter((hd) => hd.tupG).map((hd) => Math.round(hd.stem ? hd.stem.x : hd.cx)));
+        let bi = -1, bd = Infinity; for (let i = 0; i + n <= xs.length; i++) { if (xs.slice(i, i + n).some((x) => taken.has(x))) continue; const c = (xs[i] + xs[i + n - 1]) / 2; if (Math.abs(c - dx) < bd) { bd = Math.abs(c - dx); bi = i; } }
+        if (bi < 0) continue;
         const keep = new Set(xs.slice(bi, bi + n)); grp = mates.filter((hd) => keep.has(Math.round(hd.stem ? hd.stem.x : hd.cx)));
       }
       if (!grp.length) continue;
@@ -845,6 +864,20 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
     const wd = g.w > sp * 0.3 ? g.w : sp;
     let dots = 0; for (const d of G) if (d.cp === 0xe1e7 && d.x > g.x + wd - sp * 0.2 && d.x < g.x + wd + sp * 2.5 && Math.abs(d.y - g.y) < sp * 1.6) dots++;
     outR.push({ x: Math.round(g.x), t, cx: g.x + wd / 2, w: wd, dots: Math.min(2, dots), y: g.y });
+  }
+  // bars of rest over many bars: their count, digits of the music font over the staff away from any
+  // note and past the start of the line (LilyPond draws the rest itself as a thick bar)
+  if (globalThis.__mmDigits ?? 1) {
+    const dg = G.filter((g) => g.cp >= 0xe080 && g.cp <= 0xe089 && g.y < s.top - sp * 0.3 && g.x > startX + sp && !heads.some((hd) => Math.abs(hd.cx - g.x) < sp * 3)).sort((a, b) => a.x - b.x);
+    const groups = [];
+    for (const g of dg) { const l = groups[groups.length - 1]; if (l && g.x - l[l.length - 1].x < sp * 2 && Math.abs(g.y - l[0].y) < sp) l.push(g); else groups.push([g]); }
+    for (const gr of groups) {
+      const n = +gr.map((g) => g.cp - 0xe080).join(''); if (!(n >= 2)) continue;
+      const cx = (gr[0].x + gr[gr.length - 1].x + (gr[gr.length - 1].w || sp)) / 2;
+      if (outR.some((r) => r.multi && Math.abs(r.cx - cx) < sp * 6)) continue;
+      for (let i = outR.length - 1; i >= 0; i--) if (Math.abs(outR[i].cx - cx) < sp * 5) outR.splice(i, 1);
+      outR.push({ x: Math.round(cx - sp * 2), t: 1, cx, w: sp * 4, dots: 0, multi: n });
+    }
   }
   // grace notes: small heads, on the note after them
   for (const g of G) {
@@ -2296,7 +2329,21 @@ function readStaff(s, ctx, header) {
   if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ graces: graces.map((g) => [Math.round(g.cx), g.p]) });
   // ---- what is left are the notes after the header
   // the space between the two strokes of a double or final barline is not a hollow head
-  if (ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length) { const r2 = glyphFinal(s, glHeads || heads, rests, head, ctx.glyphsOf.get(s), sp, startX, signs, (q) => ctx.vecOf && ctx.vecOf.get(q)); heads = r2.heads; rests.length = 0; rests.push(...r2.rests); }
+  if (ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length) {
+    const r2 = glyphFinal(s, glHeads || heads, rests, head, ctx.glyphsOf.get(s), sp, startX, signs, (q) => ctx.vecOf && ctx.vecOf.get(q)); heads = r2.heads; rests.length = 0; rests.push(...r2.rests);
+    // barlines the PDF drew that the picture missed (by a clef, a stem, a chord): not one of a stem's
+    // (a line from a head) nor the line's first, where the staff begins
+    const V = ctx.vecOf && ctx.vecOf.get(s);
+    if (V && V.bars.length && (globalThis.__vecBars ?? 1)) {
+      const isStem = (x) => heads.some((hd) => hd.stem && Math.abs(hd.stem.x - x) < sp * 0.25);
+      for (const vb of V.bars) {
+        if (vb.x < startX - sp * 0.5 || vb.x < s.x0 + sp * 1.5 || isStem(vb.x)) continue;
+        if (merged.some((b) => Math.abs(b.x - vb.x) < sp * 0.9)) continue;
+        merged.push({ x: Math.round(vb.x), w: Math.round(vb.w), thick: vb.w > sp * 0.3, vec: true });
+      }
+      merged.sort((a, b) => a.x - b.x);
+    }
+  }
   const notes = heads.filter((hd) => hd.gl || (hd.left >= startX - sp * 0.3 && !(hd.ringHead && !hd.stem && merged.some((b) => (b.double || b.thick) && hd.cx > b.x - b.w - sp * 1.6 && hd.cx < b.x + sp * 0.9))));
   if (TR) trk(1175, heads);
   return { pdfMusic: !!(ctx.vecOf && ctx.vecOf.get(s) && ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length), signTrace: (() => { const t = ctx.signTrace; ctx.signTrace = []; return t; })(), L: s.L, x0: s.x0, x1: s.x1, sp, top: s.top, bottom: s.bottom, lines: s.lines, thick: T, heads: notes, rests, bars: merged, signs, explicitClef: head.explicitClef, clef: head.clef, key: head.key, time: head.time, timeAlt: head.timeAlt, startX, head, barTrace: (() => { const t = ctx.barTrace; ctx.barTrace = []; return t; })(), accTrace: ctx.accTrace, restTrace: ctx.restTrace, allHeads: ctx.allHeads };
@@ -3181,7 +3228,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     { const mus = canvas.glyphs.filter((g) => !g.text); const known = mus.length >= 3 && mus.filter((g) => g.cp >= 0xe000 && g.cp < 0xf400).length >= mus.length * 0.9; for (const L of ctx.glyphsOf.values()) L.known = known; }
     // and its lines: stems (stroked, upright) and beams (filled, four-sided), with the staff nearest
     if (canvas.vec && (globalThis.__vec ?? 1)) {
-      ctx.vecOf = new Map(staves.map((q) => [q, { stems: [], beams: [], hl: [] }]));
+      ctx.vecOf = new Map(staves.map((q) => [q, { stems: [], beams: [], hl: [], bars: [] }]));
       const near = (x, y) => { let best = null, bd = Infinity; for (const q of staves) { if (x < q.x0 - q.sp * 3 || x > q.x1 + q.sp * 3) continue; const d = y < q.top ? q.top - y : y > q.bottom ? y - q.bottom : 0; if (d < bd) { bd = d; best = q; } } return best && bd < best.sp * 9 ? best : null; };
       for (const l of canvas.vec.lines) {
         const [x0, y0] = fwd(l.x0, l.y0), [x1, y1] = fwd(l.x1, l.y1);
@@ -3190,6 +3237,8 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
           if (Math.abs(y1 - y0) < Math.abs(x1 - x0) * 0.25) { const q = near((x0 + x1) / 2, (y0 + y1) / 2); if (q && Math.abs(x1 - x0) > q.sp * 0.6) ctx.vecOf.get(q).hl.push({ xa: Math.min(x0, x1), xb: Math.max(x0, x1), y: (y0 + y1) / 2 }); }
           continue;
         }
+        // (a line from the top of a staff to its foot, or over several staves: a barline for each)
+        { const ya = Math.min(y0, y1), yb = Math.max(y0, y1); for (const st2 of staves) if (ya <= st2.top + st2.sp * 0.3 && yb >= st2.bottom - st2.sp * 0.3 && (x0 + x1) / 2 > st2.x0 - st2.sp && (x0 + x1) / 2 < st2.x1 + st2.sp) ctx.vecOf.get(st2).bars.push({ x: (x0 + x1) / 2, w: Math.max(1, l.w * f), ya, yb }); }
         const q = near((x0 + x1) / 2, (y0 + y1) / 2); if (!q) continue;
         const len = Math.abs(y1 - y0); if (len < q.sp * 1.5 || l.w * f > q.sp * 0.35) continue;
         ctx.vecOf.get(q).stems.push({ x: (x0 + x1) / 2, ya: Math.min(y0, y1), yb: Math.max(y0, y1) });
@@ -3200,7 +3249,9 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
         const cy = P.reduce((a, p2) => a + p2[1], 0) / P.length;
         const q = near((xa + xb) / 2, cy); if (!q) continue;
         // (a stem drawn as a thin filled rectangle, as LilyPond draws them)
-        { const ys = P.map((p2) => p2[1]), ya = Math.min(...ys), yb = Math.max(...ys); if (xb - xa < q.sp * 0.3 && yb - ya > q.sp * 1.5) { ctx.vecOf.get(q).stems.push({ x: (xa + xb) / 2, ya, yb }); continue; } }
+        { const ys = P.map((p2) => p2[1]), ya = Math.min(...ys), yb = Math.max(...ys);
+          if (xb - xa < q.sp * 0.8 && yb - ya > q.sp * 3.5) for (const st2 of staves) if (ya <= st2.top + st2.sp * 0.3 && yb >= st2.bottom - st2.sp * 0.3) ctx.vecOf.get(st2).bars.push({ x: (xa + xb) / 2, w: Math.max(1, xb - xa), ya, yb });
+          if (xb - xa < q.sp * 0.3 && yb - ya > q.sp * 1.5) { ctx.vecOf.get(q).stems.push({ x: (xa + xb) / 2, ya, yb }); continue; } }
         if (xb - xa < q.sp * 0.7) continue;
         // its height at a place: the middle of its upper and lower edges there
         const at = (x) => { const ys = []; for (let i = 0; i < P.length; i++) { const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length]; if ((x - ax) * (x - bx) <= 0 && ax !== bx) ys.push(ay + ((by - ay) * (x - ax)) / (bx - ax)); } return ys.length >= 2 ? [Math.min(...ys), Math.max(...ys)] : null; };
@@ -3675,8 +3726,25 @@ export async function recognise(canvas, opts = {}) {
     const pick = i === 0 || (i === bars.length - 1 && firstShort);
     const f2 = fitBar(b.v2, totalOf(i), { pickup: pick, sp: first.sp, compound: compoundOf(i) });
     const ok = (x) => { const sm = sumOf(x, totalOf(i)); return pick ? sm <= totalOf(i) + 1 : Math.abs(sm - totalOf(i)) < 1; };
-    if (ok(bars[i]) && ok(f2)) { v2out[i] = f2; return; }
-    const one = [...b, ...b.v2].sort((a, c) => a.x - c.x);
+    if (ok(bars[i]) && ok(f2)) {
+      // (two voices of the same rhythm, note for note — a double stop with a stem each way — are chords)
+      // (the notes compared, each with the one at its place; rests the fitting added aside)
+      const a1 = bars[i], n1 = a1.filter((n) => !n.rest), n2 = f2.filter((n) => !n.rest);
+      const same = n1.length && n1.length === n2.length && n2.every((m) => !m.full) && n1.every((n, k) => { const m = n2[k]; return Math.abs(n.x - m.x) < first.sp * 0.7 && n.t === m.t && (n.dots || 0) === (m.dots || 0) && !!n.tup === !!m.tup; });
+      if (same && (globalThis.__sameRhythmChord ?? 1)) {
+        bars[i] = a1.map((n) => { if (n.rest) return n; const m = n2[n1.indexOf(n)]; return { ...n, ps: [...new Set([...n.ps, ...m.ps])].sort((x, y) => x - y), acc: { ...(m.acc || {}), ...(n.acc || {}) }, ties: [...new Set([...(n.ties || []), ...(m.ties || [])])] }; });
+        return;
+      }
+      v2out[i] = f2; return;
+    }
+    // (back to one voice: a note of the second at the place of one of the first joins it as a chord)
+    const one = b.slice();
+    for (const m of b.v2) {
+      const at = m.rest ? null : one.find((n) => !n.rest && Math.abs(n.x - m.x) < first.sp * 0.7);
+      if (at) { at.ps = [...new Set([...at.ps, ...m.ps])].sort((x, y) => x - y); at.acc = { ...(m.acc || {}), ...(at.acc || {}) }; if (m.ties) at.ties = [...new Set([...(at.ties || []), ...m.ties])]; if (m.t > at.t) { at.t = m.t; at.dots = m.dots; } }
+      else if (!m.rest) one.push(m);
+    }
+    one.sort((a, c) => a.x - c.x);
     bars[i] = fitBar(one, totalOf(i), { pickup: pick, sp: first.sp, compound: compoundOf(i) });
   });
   bars.forEach((b, i) => { const pick = i === 0 || (i === bars.length - 1 && firstShort); const sm = sumOf(b, totalOf(i)); if (b.length === 1 && b[0].full) return; if (pick ? sm > totalOf(i) + 1 : Math.abs(sm - totalOf(i)) >= 1) doubt[i] = true; });
