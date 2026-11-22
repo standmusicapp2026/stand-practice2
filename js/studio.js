@@ -1806,18 +1806,16 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // (bars put right by hand cut the music into stretches: each followed again on its own, at its own
   // pace — a song whose tempo changes from one part to the next is followed at one pace no more —
   // and kept where it hears more of the page than the whole-piece following did)
-  if (anch && anch.length && (globalThis.__segFollow ?? 1)) {
-    const at = new Map(); for (const a of anch) if (a.k >= 0 && a.k <= nb) at.set(a.k, a.t);
-    const ks = [...at.keys()].sort((a, b) => a - b);
-    const sn0 = best.sn;
-    const redo = (ka, kb, ta, tb) => {
+  const sn0 = best.sn;
+  const redo = (ka, kb, ta, tb) => {
       const n = kb - ka; if (n < 2) return;
       // (with the bar after the stretch, when there is one: the stretch's end is that bar's start)
-      const m = tb != null && kb < nb ? n + 1 : n;
-      const sub = sn0.slice(ka * PSTEPS, (ka + m) * PSTEPS);
+      // (at the music's end, an empty bar after it, so that the end can be held)
+      const m = tb != null ? n + 1 : n;
+      const sub = tb != null && kb >= nb ? [...sn0.slice(ka * PSTEPS, kb * PSTEPS), ...new Array(PSTEPS).fill(null)] : sn0.slice(ka * PSTEPS, (ka + m) * PSTEPS);
       if (sub.filter(Boolean).length < 4) return;
       const t0 = ta ?? T[ka], t1 = tb ?? T[kb];
-      const tEnd = m > n ? tb + Math.max(0.3, (T[kb + 1] ?? tb + 1) - T[kb]) : (tb ?? B);
+      const tEnd = m > n ? tb + Math.max(0.3, kb < nb ? (T[kb + 1] ?? tb + 1) - T[kb] : 1) : (tb ?? B);
       const frs = fr.filter((f) => f.t >= (ta ?? A) - 0.3 && f.t <= tEnd + 0.3);
       if (frs.length < 8) return;
       const p0 = Math.max(0.3, (t1 - t0) / n), loc = [];
@@ -1831,7 +1829,26 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       const agG = agreeOf(T.slice(ka, kb + 1), sub, n, frs);
       if (bl.ag > agG + 0.002) for (let j = 1; j < n; j++) T[ka + j] = bl.T[j];
       if (ta == null) T[ka] = bl.T[0]; if (tb == null) T[kb] = bl.T[n];
+      return true;
     };
+  // (the music's ends: the first bar starts with the first note heard when it begins with a note, the
+  // last ends with the last sound — a long last chord, a pause, a slow end are not cut short — and
+  // the bars near them are followed again between those ends)
+  if (ai && !(anch && anch.length) && (globalThis.__ends ?? 1)) {
+    const NP = SAL_HI - SAL_LO + 1;
+    const lv = fr.map((f2) => { let m = 0; for (let p = 0; p < NP; p++) if (f2.s[p] > m) m = f2.s[p]; return m; });
+    const ref = lv.slice().sort((a, b) => a - b)[Math.floor(lv.length * 0.9)] || 0;
+    if (ref > 0) {
+      const on = lv.findIndex((v) => v > ref * 0.35);
+      let off = lv.length - 1; while (off > 0 && lv[off] <= ref * 0.2) off--;
+      const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t;
+      if (tOn != null && sn0[0] && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
+      if (tOff - T[nb] > 1 && tOff - T[nb] < 30) { const k1 = Math.max(0, nb - 4); redo(k1, nb, T[k1], tOff); T[nb] = tOff; }
+    }
+  }
+  if (anch && anch.length && (globalThis.__segFollow ?? 1)) {
+    const at = new Map(); for (const a of anch) if (a.k >= 0 && a.k <= nb) at.set(a.k, a.t);
+    const ks = [...at.keys()].sort((a, b) => a - b);
     for (let i = 0; i + 1 < ks.length; i++) redo(ks[i], ks[i + 1], at.get(ks[i]), at.get(ks[i + 1]));
     if (ks.length && ks[ks.length - 1] < nb - 1) redo(ks[ks.length - 1], nb, at.get(ks[ks.length - 1]), null);
     if (ks.length && ks[0] > 1) redo(0, ks[0], null, at.get(ks[0]));
