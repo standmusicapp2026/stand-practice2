@@ -1932,11 +1932,22 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     if (ks.length && ks[0] > 1) redo(0, ks[0], null, at.get(ks[0]));
     fixAnchors(T, anch, nb);
   }
+  // (where the page has only rests, the others play: their bars pass as their notes are struck — a
+  // held chord or a pause takes time but few bars — partly, and partly as the clock runs)
+  const WA = globalThis.__restWarp ?? 0.6;
+  const osC = []; { let c = 0; const NP = SAL_HI - SAL_LO + 1; for (let j = 0; j < fr.length; j++) { const f2 = fr[j]; let v = 0; for (let p = 0; p < NP; p++) v += f2.on[p]; c += v; osC.push(c); } }
+  const tIdx = (t) => { let lo = 0, hi = fr.length - 1; while (lo < hi) { const md = (lo + hi) >> 1; if (fr[md].t < t) lo = md + 1; else hi = md; } return lo; };
+  const warpAt = (ta, tb, u) => {
+    const lin = ta + (tb - ta) * u; if (!(WA > 0) || !(tb - ta > 1)) return lin;
+    const ja = tIdx(ta), jb = tIdx(tb), ca = osC[ja], cb = osC[jb]; if (!(cb - ca > 1e-6)) return lin;
+    const want = ca + (cb - ca) * u; let j = ja; while (j < jb && osC[j] < want) j++;
+    return WA * fr[j].t + (1 - WA) * lin;
+  };
   // (the bars of rest before the soloist's first note)
   const items = midiSteps(L, clef, 0), k0 = Math.floor(items.findIndex(Boolean) / PSTEPS);
   if (k0 >= 1) {
     const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * 0.08) || fr[0]).t - 0.2;
-    if (on < T[k0] - 0.5 && !(anch && anch.some((a) => a.k <= k0))) for (let k = 0; k < k0; k++) T[k] = on + ((T[k0] - on) * k) / k0;
+    if (on < T[k0] - 0.5 && !(anch && anch.some((a) => a.k <= k0))) for (let k = 0; k < k0; k++) T[k] = warpAt(on, T[k0], k / k0);
   }
   // (bars where the page has only rests — the piano's interludes — evenly between the bars around them
   // that have notes, or that were put by hand: nothing on the page says otherwise, and the pace holds)
@@ -1948,7 +1959,10 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     for (let k = 0; k <= nb; k++) {
       if (k < nb && !has[k]) continue;
       // (bars i+1 .. k-1 have no notes; i and k do — or k is the end)
-      if (i >= 0 && k - i > 2 && k < nb) for (let q = i + 2; q < k; q++) T[q] = T[i + 1] + ((q - i - 1) * (T[k] - T[i + 1])) / (k - i - 1);
+      if (i >= 0 && k - i > 2 && k < nb) {
+        const ta = T[i + 1], tb = T[k], n = k - i - 1;
+        for (let q = i + 2; q < k; q++) T[q] = warpAt(ta, tb, (q - i - 1) / n);
+      }
       i = k;
     }
   }
