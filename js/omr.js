@@ -859,6 +859,9 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
   if (clefG && head) {
     let c = GL_CLEF[clefG.cp];
     if (c === 'C') { const p = Math.round(glP(s, clefG.x, clefG.y)); c = p >= 6 ? 'tenor' : p <= 2 ? 'soprano' : 'alto'; }
+    // (a small 8 just under a treble clef — a tenor's — drawn apart from it, as Sibelius and Finale do)
+    if (c === 'treble' && G.some((g) => (g.cp === 0xe088 || g.cp === 0xe07d || (g.text && g.cp === 0x38)) && g.x > clefG.x - sp && g.x < clefG.x + sp * 3 && g.y > s.bottom - sp && g.y < s.bottom + sp * 4)) c = 'treble8';
+    if (c === 'bass' && G.some((g) => (g.cp === 0xe088 || g.cp === 0xe07d || (g.text && g.cp === 0x38)) && g.x > clefG.x - sp && g.x < clefG.x + sp * 3 && g.y > s.bottom - sp && g.y < s.bottom + sp * 4)) c = 'bass8';
     head.clef = c; head.explicitClef = true;
     const ks = lead.filter((g) => g.x > clefG.x && g.key && (g.cp === 0xe262 || g.cp === 0xe260));
     const nS = ks.filter((g) => g.cp === 0xe262).length, nF = ks.filter((g) => g.cp === 0xe260).length;

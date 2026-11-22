@@ -12,6 +12,8 @@ const SONATA = {
   c: 0xe08a, '¢': 0xe08b,
   0: 0xe080, 1: 0xe081, 2: 0xe082, 3: 0xe083, 4: 0xe084, 5: 0xe085, 6: 0xe086, 7: 0xe087, 8: 0xe088, 9: 0xe089,
 };
+// (Opus Special: the small 8 drawn under or over a clef)
+const SONATA_SPECIAL = { '‹': 0xe07d };
 const SONATA_FONT = /(Opus|Maestro|Petrucci|Sonata)(Std)?(-|$|Std$|Regular|Std-)/;
 // LilyPond's font (Emmentaler, Feta) names its glyphs: each, to the SMuFL sign it is
 const FETA = {
@@ -59,7 +61,7 @@ export async function pdfVectors(page, vp, OPS) {
   const scaleW = () => Math.sqrt(Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
   const lines = [], polys = [], glyphs = [];
   // the text state, to place each character exactly (its advance from the font's widths)
-  let fam = null, byName = null, sonata = false, Tm = [1, 0, 0, 1, 0, 0], Tlm = [1, 0, 0, 1, 0, 0], fs = 1, Tc = 0, Tw = 0, Th = 1, Ts = 0, TL = 0, fontMat = [0.001, 0, 0, 0.001, 0, 0];
+  let fam = null, byName = null, sonata = false, special = false, Tm = [1, 0, 0, 1, 0, 0], Tlm = [1, 0, 0, 1, 0, 0], fs = 1, Tc = 0, Tw = 0, Th = 1, Ts = 0, TL = 0, fontMat = [0.001, 0, 0, 0.001, 0, 0];
   const tStack = [];
   const flush = (kind) => {
     for (const sub of path) {
@@ -70,8 +72,8 @@ export async function pdfVectors(page, vp, OPS) {
   };
   for (let i = 0; i < ol.fnArray.length; i++) {
     const fn = ol.fnArray[i], a = ol.argsArray[i];
-    if (fn === OPS.save) { stack.push([ctm, lw]); tStack.push([fs, Tc, Tw, Th, Ts, TL, fontMat, fam, byName, sonata]); }
-    else if (fn === OPS.restore) { const s = stack.pop(); if (s) [ctm, lw] = s; const t = tStack.pop(); if (t) [fs, Tc, Tw, Th, Ts, TL, fontMat, fam, byName, sonata] = t; }
+    if (fn === OPS.save) { stack.push([ctm, lw]); tStack.push([fs, Tc, Tw, Th, Ts, TL, fontMat, fam, byName, sonata, special]); }
+    else if (fn === OPS.restore) { const s = stack.pop(); if (s) [ctm, lw] = s; const t = tStack.pop(); if (t) [fs, Tc, Tw, Th, Ts, TL, fontMat, fam, byName, sonata, special] = t; }
     else if (fn === OPS.beginText) { Tm = [1, 0, 0, 1, 0, 0]; Tlm = Tm.slice(); }
     else if (fn === OPS.setFont) {
       fs = a[1]; const f = font && font(a[0]); fontMat = (f && f.fontMatrix) || [0.001, 0, 0, 0.001, 0, 0];
@@ -80,7 +82,7 @@ export async function pdfVectors(page, vp, OPS) {
       // (a font that names its glyphs as LilyPond's does: its codes by those names)
       byName = null;
       // (the music font itself, not its text or special companions: OpusText, OpusSpecial)
-      const base = nm.replace(/^[A-Z]{6}\+/, ''); sonata = SONATA_FONT.test(base) && !/Text|Special|Chords|Percussion|Figured|Metronome|Ornaments/i.test(base);
+      const base = nm.replace(/^[A-Z]{6}\+/, ''); sonata = SONATA_FONT.test(base) && !/Text|Special|Chords|Percussion|Figured|Metronome|Ornaments/i.test(base); special = /(Opus|Maestro)Special/i.test(base);
       if (f && f.differences && /Emmentaler|feta|Feta/.test(nm)) { byName = new Map(); for (const [code, gn] of Object.entries(f.differences)) if (FETA[gn]) byName.set(+code, FETA[gn]); }
     }
     else if (fn === OPS.setTextMatrix) { Tm = a.slice(0, 6); Tlm = Tm.slice(); }
@@ -101,6 +103,7 @@ export async function pdfVectors(page, vp, OPS) {
         if (fam && cp >= 0xf400 && SMUFL_ALT[fam][cp]) cp = SMUFL_ALT[fam][cp];
         if (byName) { const code = g.originalCharCode ?? (g.unicode ? g.unicode.codePointAt(0) : -1); cp = byName.has(code) ? byName.get(code) : 0; }
         else if (sonata) cp = g.unicode && SONATA[g.unicode] ? SONATA[g.unicode] : 0;
+        else if (special) cp = g.unicode && SONATA_SPECIAL[g.unicode] ? SONATA_SPECIAL[g.unicode] : 0;
         const adv = ((g.width || 0) * fontMat[0] * fs + Tc + (g.isSpace ? Tw : 0)) * Th;
         if ((cp >= 0xe000 && cp <= 0xf8ff) || (cp >= 0x30 && cp <= 0x39)) {
           const M = mul(ctm, Tm), x = M[4] + M[2] * Ts, y = M[5] + M[3] * Ts;
