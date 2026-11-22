@@ -382,7 +382,9 @@ function stripLayout(A, W, H, canvas) {
       // the notes of this bar (top staff), for following the playing
       const inBar = s0.heads.filter((h) => h.x >= a && h.x < b).sort((p, q) => p.x - q.x);
       // (a bar that begins with a rest: its first beat has no note to be heard)
-      const r0 = restXs.filter((x) => x >= a && x < b), firstR = r0.length ? Math.min(...r0) : Infinity, firstN = inBar.length ? inBar[0].x : Infinity;
+      const r0 = restXs.filter((x) => x >= a && x < b), firstR = r0.length ? Math.min(...r0) : Infinity, firstN0 = inBar.length ? inBar[0].x : Infinity;
+      // (with a piano: the bar begins with a rest only when no staff plays at its start)
+      const firstN = (globalThis.__rfAll ?? 1) ? Math.min(firstN0, ...sts.map((st) => { let m = Infinity; for (const h of st.heads) if (h.x >= a && h.x < b && h.x < m) m = h.x; return m; })) : firstN0;
       // (bars of rest counted together — a thick bar, or a rest, with the number of bars above it: as
       // many bars, each tapped, each its own place on the timeline)
       const mm = !inBar.length && multis.find((m) => m.x >= a && m.x < b);
@@ -1836,14 +1838,67 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // the bars near them are followed again between those ends)
   if (ai && !(anch && anch.length) && (globalThis.__ends ?? 1)) {
     const NP = SAL_HI - SAL_LO + 1;
-    const lv = fr.map((f2) => { let m = 0; for (let p = 0; p < NP; p++) if (f2.s[p] > m) m = f2.s[p]; return m; });
+    // (loudness: the salience is scaled frame by frame, so silence and music look alike in it)
+    const lv = fr.map((f2) => f2.rms || 0);
     const ref = lv.slice().sort((a, b) => a - b)[Math.floor(lv.length * 0.9)] || 0;
     if (ref > 0) {
-      const on = lv.findIndex((v) => v > ref * 0.35);
-      let off = lv.length - 1; while (off > 0 && lv[off] <= ref * 0.2) off--;
+      // (the room's own noise: the quietest moments of the recording)
+      const srt = lv.slice().sort((a, b) => a - b), flo = srt[Math.floor(srt.length * 0.02)] || 0;
+      // (a soft start counts: a note heard faintly above that noise that lasts, not a click)
+      const thOn = (globalThis.__onFloor ?? 1) ? Math.max(flo * 3, ref * 0.03) : ref * 0.15;
+      const on = lv.findIndex((v, i) => v > thOn && lv.slice(i, i + 8).filter((u) => u > thOn * 0.8).length >= 6);
+      // (the end: the last sound above the room's own noise — a quiet last chord dies away slowly)
+      const pre = on > 8 ? lv.slice(0, on).sort((a, b) => a - b) : srt, flo2 = Math.min(flo, pre[pre.length >> 1]);
+      let off = lv.length - 1; while (off > 0 && lv[off] <= Math.max(flo2 * 2, ref * 0.015)) off--;
       const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t;
-      if (tOn != null && sn0[0] && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
+      const opens = sn0.slice(0, Math.max(1, PSTEPS >> 3)).some(Boolean);
+      if (tOn != null && opens && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
       if (tOff - T[nb] > 1 && tOff - T[nb] < 30) { const k1 = Math.max(0, nb - 4); redo(k1, nb, T[k1], tOff); T[nb] = tOff; }
+      // (a first bar of a note or two after the clef — an upbeat: it lasts only as long as those notes,
+      // and the first full bar begins where its own first notes are struck)
+      const kz = sn0.xAt ? [...sn0.xAt.entries()].filter(([q]) => q < PSTEPS) : [];
+      if ((globalThis.__upbeat ?? 1) && tOn != null && nb >= 6 && kz.length && kz.length <= 3 && sn0[PSTEPS]) {
+        const wd = L.bars.slice(1, 9).map((b) => b.x1 - b.x0).sort((a, b) => a - b), mw = wd[wd.length >> 1];
+        const fx = Math.min(...kz.map(([, x]) => x)), frac = (L.bars[0].x1 - fx) / Math.max(1, mw);
+        if (frac < 0.45) {
+          const per = (T[5] - T[1]) / 4, ms1 = sn0[PSTEPS], ms0 = sn0[kz[0][0]] || ms1;
+          const strike = (ms, j) => { let v = 0; for (const mm of ms) { const p = mm - SAL_LO; if (p >= 0 && p < NP) v += fr[j].on[p]; } return v; };
+          const best = (ms, ta, tb) => { let bj = -1, bv = 0; for (let j = 0; j < fr.length; j++) { if (fr[j].t < ta) continue; if (fr[j].t > tb) break; const v = strike(ms, j); if (v > bv) { bv = v; bj = j; } } return bj; };
+          const j0 = best(ms0, tOn - 0.25, tOn + 0.6), t0 = j0 >= 0 ? fr[j0].t : tOn;
+          const j1 = best(ms1, t0 + 0.12, t0 + Math.max(1.0, frac * per * 2.2));
+          if (j1 >= 0 && fr[j1].t < T[2] - 0.3) { T[0] = t0; T[1] = fr[j1].t; redo(1, Math.min(nb, 5), T[1], T[Math.min(nb, 5)]); }
+        }
+      }
+      // (a last bar of one chord: it begins where the last chord is struck — the last sudden rise in
+      // the sound — however long the bar before it is held)
+      const kL = (nb - 1) * PSTEPS, keys = sn0.xAt ? [...sn0.xAt.keys()].filter((q) => q >= kL && q < kL + PSTEPS) : [];
+      if ((globalThis.__lastChord ?? 1) && nb >= 3 && keys.length === 1 && keys[0] === kL && sn0[kL]) {
+        const tA = T[nb - 2] + 0.25 * (T[nb - 1] - T[nb - 2]);
+        for (let j = off - 3; j > 3 && fr[j].t > tA; j--) {
+          const before = Math.max(lv[j - 1], lv[j - 2], lv[j - 3]), after = Math.max(lv[j + 1], lv[j + 2], lv[j + 3]);
+          if (after > before * 3 && after > Math.max(flo2 * 6, ref * 0.02)) {
+            let j0 = j; while (j0 > 1 && lv[j0 - 1] < lv[j0]) j0--;
+            const tn = fr[j0].t;
+            if (Math.abs(tn - T[nb - 1]) > 0.3 && tn < T[nb] - 0.3) { const k1 = Math.max(0, nb - 5); T[nb - 1] = tn; redo(k1, nb - 1, T[k1], tn); }
+            break;
+          }
+        }
+      }
+    }
+  }
+  // (each bar that begins with notes: its start put where those notes are struck, when that is clearly
+  // a little before or after where the following put it)
+  if (ai && !(anch && anch.length) && (globalThis.__snap ?? 1)) {
+    const NP = SAL_HI - SAL_LO + 1, tt = fr.map((f2) => f2.t);
+    const at = (t) => { let lo = 0, hi = tt.length - 1; while (lo < hi) { const md = (lo + hi) >> 1; if (tt[md] < t) lo = md + 1; else hi = md; } return lo; };
+    const strike = (ms, j) => { let v = 0; for (let q = j; q < Math.min(fr.length, j + 3); q++) for (const mm of ms) { const p = mm - SAL_LO; if (p >= 0 && p < NP) v += fr[q].on[p]; } return v / ms.length; };
+    for (let k = 1; k < nb; k++) {
+      const ms = sn0[k * PSTEPS]; if (!ms || (sn0[k * PSTEPS - 1] === ms)) continue;
+      const w = Math.min(globalThis.__snapW ?? 0.9, 0.25 * (T[k + 1] - T[k]), 0.25 * (T[k] - T[k - 1]));
+      if (!(w > 0.1)) continue;
+      const jc = at(T[k]); let cur = 0; for (let j = Math.max(0, jc - 2); j <= Math.min(fr.length - 1, jc + 2); j++) cur = Math.max(cur, strike(ms, j));
+      let bj = -1, bv = 0; for (let j = at(T[k] - w); j < fr.length && tt[j] <= T[k] + w; j++) { const v = strike(ms, j); if (v > bv) { bv = v; bj = j; } }
+      if (bj >= 0 && bv > cur * (globalThis.__snapR ?? ((L.staffsN || 1) > 1 ? 2 : 3.5)) * (tt[bj] < T[k] ? (globalThis.__snapE ?? 2) : 1) && bv > 0.15 && Math.abs(tt[bj] - T[k]) > 0.2) T[k] = tt[bj];
     }
   }
   if (anch && anch.length && (globalThis.__segFollow ?? 1)) {
