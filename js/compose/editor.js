@@ -3073,7 +3073,7 @@ function captureBarEvents(inst) {
   // the key in force in each bar (a key may change along the music)
   let keyNow = cap.key;
   const keys = cap.bars.map((_, i) => { const ch = cap.changes && cap.changes[i]; if (i > 0 && ch && ch.key !== undefined) keyNow = ch.key; return keyNow; });
-  const out = cap.bars.slice(0, last + 1).map((bar, bi) => bar.map((n) => {
+  const mapBar = (bar, bi) => bar.map((n) => {
     if (n.rest) return n.full ? { full: true } : { id: M.newId(), rest: true, t: n.t || 4, dots: n.dots || 0, ...(n.tup ? { tup: { n: n.tup.n || 3, m: n.tup.m || 2, base: n.tup.base || n.t || 4 } } : {}) };
     const bottom = bottomOf(n), keyB = keys[bi];
     const ecl = n.clef && n.clef !== clef0 ? n.clef : cap.clef;
@@ -3108,7 +3108,10 @@ function captureBarEvents(inst) {
     if (n.hpEnd) ev._hpB = true;
     if (n.ott) ev._ott = n.ott;
     return ev;
-  }));
+  });
+  const out = cap.bars.slice(0, last + 1).map((bar, bi) => mapBar(bar, bi));
+  // a second voice (stems down beside the first's), bar for bar
+  if (cap.v2) out.v2 = out.map((_, bi) => (cap.v2[bi] && cap.v2[bi].length ? mapBar(cap.v2[bi], bi) : null));
   // a clef that changes in the middle of a bar goes on the first note in the new clef (the bars
   // start in the clef read at their start)
   let run = cap.clef;
@@ -3188,6 +3191,23 @@ function pasteCapture(st, m) {
         delete ev._slurA; delete ev._slurB; delete ev._hpA; delete ev._hpB; delete ev._ott;
         M.writeEvent(S, st, mm, pos, ev);
         pos += len;
+      }
+      // the second voice, into the staff's second voice
+      const e2 = bars.v2 && bars.v2[i];
+      // (a staff with no second voice gets one only when there is one to write)
+      const had2 = M.hasVoice(st, 2, mm);
+      const v2st = e2 || had2 ? M.voiceView(st, 2, S) : null;
+      if (v2st) v2st.bars[mm] = M.restBar(tm);
+      if (e2) {
+        const sum2 = e2.reduce((a, e) => a + M.evTicks(e), 0);
+        let p2 = i === 0 && sum2 < total ? total - sum2 : 0;
+        for (const ev of e2) {
+          if (ev.full) continue;
+          const len = M.evTicks(ev); if (p2 + len > total + 1) break;
+          delete ev._slurA; delete ev._slurB; delete ev._hpA; delete ev._hpB; delete ev._ott; delete ev._ec;
+          M.writeEvent(S, v2st, mm, p2, ev);
+          p2 += len;
+        }
       }
     });
     // a clef changed in the middle of a bar holds in the bars after it (as far as the pasted music

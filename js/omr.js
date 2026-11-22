@@ -844,7 +844,7 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
     if (outR.some((r) => r.multi && Math.abs(r.cx - g.x) < sp * 3)) continue;
     const wd = g.w > sp * 0.3 ? g.w : sp;
     let dots = 0; for (const d of G) if (d.cp === 0xe1e7 && d.x > g.x + wd - sp * 0.2 && d.x < g.x + wd + sp * 2.5 && Math.abs(d.y - g.y) < sp * 1.6) dots++;
-    outR.push({ x: Math.round(g.x), t, cx: g.x + wd / 2, w: wd, dots: Math.min(2, dots) });
+    outR.push({ x: Math.round(g.x), t, cx: g.x + wd / 2, w: wd, dots: Math.min(2, dots), y: g.y });
   }
   // grace notes: small heads, on the note after them
   for (const g of G) {
@@ -3310,7 +3310,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       ottavas: ((marks.ottavas && marks.ottavas[read.indexOf(s)]) || []).map((o) => ({ x0: back(o.x0, s.top)[0], x1: back(o.x1, s.top)[0], shift: o.shift })),
       texts: ((marks.texts && marks.texts[read.indexOf(s)]) || []).map((t) => { const [x0, y0] = back(t.x0, t.y0), [x1, y1] = back(t.x1, t.y1); return { x0, y0, x1, y1, above: t.above }; }),
       heads: s.heads.map((hd) => { const [x, y] = back(hd.left, hd.cy); return { x, y, p: hd.p, kind: hd.kind, acc: hd.acc, dots: hd.dots, beams: hd.beams, w: hd.w / f, sc: hd.sc, id: hd.id, art: hd.art || [], fing: hd.fing || null, dyn: hd.dyn || null, tieTo: hd.tieTo, grace: hd.grace || null, tup3: !!hd.tup3, tupN: hd.tupN || 0, tupG: hd.tupG || 0, bg: hd.bg ?? null, ...(hd.breve ? { breve: true } : {}), stem: hd.stem ? { x: back(hd.stem.x, hd.stem.end)[0], up: hd.stem.up, len: hd.stem.len / f, end: back(hd.stem.x, hd.stem.end)[1] } : null }; }),
-      rests: s.rests.map((r) => ({ x: back(r.x, s.top)[0], t: r.t, w: r.w / f, dots: r.dots, multi: r.multi || 0 })),
+      rests: s.rests.map((r) => ({ x: back(r.x, s.top)[0], t: r.t, w: r.w / f, dots: r.dots, multi: r.multi || 0, ...(r.y !== undefined ? { y: back(r.cx ?? r.x, r.y)[1] } : {}) })),
       bars: s.bars.map((b) => ({ ...b, x: back(b.x, (s.top + s.bottom) / 2)[0], w: b.w / f })),
       signs: (s.signs || []).map((g) => ({ ...g, x: back(g.x, (s.top + s.bottom) / 2)[0], x1: back(g.x1, (s.top + s.bottom) / 2)[0] })), explicitClef: !!s.explicitClef,
       startX: back(s.startX, s.top)[0],
@@ -3387,7 +3387,9 @@ export function staffEvents(st) {
       const [lh, rh] = q.x >= hd.x ? [hd, q] : [q, hd];
       const second = Math.abs(q.x - hd.x) >= sp * 0.45 && Math.abs(q.x - hd.x) < sp * 1.35 && Math.abs(q.p - hd.p) === 1 && rh.p > lh.p && (!hd.stem || !q.stem || Math.abs(hd.stem.x - q.stem.x) < sp * 0.45);
       const sameX = Math.abs(q.x - hd.x) < sp * 0.45 || second;
-      if (sameStem || (sameX && (q.kind === hd.kind || !q.stem || !hd.stem))) { group.push(q); used.add(j); }
+      // (two heads at one place with stems in opposite directions are two voices, not a chord)
+      const twoVoices = (globalThis.__voices ?? 1) && hd.stem && q.stem && hd.stem.up !== q.stem.up && !sameStem;
+      if (!twoVoices && (sameStem || (sameX && (q.kind === hd.kind || !q.stem || !hd.stem)))) { group.push(q); used.add(j); }
     }
     const lead = group.find((g) => g.stem) || group[0];
     const kinds = group.map((g) => g.kind);
@@ -3398,7 +3400,7 @@ export function staffEvents(st) {
     const acc = {}; for (const g of group) if (g.acc !== undefined) acc[g.p] = g.acc;
     const art = [...new Set(group.flatMap((g) => g.art || []))];
     const fing = group.map((g) => g.fing).filter(Boolean).join(' ') || null, dyn = (group.find((g) => g.dyn) || {}).dyn || null;
-    items.push({ x: Math.min(...group.map((g) => g.x)), t, dots: Math.max(...group.map((g) => g.dots || 0)), ps: [...new Set(group.map((g) => g.p))].sort((a, b) => a - b), acc, beamed: beams > 0 && !!lead.stem,
+    items.push({ up: lead.stem ? !!lead.stem.up : null, x: Math.min(...group.map((g) => g.x)), t, dots: Math.max(...group.map((g) => g.dots || 0)), ps: [...new Set(group.map((g) => g.p))].sort((a, b) => a - b), acc, beamed: beams > 0 && !!lead.stem,
       ids: group.map((g) => g.id), tiesTo: group.filter((g) => g.tieTo !== undefined).map((g) => ({ p: g.p, to: g.tieTo })), art, fing, dyn, tup3: group.some((g) => g.tup3),
       grace: (group.find((g) => g.grace) || {}).grace || null,
       tupN: Math.max(...group.map((g) => g.tupN || 0)), tupG: (group.find((g) => g.tupG) || {}).tupG || 0, bg: beams > 0 && lead.stem ? lead.bg : null });
@@ -3414,7 +3416,7 @@ export function staffEvents(st) {
     const a = byHead.get(hp.a), b = byHead.get(hp.b); if (!a || !b || a === b) continue;
     a.hp = { start: hp.dir }; b.hpEnd = true;
   }
-  for (const r of st.rests) items.push({ x: r.x, t: r.t, dots: r.dots || 0, rest: true, ...(r.multi ? { multi: r.multi, full: true } : {}) });
+  for (const r of st.rests) items.push({ x: r.x, t: r.t, dots: r.dots || 0, rest: true, ...(r.y !== undefined ? { ry: r.y } : {}), ...(r.multi ? { multi: r.multi, full: true } : {}) });
   items.sort((a, b) => a.x - b.x);
   // rest dots
   const bars = [];
@@ -3445,6 +3447,23 @@ export function staffEvents(st) {
     }
   }
   for (const it of items) delete it.tieNext;
+  // two voices in a bar: notes with stems up and down at the same places. Those with stems down (and
+  // the rests below the middle of the staff) are the second voice
+  if (globalThis.__voices ?? 1) {
+    const mid = st.L ? null : null; void mid;
+    for (let i = 0; i < bars.length; i++) {
+      const b = bars[i];
+      const ups = b.filter((it) => !it.rest && it.up === true), dns = b.filter((it) => !it.rest && it.up === false);
+      if (!ups.length || !dns.length) continue;
+      const together = ups.some((u) => dns.some((d) => Math.abs(u.x - d.x) < sp * 0.6));
+      if (!together) continue;
+      const midY = (st.top + st.bottom) / 2;
+      const isV2 = (it) => (it.rest ? it.ry !== undefined && it.ry > midY + sp * 0.75 : it.up === false);
+      const v2 = b.filter(isV2), v1 = b.filter((it) => !isV2(it));
+      if (!v1.length || !v2.length) continue;
+      const nb = v1; nb.x0 = b.x0; nb.v2 = v2; bars[i] = nb;
+    }
+  }
   const meta = bars.map(() => ({}));
   const after = {};
   let prevClef = st.clef || 'treble';
@@ -3646,7 +3665,18 @@ export async function recognise(canvas, opts = {}) {
   // the bars to check: those that did not add up as read (a short first or last bar is an upbeat),
   // and any that still do not after the repair
   const doubt = bars.map((b, i) => { const pick = i === 0 || (i === bars.length - 1 && firstShort); if (b.length === 1 && b[0].full) return false; const sm = sumOf(fitBar(b, totalOf(i), { tupletsOnly: true, compound: compoundOf(i) }), totalOf(i)); return pick ? sm > totalOf(i) + 1 : Math.abs(sm - totalOf(i)) >= 1; });
+  // a bar of two voices: each fitted to the bar; when they do not both add up, one voice after all
+  const raw = bars.slice(), v2out = bars.map(() => null);
   bars = bars.map((b, i) => fitBar(b, totalOf(i), { pickup: i === 0 || (i === bars.length - 1 && firstShort), sp: first.sp, compound: compoundOf(i) }));
+  raw.forEach((b, i) => {
+    if (!b.v2 || !b.v2.length) return;
+    const pick = i === 0 || (i === bars.length - 1 && firstShort);
+    const f2 = fitBar(b.v2, totalOf(i), { pickup: pick, sp: first.sp, compound: compoundOf(i) });
+    const ok = (x) => { const sm = sumOf(x, totalOf(i)); return pick ? sm <= totalOf(i) + 1 : Math.abs(sm - totalOf(i)) < 1; };
+    if (ok(bars[i]) && ok(f2)) { v2out[i] = f2; return; }
+    const one = [...b, ...b.v2].sort((a, c) => a.x - c.x);
+    bars[i] = fitBar(one, totalOf(i), { pickup: pick, sp: first.sp, compound: compoundOf(i) });
+  });
   bars.forEach((b, i) => { const pick = i === 0 || (i === bars.length - 1 && firstShort); const sm = sumOf(b, totalOf(i)); if (b.length === 1 && b[0].full) return; if (pick ? sm > totalOf(i) + 1 : Math.abs(sm - totalOf(i)) >= 1) doubt[i] = true; });
   // the changes, as the caller applies them: the first bar's are the capture's own clef, key, time
   let runClef = first.clef || 'treble', runKey = first.key || 0;
@@ -3661,7 +3691,7 @@ export async function recognise(canvas, opts = {}) {
   // the words seen around each line (read as text later), with the line they belong to
   const texts = [];
   A.systems.forEach((sys, si) => { for (const t of staffIn(sys).texts || []) texts.push({ ...t, sys: si }); });
-  return { fitRead, bars, doubt, barSys: barSys.slice(), texts, changes, notes, clef: first.clef || 'treble', key: first.key || 0, time, timeRead: !!first.time, staves: A.staves.length, systems: A.systems.length, analysis: A };
+  return { fitRead, bars, ...(v2out.some(Boolean) ? { v2: v2out } : {}), doubt, barSys: barSys.slice(), texts, changes, notes: v2out.some(Boolean) ? [...notes, ...v2out.flat().filter((n) => n && !n.rest)] : notes, clef: first.clef || 'treble', key: first.key || 0, time, timeRead: !!first.time, staves: A.staves.length, systems: A.systems.length, analysis: A };
 }
 // 3/4 or 6/8 (and 3/2 or 6/4 or 12/8)? Where the notes start in the bar tells: in 6/8 the second
 // beat is on the 4th quaver, in 3/4 on the 3rd and 5th.
