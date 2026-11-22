@@ -1848,12 +1848,13 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       const thOn = (globalThis.__onFloor ?? 1) ? Math.max(flo * 3, ref * 0.03) : ref * 0.15;
       const on = lv.findIndex((v, i) => v > thOn && lv.slice(i, i + 8).filter((u) => u > thOn * 0.8).length >= 6);
       // (the end: the last sound above the room's own noise — a quiet last chord dies away slowly)
-      const pre = on > 8 ? lv.slice(0, on).sort((a, b) => a - b) : srt, flo2 = Math.min(flo, pre[pre.length >> 1]);
+      const pre = on > 8 ? lv.slice(0, on).sort((a, b) => a - b) : srt, tl = lv.slice(-20).sort((a, b) => a - b), flo2 = Math.min(flo, pre[pre.length >> 1], tl[tl.length >> 1]);
       let off = lv.length - 1; while (off > 0 && lv[off] <= Math.max(flo2 * 2, ref * 0.015)) off--;
       const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t;
       const opens = sn0.slice(0, Math.max(1, PSTEPS >> 3)).some(Boolean);
       if (tOn != null && opens && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
-      if (tOff - T[nb] > 1 && tOff - T[nb] < 30) { const k1 = Math.max(0, nb - 4); redo(k1, nb, T[k1], tOff); T[nb] = tOff; }
+      // (the more music past where the following ended, the more bars before the end followed again)
+      if (tOff - T[nb] > 1 && tOff - T[nb] < 30) { const dd = []; for (let k = 0; k < nb; k++) dd.push(T[k + 1] - T[k]); dd.sort((a, b) => a - b); const md = dd[nb >> 1] || 1; const k1 = Math.max(0, nb - 4 - 2 * Math.ceil((tOff - T[nb]) / md)); T[nb] = tOff; redo(k1, nb, T[k1], tOff); }
       // (a first bar of a note or two after the clef — an upbeat: it lasts only as long as those notes,
       // and the first full bar begins where its own first notes are struck)
       const kz = sn0.xAt ? [...sn0.xAt.entries()].filter(([q]) => q < PSTEPS) : [];
@@ -1884,6 +1885,24 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
           }
         }
       }
+    }
+  }
+  // (bars squeezed to a fraction of those around them, two or more running: the following slipped
+  // there — that stretch followed again between the bars on either side, at its own pace)
+  if (ai && !(anch && anch.length) && (globalThis.__sqRun ?? 1)) {
+    const d = []; for (let k = 0; k < nb; k++) d.push(T[k + 1] - T[k]);
+    const locMd = (k) => { const w = d.slice(Math.max(0, k - 8), Math.min(nb, k + 9)).sort((a, b) => a - b); return w[w.length >> 1]; };
+    for (let k = 0; k < nb; k++) {
+      if (!(d[k] < locMd(k) * 0.6)) continue;
+      let b = k; while (b + 1 < nb && d[b + 1] < locMd(b + 1) * 0.6) b++;
+      if (b > k) { const ka = Math.max(0, k - 2), kb = Math.min(nb, b + 4); redo(ka, kb, T[ka], kb < nb ? T[kb] : null); for (let j = ka; j < kb; j++) d[j] = T[j + 1] - T[j]; }
+      k = b;
+    }
+    // (and a bar held far longer than those around it after bars a little short: the following ran
+    // ahead and waited there — the bars before it followed again up to the one after it)
+    for (let k = 2; k < nb; k++) {
+      if (!(d[k] > locMd(k) * 1.6 && d[k - 1] < locMd(k) * 0.9)) continue;
+      const ka = Math.max(0, k - 6), kb = Math.min(nb, k + 2); redo(ka, kb, T[ka], kb < nb ? T[kb] : null); for (let j = ka; j < kb; j++) d[j] = T[j + 1] - T[j];
     }
   }
   // (each bar that begins with notes: its start put where those notes are struck, when that is clearly
