@@ -1627,6 +1627,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
   // (the cost of each step at each moment, worked out once per distinct set of notes; each step keeps
   // only a reference to its row — little memory, even for a long recording)
   const rows = new Array(n), seen = new Map(), ONW = onw ?? globalThis.__onW ?? 0.8;
+  const SPOW = globalThis.__salPow ?? globalThis.__salPowAuto ?? 1;
   for (let i = 0; i < n; i++) {
     const ms = sn[i];
     // (a note's first step: where the note begins, it should be heard beginning)
@@ -1639,7 +1640,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
         const f = fr[j];
         if (!ms) { row[j] = f.rms < loud * 0.05 ? 0.1 : 0.5; continue; }
         if (f.rms < loud * 0.03) { row[j] = 0.9; continue; }
-        let v = 0, c = 0, o2 = 0; for (const mm of ms) { const p = mm - SAL_LO; if (p >= 0 && p < NP) { v += f.s[p]; if (f.on[p] > o2) o2 = f.on[p]; } c++; }
+        let v = 0, c = 0, o2 = 0; for (const mm of ms) { const p = mm - SAL_LO; if (p >= 0 && p < NP) { v += SPOW === 1 ? f.s[p] : Math.pow(f.s[p], SPOW); if (f.on[p] > o2) o2 = f.on[p]; } c++; }
         row[j] = 1 - v / Math.max(1, c) + (first ? ONW * (1 - Math.min(1, o2 * 2.5)) : 0);
       }
       seen.set(key, row);
@@ -1722,7 +1723,10 @@ function agreeOf(T, sn, nb, fr) {
   }
   return ok / Math.max(1, all);
 }
+// (a part alone on its page, heard with others playing: only its clearly sounding notes count, so the
+// others' louder notes do not drown it)
 async function followSalience(L, A, B, onProgress, stop, opts = {}) {
+  globalThis.__salPowAuto = (L.staffsN || 1) > 1 ? 1 : 2;
   // (the AI's hearing first; the old way if the network cannot run on this device)
   const MIX = globalThis.__aiMix ?? 0.25;   // (measured on 96 recordings with their bar times)
   let fr = (globalThis.__useAI ?? 1) ? (MIX >= 1 ? await salienceFramesAI(ST.pcm, ST.sr, A, B, onProgress, stop) : await salienceFramesBoth(ST.pcm, ST.sr, A, B, onProgress, stop, MIX)) : null;
