@@ -3619,21 +3619,28 @@ export function fitBar(bar, total, opts = {}) {
       for (const idx of groups.values()) {
         if (sum(b) <= total + 1) break;
         if (idx.length !== 6 || idx[5] - idx[0] !== 5) continue;
-        const g = idx.map((k) => b[k]);
-        if (g.some((x) => x.full || x.tup || x.rest || x.t < 8 || x.t !== g[0].t || x.dots || !x.beamed)) continue;
-        const t2 = b.slice(); apply(t2, idx[0], idx[5], 6); if (sum(t2) >= total - 1) b = t2;
+        let g = idx.map((k) => b[k]);
+        // (a beam read a stroke too many or too few under one or two of them, in a photograph: the
+        // value most of them have)
+        let maj = g[0].t; if (globalThis.__sextMaj ?? 1) { const cnt = new Map(); for (const x of g) cnt.set(x.t, (cnt.get(x.t) || 0) + 1); for (const [t, c] of cnt) if (c >= 4) maj = t; }
+        if (g.some((x) => x.full || x.tup || x.rest || x.t < 8 || x.dots || !x.beamed || (x.t !== maj && !(globalThis.__sextMaj ?? 1)))) continue;
+        if (g.filter((x) => x.t === maj).length < 4) continue;
+        const t2 = b.slice(); for (const k of idx) t2[k] = { ...t2[k], t: maj }; apply(t2, idx[0], idx[5], 6); if (sum(t2) >= total - 1) b = t2;
       }
     }
     // then unmarked: three equal beamed notes of one beam (not in 6/8 and the like, where three
     // beamed quavers are simply its beat)
     for (let i = 0; i + 2 < b.length && !opts.compound; i++) {
       if (sum(b) <= total + 1) break;
-      const g = b.slice(i, i + 3);
+      let g = b.slice(i, i + 3);
+      // (one of the three read a beam off, beside two alike: the two's value — in a bar that runs over)
+      let maj3 = null; if ((globalThis.__tripMaj ?? 1) && g.every((x) => x.t >= 16 && !x.dots && !x.rest && !x.full && !x.tup && x.beamed)) { if (g[0].t === g[1].t || g[0].t === g[2].t) maj3 = g[0].t; else if (g[1].t === g[2].t) maj3 = g[1].t; if (maj3 && g.some((x) => Math.abs(Math.log2(x.t / maj3)) > 1)) maj3 = null; }
+      if (maj3 && g.some((x) => x.t !== maj3)) g = g.map((x) => ({ ...x, t: maj3 }));
       if (g.some((x) => x.full || x.tup || x.rest || x.t < 8 || x.t !== g[0].t || x.dots || !x.beamed)) continue;
       if (g[0].bg !== null && g[0].bg !== undefined && !g.every((x) => x.bg === g[0].bg)) continue;
       // (a beam of more than three notes is not a triplet)
       if (g[0].bg !== null && g[0].bg !== undefined && b.filter((x) => x.bg === g[0].bg).length !== 3) continue;
-      const t2 = b.slice(); apply(t2, i, i + 2, 3); if (sum(t2) >= total - 1) { b = t2; i += 2; }
+      const t2 = b.slice(); for (let k = 0; k < 3; k++) t2[i + k] = { ...t2[i + k], t: g[k].t }; apply(t2, i, i + 2, 3); if (sum(t2) >= total - 1) { b = t2; i += 2; }
     }
     if (Math.abs(sum(b) - total) < Math.abs(sum(bar) - total) || b.some((x) => x.tup)) bar = b;
   }
@@ -3857,6 +3864,12 @@ function chooseTime(st, bars) {
     // (one or two bars to weigh are not enough to doubt the digits)
     if ((globalThis.__timeFew ?? 1) && inner.length < 3) return pick(read);
     const best = alts.map((t) => ({ t, f: fit(t) + (t === read ? 0.15 : 0) })).sort((a, b) => b.f - a.f)[0];
+    // (digits misread outright — a 3 taken for a 9 in a photograph — while the bars, again and again,
+    // add up in a common time: that time)
+    if ((globalThis.__timeCommon ?? 1) && best.f < 0.5 && inner.length >= 4) {
+      const c2 = [[4, 4], [3, 4], [2, 4], [6, 8], [2, 2], [3, 8]].map((t) => ({ t, f: fit(t) })).sort((a, b) => b.f - a.f)[0];
+      if (c2.f >= 0.7 && c2.f > best.f + 0.4) return pick(c2.t);
+    }
     return pick(best.t);
   }
   if (!sums.length) return [4, 4];
