@@ -1272,7 +1272,9 @@ async function autoSync(o, { from = 0 } = {}) {
   from = o.times && from > 0 && from < full.bars.length ? from : 0;
   const L = from ? { ...full, bars: full.bars.slice(from), notes: full.notes.filter((n) => n.bar >= from).map((n) => ({ ...n, bar: n.bar - from })), events: (full.events || []).filter((e) => e.bar >= from).map((e) => ({ ...e, bar: e.bar - from })), rests: (full.rests || []).filter((e) => e.bar >= from).map((e) => ({ ...e, bar: e.bar - from })) } : full;
   const A = from ? clamp(o.times[from] - 0.3, ST.P.trim.a, ST.P.trim.b - 1) : ST.P.trim.a, B = ST.P.trim.b;
-  if (L.notes.length < 3) { D.toast('Not enough notes were found in the score to follow. Use Tap along.', 4000); return; }
+  // (the top staff alone may be empty — a part resting at the top of a score — with the notes in the
+  // staves below it)
+  if (L.notes.length < 3 && !((L.events || []).filter((e) => e.ms && e.ms.length).length >= 3)) { D.toast('Not enough notes were found in the score to follow. Use Tap along.', 4000); return; }
   busy('Following your playing…', 'Listening to the recording.', 0);
   let cancelled = false; ST.busyCancel = () => { cancelled = true; };
   try {
