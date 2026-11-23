@@ -14,6 +14,7 @@ import { CLEFS, keyAlter, midiOf } from './compose/model.js';
 import { onsetsOf, template, cosine, chromaOf, fftMag } from './listen.js';
 import { Grader, LOOKS, lookParams, isNeutral, autoLook } from './grade.js';
 import { hearNotes, NET_LO, NET_KEYS } from './ai/pitchnet.js';
+import { barFeatures, wrongChance, SURE as GB_SURE, DOUBT as GB_DOUBT } from './confmodel.js';
 const grader = new Grader();
 
 const $ = (s) => document.querySelector(s);
@@ -1403,7 +1404,7 @@ async function realign(o) {
     const byBar = Array.from({ length: nb }, () => []);
     for (const e of sal.evs) byBar[e.bar].push({ x: e.x, t: e.t });
     o.knots = knotsOf(byBar, o.times, L.bars); o._evs = sal.evs;
-    o.conf = sal.conf.slice(); o.confRisk = !!sal.risk; for (const a of anchors) if (a.k < nb) o.conf[a.k] = 1;
+    o.conf = sal.conf.slice(); o.confRisk = sal.risk || false; for (const a of anchors) if (a.k < nb) o.conf[a.k] = 1;
     o.synced = 'auto';
     saveSoon(); renderTimeline(); frame(); if (ST.tab === 'timing') renderSide();
   } catch (err) { console.warn('realign', err); }
@@ -1433,7 +1434,7 @@ function finishSync(o, L, from, A, B, fitT, byBar, best) {
     o.knots = from ? [...Array.from({ length: from }, (_, k) => (o.knots && o.knots[k]) || []), ...newKnots] : newKnots;
     o.synced = 'auto'; o.syncInfo = { good: best.good, clef: best.clef, shift: best.shift, how: best.how, alt: best.alt };
     // (how sure each bar is; the bars put right by hand start again)
-    if (best.conf && best.conf.length === nb) o.confRisk = !!best.risk;
+    if (best.conf && best.conf.length === nb) o.confRisk = best.risk || false;
     if (best.conf && best.conf.length === nb) o.conf = from ? [...Array.from({ length: from }, (_, k) => (o.conf && o.conf[k] != null ? o.conf[k] : 1)), ...best.conf] : best.conf.slice(); else if (!from) o.conf = null;
     if (!from) o.anchors = []; else if (o.anchors) o.anchors = o.anchors.filter((a) => a.k < from);
     busy(null);
@@ -2091,8 +2092,19 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   const sureOf = others.length ? conf2.map((_, k) => (conf2[Math.max(0, k - 1)] + conf2[k] + conf2[Math.min(nb - 1, k + 1)]) / 3) : conf.map((v) => Math.min(1, v / 0.45));
   // (how sure each bar is: one less the chance it is wrong, by the model above, where the AI heard)
   const risk = ai && others.length && (globalThis.__riskConf ?? 1) ? barRisk(nb, T, sureOf, conf2, ev, best.heard) : null;
-  const confOut = risk ? risk.map((p) => 1 - p) : sureOf;
-  return { T, evs, conf: confOut, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches', risk: !!risk };
+  let confOut = risk ? risk.map((p) => 1 - p) : sureOf, riskOut = !!risk;
+  // (and over all of that, the model learned from recordings followed and checked bar by bar: the
+  // bars it calls sure were wrong once in a thousand, on pieces it had not learned from)
+  if (ai && (globalThis.__gbConf ?? 1) && T.length > nb) {
+    try {
+      const nn = new Array(nb).fill(0);
+      for (const q of L.notes) if (q.bar >= 0 && q.bar < nb) nn[q.bar]++;
+      const F = barFeatures({ conf, conf2, bconf: confOut, ev: ev.map((e) => e && [+e.m.toFixed(4), +e.e0.toFixed(4), e.n]), nn, T, n: others.length, staffsN: L.staffsN, risk: riskOut });
+      const p = F.map(wrongChance);
+      if (p.every(Number.isFinite)) { confOut = p.map((v) => 1 - v); riskOut = 'gb'; }
+    } catch (err) { console.warn('conf model', err); }
+  }
+  return { T, evs, conf: confOut, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches', risk: riskOut };
 }
 // How sure each bar is, by the evidence: its written notes heard at their places, against the same
 // notes with the bar moved half a bar or a bar either way. A bar whose notes sound where it was put,
@@ -2962,7 +2974,7 @@ function confClass(o, k) {
 }
 // (the lines between sure, to check and doubtful: for the chance of being wrong, a bar is to check from
 // 8% — of the wrong bars, four in five are among them — and doubtful from 30%)
-function confThr(o) { return o && o.confRisk ? { sure: 0.92, doubt: 0.7 } : { sure: CONF_SURE, doubt: CONF_DOUBT }; }
+function confThr(o) { return o && o.confRisk === 'gb' ? { sure: 1 - GB_SURE, doubt: 1 - GB_DOUBT } : o && o.confRisk ? { sure: 0.92, doubt: 0.7 } : { sure: CONF_SURE, doubt: CONF_DOUBT }; }
 // the places to check: the bars to check, those next to each other (or one bar apart) together — a
 // mistake runs over a few bars, and putting right the first bar of it lines up the rest
 function placesToCheck(o) {
