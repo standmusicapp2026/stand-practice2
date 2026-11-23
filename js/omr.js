@@ -866,7 +866,8 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
     }
   }
   // rests: the PDF's (bars of rest over many bars are kept as the picture found them)
-  const outR = rests.filter((r) => r.multi);
+  // (a picture's 'bars of rest' where the PDF has a plain whole-bar rest is that rest)
+  const outR = rests.filter((r) => r.multi && !((globalThis.__multiGl ?? 1) && G.some((g) => (g.cp === 0xe4e3 || g.cp === 0xe4e4) && Math.abs(g.x - r.cx) < sp * 2.5) && !G.some((g) => g.cp >= 0xe4ee && g.cp <= 0xe4f0 && Math.abs(g.x - r.cx) < sp * 4)));
   for (const g of G) {
     const t = GL_REST[g.cp]; if (!t || g.size < big * 0.8) continue;
     if (outR.some((r) => r.multi && Math.abs(r.cx - g.x) < sp * 3)) continue;
@@ -3543,13 +3544,21 @@ export function staffEvents(st, opts = {}) {
   for (const it of items) { if (it.rest) continue; const o = (st.ottavas || []).find((q) => it.x >= q.x0 && it.x <= q.x1); if (o) it.ott = o.shift; }
   let cur = [], bi = 0, carry = {};
   const startX = [];
+  const gaps = []; for (let k = 1; k < lines.length; k++) gaps.push(lines[k] - lines[k - 1]); gaps.sort((a, b) => a - b); const medGap = gaps.length ? gaps[gaps.length >> 1] : 0;
   for (const it of items) {
-    while (bi < lines.length && it.x > lines[bi]) { if (cur.length) { bars.push(cur); startX.push(cur.x0); } cur = []; carry = {}; bi++; }
+    while (bi < lines.length && it.x > lines[bi]) {
+      if (cur.length) { bars.push(cur); startX.push(cur.x0); }
+      // (a bar with nothing in it — its rest left out, its notes written on the other staff: a bar of rest)
+      else if ((globalThis.__emptyBars ?? 1) && bi > 0 && lines[bi] - lines[bi - 1] > Math.max(sp * 3, medGap * 0.6)) { const r = [{ rest: true, full: true, t: 1, dots: 0, x: (lines[bi - 1] + lines[bi]) / 2, ps: [], acc: {}, empty: true }]; r.x0 = lines[bi - 1]; bars.push(r); startX.push(r.x0); }
+      cur = []; carry = {}; bi++;
+    }
     if (!cur.length) cur.x0 = bi > 0 ? lines[bi - 1] : -Infinity;
     if (!it.rest) { for (const p of it.ps) { if (it.acc[p] !== undefined) carry[p] = it.acc[p]; else if (carry[p] !== undefined) it.acc[p] = carry[p]; } }
     cur.push(it);
   }
   if (cur.length) { bars.push(cur); startX.push(cur.x0); }
+  // (and empty bars after the last note, to the line's end)
+  if ((globalThis.__emptyBars ?? 1) && items.length) for (let k = Math.max(1, bi + 1); k < lines.length; k++) if (lines[k] - lines[k - 1] > Math.max(sp * 3, medGap * 0.6) && lines[k - 1] >= items[items.length - 1].x) { const r = [{ rest: true, full: true, t: 1, dots: 0, x: (lines[k - 1] + lines[k]) / 2, ps: [], acc: {}, empty: true }]; r.x0 = lines[k - 1]; bars.push(r); startX.push(r.x0); }
   // a note tied over the barline keeps the accidental it had (the tie carries it, not the bar)
   if (globalThis.__tieAcc ?? 1) {
     const barOf = new Map(); bars.forEach((b, i) => b.forEach((it) => barOf.set(it, i)));
@@ -3773,9 +3782,11 @@ export async function recognise(canvas, opts = {}) {
     // (the bar numbers printed over the music: a line that begins in the middle of a bar has its first
     // barline numbered as the bar after the last one numbered before — that short piece is the end
     // of the bar before)
-    if ((globalThis.__barNums ?? 1) && st.nums && st.nums.length) {
+    // (the numbers stand over the line's top staff: the same for every staff of the line)
+    const numsOf = (A.staves[sys[0]] && A.staves[sys[0]].nums && A.staves[sys[0]].nums.length ? A.staves[sys[0]].nums : st.nums) || [];
+    if ((globalThis.__barNums ?? 1) && numsOf.length) {
       const sx = st.startX || st.x0, bx = (st.bars || []).map((q) => q.x).filter((x) => x > sx + st.sp * 1.2).sort((p, q) => p - q);
-      const at = st.nums.filter((q) => q.n > 0 && q.n < 2000 && q.x <= st.x1).map((q) => { if (q.x < sx + st.sp * 2) return { n: q.n, k: 0 }; const j = bx.findIndex((x) => Math.abs(x - q.x) < st.sp * 3); return j >= 0 ? { n: q.n, k: j + 1 } : null; }).filter(Boolean);
+      const at = numsOf.filter((q) => q.n > 0 && q.n < 2000 && q.x <= st.x1).map((q) => { if (q.x < sx + st.sp * 2) return { n: q.n, k: 0 }; const j = bx.findIndex((x) => Math.abs(x - q.x) < st.sp * 3); return j >= 0 ? { n: q.n, k: j + 1 } : null; }).filter(Boolean);
       const f = at[0];
       if (f && lastNum && f.k === 1 && b.length > 1 && bars.length && !b[0].some((it) => it.multi || it.full) && f.n - lastNum.n === bars.length + f.k - lastNum.idx - 1) {
         bars[bars.length - 1] = [...bars[bars.length - 1], ...b[0]]; b.shift(); const m0 = m.shift(); m[0] = { ...m0, ...m[0] };
