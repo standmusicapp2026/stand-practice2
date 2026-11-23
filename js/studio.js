@@ -341,6 +341,7 @@ function stripLayout(A, W, H, canvas) {
     });
     return out;
   };
+  let numOff = null;
   A.systems.forEach((sys, si) => {
     const sts = sys.map((i) => A.staves[i]);
     const evAll = sts.map((st, k) => pcsOf(st, k, sts.length));
@@ -370,6 +371,22 @@ function stripLayout(A, W, H, canvas) {
     const lines = barXs.filter((x) => x > x0 + sp * 1.2 && x < x1 - sp * 1.2).sort((a, b) => a - b);
     // a barline right at the start belongs to the previous line
     const cuts = [x0, ...lines, x1];
+    // (the bar numbers printed over the music: a line that begins in the middle of a bar — the rest
+    // of the bar before, a key changing there — has its first barline numbered as the bar before
+    // was. That short piece is no bar of its own: it goes with the next)
+    if (globalThis.__barNums ?? 1) {
+      const nb0 = bars.length, wd = []; for (let k = 0; k + 1 < cuts.length; k++) wd.push(cuts[k + 1] - cuts[k]);
+      const mw = [...wd].sort((a, b) => a - b)[wd.length >> 1] || 1;
+      for (const q of s0.nums || []) {
+        if (!(q.n > 0) || q.x < x0 - sp * 6 || q.x > x1) continue;
+        let k = 0, bd = Infinity; for (let j = 0; j + 1 < cuts.length; j++) { const d = Math.abs(cuts[j] - q.x); if (d < bd) { bd = d; k = j; } }
+        if (q.x < cuts[0] + sp * 1.5) k = 0; else if (bd > sp * 3) continue;
+        const off = q.n - (nb0 + k + 1);
+        if (numOff !== null && off === numOff - 1 && k === 1 && cuts.length > 3 && cuts[1] - cuts[0] < mw * 0.45) { cuts.splice(1, 1); break; }
+        if (Math.abs(off) <= 2) numOff = off;
+        break;
+      }
+    }
     const seg = { x: x0, y: top, w: x1 - x0, h: bot - top, sx, staff: s0.top - top, sX0: Math.max(0, s0.x0 - x0), sX1: Math.min(x1 - x0, s0.x1 - x0), sys: si };
     segs.push(seg);
     for (let k = 0; k < cuts.length - 1; k++) {

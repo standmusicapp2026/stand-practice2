@@ -2364,7 +2364,14 @@ function readStaff(s, ctx, header) {
   }
   const notes = heads.filter((hd) => hd.gl || (hd.left >= startX - sp * 0.3 && !(hd.ringHead && !hd.stem && merged.some((b) => (b.double || b.thick) && hd.cx > b.x - b.w - sp * 1.6 && hd.cx < b.x + sp * 0.9))));
   if (TR) trk(1175, heads);
-  return { pdfMusic: !!(ctx.vecOf && ctx.vecOf.get(s) && ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length), signTrace: (() => { const t = ctx.signTrace; ctx.signTrace = []; return t; })(), L: s.L, x0: s.x0, x1: s.x1, sp, top: s.top, bottom: s.bottom, lines: s.lines, thick: T, heads: notes, rests, bars: merged, signs, explicitClef: head.explicitClef, clef: head.clef, key: head.key, time: head.time, timeAlt: head.timeAlt, startX, head, barTrace: (() => { const t = ctx.barTrace; ctx.barTrace = []; return t; })(), accTrace: ctx.accTrace, restTrace: ctx.restTrace, allHeads: ctx.allHeads };
+  // the numbers printed above the staff (a PDF's text): bar numbers among them
+  const nums = [];
+  if (ctx.glyphsOf && ctx.glyphsOf.get(s)) {
+    const ds = ctx.glyphsOf.get(s).filter((g) => g.text && g.cp >= 0x30 && g.cp <= 0x39 && g.y < s.top - sp * 0.6 && g.y > s.top - sp * 7).sort((a, b) => a.x - b.x);
+    for (const g of ds) { const last = nums[nums.length - 1]; if (last && Math.abs(g.y - last.y) < g.size * 0.3 && g.x - last.xe < g.size * 0.35) { last.t += String.fromCharCode(g.cp); last.xe = g.x + (g.w || g.size * 0.5); } else nums.push({ x: g.x, xe: g.x + (g.w || g.size * 0.5), y: g.y, t: String.fromCharCode(g.cp), size: g.size }); }
+    for (const q of nums) q.n = +q.t;
+  }
+  return { nums, pdfMusic: !!(ctx.vecOf && ctx.vecOf.get(s) && ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length), signTrace: (() => { const t = ctx.signTrace; ctx.signTrace = []; return t; })(), L: s.L, x0: s.x0, x1: s.x1, sp, top: s.top, bottom: s.bottom, lines: s.lines, thick: T, heads: notes, rests, bars: merged, signs, explicitClef: head.explicitClef, clef: head.clef, key: head.key, time: head.time, timeAlt: head.timeAlt, startX, head, barTrace: (() => { const t = ctx.barTrace; ctx.barTrace = []; return t; })(), accTrace: ctx.accTrace, restTrace: ctx.restTrace, allHeads: ctx.allHeads };
 }
 function stemOf(C, w, h, hd, rx, sp, gapK = 0.24) {
   const run = (x, y0, dir) => {
@@ -3404,6 +3411,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       bars: s.bars.map((b) => ({ ...b, x: back(b.x, (s.top + s.bottom) / 2)[0], w: b.w / f })),
       signs: (s.signs || []).map((g) => ({ ...g, x: back(g.x, (s.top + s.bottom) / 2)[0], x1: back(g.x1, (s.top + s.bottom) / 2)[0] })), explicitClef: !!s.explicitClef,
       startX: back(s.startX, s.top)[0],
+      nums: (s.nums || []).map((q) => ({ ...q, x: back(q.x, q.y)[0], y: back(q.x, q.y)[1] })),
       // (where the top and bottom lines are along the staff, every few points: a page that is a little
       // turned or curved, as a scan often is, can be laid straight)
       edge: Array.from({ length: Math.max(2, Math.ceil((s.x1 - s.x0) / 12) + 1) }, (_, i) => { const x = Math.min(s.x1, s.x0 + i * 12); const [X, yT] = back(x, yAt(s, 8, x)), [, yB] = back(x, yAt(s, 0, x)); return [Math.round(X * 10) / 10, Math.round(yT * 10) / 10, Math.round(yB * 10) / 10]; }),
