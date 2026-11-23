@@ -738,7 +738,8 @@ function glyphHeads(s, heads, G, sp, rx) {
   for (const g of G) {
     const kind = GL_HEAD[g.cp]; if (!kind) continue;
     if (g.size < big * 0.8) continue;   // a grace note: read at the end
-    const wd = g.w > sp * 0.5 ? g.w : sp * (kind === 'whole' ? 1.69 : kind === 'breve' ? 2.5 : 1.18);
+    // (a font's advance can be wider than the head drawn — Sibelius's Opus: the head's own width then)
+    const nat = sp * (kind === 'whole' ? 1.69 : kind === 'breve' ? 2.5 : 1.18), wd = g.w > sp * 0.5 ? ((globalThis.__headW ?? 1) && g.w > nat * 1.25 ? nat : g.w) : nat;
     const cx = g.x + wd / 2, cy = g.y, p = Math.round(glP(s, cx, cy));
     let m = -1, md = Infinity;
     heads.forEach((hd, i) => { if (used.has(i)) return; const d = Math.abs(hd.cx - cx) + Math.abs(hd.cy - cy); if (d < md && Math.abs(hd.cx - cx) < sp * 0.7 && Math.abs(hd.cy - cy) < sp * 0.6) { md = d; m = i; } });
@@ -1388,7 +1389,7 @@ function readStaff(s, ctx, header) {
   {
     const gone = new Set();
     for (const hd of heads) for (const q of heads) {
-      if (hd === q || gone.has(hd) || gone.has(q) || !hd.stem || !q.stem || Math.abs(hd.stem.x - q.stem.x) > sp * 0.3 || Math.abs(hd.cx - q.cx) > sp * 0.35 || Math.abs(hd.p - q.p) !== 2) continue;
+      if (hd === q || gone.has(hd) || gone.has(q) || (hd.gl && q.gl) || !hd.stem || !q.stem || Math.abs(hd.stem.x - q.stem.x) > sp * 0.3 || Math.abs(hd.cx - q.cx) > sp * 0.35 || Math.abs(hd.p - q.p) !== 2) continue;
       if (hd.p >= 0 && hd.p <= 8 && q.p >= 0 && q.p <= 8) continue;
       const x = Math.round((hd.cx + q.cx) / 2), y0 = Math.round(Math.min(hd.cy, q.cy) - sp * 0.8), y1 = Math.round(Math.max(hd.cy, q.cy) + sp * 0.8);
       let a = -1, z = -1, bestA = -1, bestZ = -1, pieces = 0; const wd = new Map();
