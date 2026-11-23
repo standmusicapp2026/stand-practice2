@@ -1860,6 +1860,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // (the music's ends: the first bar starts with the first note heard when it begins with a note, the
   // last ends with the last sound — a long last chord, a pause, a slow end are not cut short — and
   // the bars near them are followed again between those ends)
+  let soundEnd = null, soundOn = null;
   if (ai && !(anch && anch.length) && (globalThis.__ends ?? 1)) {
     const NP = SAL_HI - SAL_LO + 1;
     // (loudness: the salience is scaled frame by frame, so silence and music look alike in it)
@@ -1874,7 +1875,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       // (the end: the last sound above the room's own noise — a quiet last chord dies away slowly)
       const pre = on > 8 ? lv.slice(0, on).sort((a, b) => a - b) : srt, tl = lv.slice(-20).sort((a, b) => a - b), flo2 = Math.min(flo, pre[pre.length >> 1], tl[tl.length >> 1]);
       let off = lv.length - 1; while (off > 0 && lv[off] <= Math.max(flo2 * 2, ref * 0.015)) off--;
-      const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t;
+      const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t; soundEnd = tOff; soundOn = tOn;
       const opens = sn0.slice(0, Math.max(1, PSTEPS >> 3)).some(Boolean);
       if (tOn != null && opens && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
       // (the more music past where the following ended, the more bars before the end followed again)
@@ -1985,6 +1986,12 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     for (let k = 0; k <= nb; k++) {
       if (k < nb && !has[k]) continue;
       // (bars i+1 .. k-1 have no notes; i and k do — or k is the end)
+      // (the bars after the soloist's last notes, the others playing on to the end: from there to
+      // where the music stops sounding)
+      if ((globalThis.__postlude ?? 1) && k === nb && i >= 0 && nb - i > 2 && soundEnd != null && soundEnd > T[i + 1] + 1) {
+        const ta = T[i + 1], tb = soundEnd, n = nb - i - 1;
+        if (Math.abs(T[nb] - tb) > 0.5) for (let q = i + 2; q <= nb; q++) T[q] = warpAt(ta, tb, (q - i - 1) / n);
+      }
       if (i >= 0 && k - i > 2 && k < nb) {
         const ta = T[i + 1], tb = T[k], n = k - i - 1;
         for (let q = i + 2; q < k; q++) T[q] = warpAt(ta, tb, (q - i - 1) / n);
