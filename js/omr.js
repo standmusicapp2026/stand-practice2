@@ -846,6 +846,12 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
         const mates = heads.filter((hd) => hd.bg === lead.bg).sort((a, b) => a.cx - b.cx);
         // the notes (not the heads of a chord): n of them, centred on the digit
         const xs = [...new Set(mates.map((hd) => Math.round(hd.stem ? hd.stem.x : hd.cx)))].sort((a, b) => a - b);
+        // (one short: a rest begins or ends the group, under the same number)
+        if (xs.length === n - 1 && (globalThis.__tupRestIn ?? 1)) {
+          const stp = xs.length > 1 ? (xs[xs.length - 1] - xs[0]) / (xs.length - 1) : sp * 1.6;
+          const rIn = G.some((g) => GL_REST[g.cp] && ((g.x < xs[0] && g.x > xs[0] - stp * 1.6) || (g.x > xs[xs.length - 1] && g.x < xs[xs.length - 1] + stp * 1.6)) && Math.abs(g.x + sp * 0.5 - dx) < stp * 2.2);
+          if (rIn) { const grp2 = mates.slice(); const g0 = tg++; for (const hd of grp2) { hd.tupN = n; hd.tupG = g0; if (n === 3) hd.tup3 = true; } continue; }
+        }
         if (xs.length < n) continue;
         // (notes another number already took are not this one's)
         const taken = new Set(mates.filter((hd) => hd.tupG).map((hd) => Math.round(hd.stem ? hd.stem.x : hd.cx)));
@@ -854,6 +860,8 @@ function glyphFinal(s, heads, rests, head, G, sp, startX, signs, ctx_vec = () =>
         const keep = new Set(xs.slice(bi, bi + n)); grp = mates.filter((hd) => keep.has(Math.round(hd.stem ? hd.stem.x : hd.cx)));
       }
       if (!grp.length) continue;
+      // (the number stands by the group's beam or stem ends — not by another staff's notes)
+      if (globalThis.__tupNear ?? 1) { const ends = grp.filter((hd) => hd.stem).map((hd) => hd.stem.end); if (ends.length && Math.min(...ends.map((e) => Math.abs(e - dy))) > sp * 2.6 && Math.min(...grp.map((hd) => Math.abs(hd.cy - dy))) > sp * 2.6) continue; }
       const g0 = tg++; for (const hd of grp) { hd.tupN = n; hd.tupG = g0; if (n === 3) hd.tup3 = true; }
     }
   }
@@ -3265,6 +3273,9 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       let best = null, bd = Infinity;
       for (const q of staves) { if (x < q.x0 - q.sp * 3 || x > q.x1 + q.sp * 3) continue; const d = y < q.top ? q.top - y : y > q.bottom ? y - q.bottom : 0; if (d < bd) { bd = d; best = q; } }
       if (best && bd < best.sp * 9) ctx.glyphsOf.get(best).push({ cp: g.cp, x, y, size: g.size * f, w: (g.w || 0) * f, ...(g.text ? { text: true } : {}) });
+      // (a number between two staves may be the other's — a tuplet's over the lower staff's notes: both
+      // have it, and each keeps it only by its own notes)
+      if (best && g.text && (globalThis.__digitsBoth ?? 1)) for (const q of staves) { if (q === best || x < q.x0 - q.sp * 3 || x > q.x1 + q.sp * 3) continue; const d = y < q.top ? q.top - y : y > q.bottom ? y - q.bottom : 0; if (d < q.sp * 6 && ((y > best.bottom && q.top > best.bottom) || (y < best.top && q.bottom < best.top))) ctx.glyphsOf.get(q).push({ cp: g.cp, x, y, size: g.size * f, w: (g.w || 0) * f, text: true, other: true }); }
     }
     // (a page whose heads are characters of a font known here: a staff with none has no notes)
     // (known: nearly all its music characters standard SMuFL ones — those of a font's own range, not)
@@ -3609,6 +3620,12 @@ export function fitBar(bar, total, opts = {}) {
     const marked = new Map();
     b.forEach((it, i) => { if (it.tupG) { const g = marked.get(it.tupG) || { from: i, to: i, n: it.tupN || 3 }; g.to = i; marked.set(it.tupG, g); } });
     for (const g of marked.values()) {
+      // (a rest that begins or ends the group, under the same number — the number is the notes' and
+      // the rest's)
+      if (globalThis.__tupRestEdge ?? 1) while (g.to - g.from + 1 < g.n) {
+        const pv = b[g.from - 1], nx = b[g.to + 1], tt = b[g.from].t;
+        if (pv && pv.rest && !pv.tupG && pv.t === tt) g.from--; else if (nx && nx.rest && !nx.tupG && nx.t === tt) g.to++; else break;
+      }
       if (b.slice(g.from, g.to + 1).some((x) => x.tup || x.full)) continue;
       let t2 = b.slice(); apply(t2, g.from, g.to, g.n);
       // (a digit drawn alike, 6 read as 5: the count of notes under it, when that adds up better)
@@ -3652,6 +3669,11 @@ export function fitBar(bar, total, opts = {}) {
       // (a beam of more than three notes is not a triplet)
       if (g[0].bg !== null && g[0].bg !== undefined && b.filter((x) => x.bg === g[0].bg).length !== 3) continue;
       const t2 = b.slice(); for (let k = 0; k < 3; k++) t2[i + k] = { ...t2[i + k], t: g[k].t }; apply(t2, i, i + 2, 3); if (sum(t2) >= total - 1) { b = t2; i += 2; }
+    }
+    // (and a bar of triplets written once and then left unmarked, 'sim.': it runs over by half, its
+    // notes and rests all of one value, in threes — each three a triplet)
+    if ((globalThis.__tripSim ?? 1) && !opts.compound && !b.some((x) => x.tup || x.full || x.dots) && b.length >= 3 && b.length % 3 === 0 && b.every((x) => x.t === b[0].t && x.t >= 8) && Math.abs(sum(b) - total * 1.5) < 1) {
+      const t2 = b.slice(); for (let i = 0; i < t2.length; i += 3) apply(t2, i, i + 2, 3); if (Math.abs(sum(t2) - total) < 1) b = t2;
     }
     if (Math.abs(sum(b) - total) < Math.abs(sum(bar) - total) || b.some((x) => x.tup)) bar = b;
   }
@@ -3709,15 +3731,33 @@ export async function recognise(canvas, opts = {}) {
   const A = await analyse(canvas, opts.dbg);
   if (!A.staves.length) return null;
   const pick = opts.staff || 0;
-  const staffIn = (sys) => A.staves[sys[Math.min(pick, sys.length - 1)]];
-  const first = staffIn(A.systems[0]);
+  // the chosen staff in each line. A line that leaves out staves with nothing to play (a score that
+  // hides them) is matched to the fullest line by its clefs, in order — the chosen staff may then be
+  // missing there: its bars are rests
+  const full = A.systems.reduce((a, q) => (q.length > a.length ? q : a), A.systems[0] || []);
+  const clefOf = (i) => { const q = A.staves[i]; return (q && q.clef) || 'treble'; };
+  const mapPick = (sys) => {
+    if (!(globalThis.__hiddenStaves ?? 1) || sys.length >= full.length || full.length < 2) return sys[Math.min(pick, sys.length - 1)];
+    const R = full.map(clefOf), S = sys.map(clefOf), n = R.length, m = S.length;
+    // (the best order-keeping match of this line's staves to the full line's, clefs alike scoring)
+    const D = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(-1e9)); D[0][0] = 0;
+    for (let i = 0; i <= n; i++) for (let j = 0; j <= m; j++) { if (i < n) D[i + 1][j] = Math.max(D[i + 1][j], D[i][j]); if (i < n && j < m) D[i + 1][j + 1] = Math.max(D[i + 1][j + 1], D[i][j] + (R[i] === S[j] ? 2 : -1) + (i - j === n - m ? 0.1 : 0)); }
+    if (D[n][m] < 0) return sys[Math.min(pick, sys.length - 1)];
+    let i = n, j = m, hit = -1;
+    while (i > 0 && j >= 0) { if (j > 0 && D[i][j] === D[i - 1][j - 1] + (R[i - 1] === S[j - 1] ? 2 : -1) + (i - j === n - m ? 0.1 : 0)) { if (i - 1 === Math.min(pick, n - 1)) hit = j - 1; i--; j--; } else i--; }
+    return hit >= 0 ? sys[hit] : null;
+  };
+  const staffIn = (sys) => { const k = mapPick(sys); return k === null ? null : A.staves[k]; };
+  const first = A.systems.map(staffIn).find(Boolean) || A.staves[A.systems[0][0]];
   let bars = [], meta = [];
   const barSys = [];
   // each line: its own clef, key and time at its start (when they change), and the changes along it
   let pending = {}, lastNum = null;
   A.systems.forEach((sys, si) => {
-    const st = staffIn(sys);
-    const b = staffEvents(st, { voices: true });
+    let st = staffIn(sys), absent = false;
+    if (!st) { st = A.staves[sys[0]]; absent = true; }
+    let b = staffEvents(st, { voices: true });
+    if (absent && b.length) { const mt = b.meta, af = b.after; b = b.map((bar) => { const r = [{ rest: true, full: true, t: 1, dots: 0, x: bar.x0 ?? (bar[0] && bar[0].x) ?? 0 }]; r.x0 = bar.x0; return r; }); b.meta = mt.map((q) => ({ ...q, clef: undefined, key: undefined })); b.after = {}; void af; }
     if (!b.length) { Object.assign(pending, b.after || {}); return; }
     const m = b.meta.map((q) => ({ ...q }));
     const head = { ...pending };
@@ -3839,7 +3879,7 @@ export async function recognise(canvas, opts = {}) {
   const notes = bars.flat().filter((n) => !n.rest);
   // the words seen around each line (read as text later), with the line they belong to
   const texts = [];
-  A.systems.forEach((sys, si) => { for (const t of staffIn(sys).texts || []) texts.push({ ...t, sys: si }); });
+  A.systems.forEach((sys, si) => { for (const t of (staffIn(sys) || {}).texts || []) texts.push({ ...t, sys: si }); });
   return { fitRead, bars, ...(v2out.some(Boolean) ? { v2: v2out } : {}), doubt, barSys: barSys.slice(), texts, changes, notes: v2out.some(Boolean) ? [...notes, ...v2out.flat().filter((n) => n && !n.rest)] : notes, clef: first.clef || 'treble', key: first.key || 0, time, timeRead: !!first.time, staves: A.staves.length, systems: A.systems.length, analysis: A };
 }
 // 3/4 or 6/8 (and 3/2 or 6/4 or 12/8)? Where the notes start in the bar tells: in 6/8 the second
