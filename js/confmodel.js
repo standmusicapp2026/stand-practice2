@@ -29,6 +29,16 @@ export function barFeatures({ conf, conf2, bconf, ev, nn, T, n, staffsN, risk })
       e ? e[0] : -1, e ? e[1] : -1, e ? e[2] : 0, nn[k], Math.min(run, 20), Math.min(dl, 20), Math.min(dr, 20),
       jump, Math.abs(Math.log(Math.max(0.05, d[k]) / md)), d[k], k / nb, Math.min(k, 10), Math.min(nb - 1 - k, 10),
       n, staffsN || 1, risk ? 1 : 0]);
+    // (the neighbours: their evidence and how sure they are; how evenly the pace runs here)
+    const E = (q) => (q >= 0 && q < nb && ev[q] ? ev[q][0] : -1);
+    let em = 9;
+    for (let q = k - 2; q < k + 3; q++) if (q >= 0 && q < nb && ev[q]) em = Math.min(em, ev[q][0]);
+    const w = [];
+    for (let q = Math.max(0, k - 3); q < Math.min(nb, k + 4); q++) w.push(Math.log(Math.max(0.05, d[q])));
+    const wm = w.reduce((a, b) => a + b, 0) / w.length, wsd = Math.sqrt(w.reduce((a, b) => a + (b - wm) ** 2, 0) / w.length);
+    let empty = 0;
+    for (let q = Math.max(0, k - 4); q < Math.min(nb, k + 5); q++) if (!nn[q]) empty++;
+    out[k].push(E(k - 1), E(k + 1), em, k ? conf[k - 1] : 1, k + 1 < nb ? conf[k + 1] : 1, wsd, empty);
   }
   return out;
 }
