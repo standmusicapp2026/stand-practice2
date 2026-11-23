@@ -1875,9 +1875,18 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       // (the end: the last sound above the room's own noise — a quiet last chord dies away slowly)
       const pre = on > 8 ? lv.slice(0, on).sort((a, b) => a - b) : srt, tl = lv.slice(-20).sort((a, b) => a - b), flo2 = Math.min(flo, pre[pre.length >> 1], tl[tl.length >> 1]);
       let off = lv.length - 1; while (off > 0 && lv[off] <= Math.max(flo2 * 2, ref * 0.015)) off--;
-      const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t; soundEnd = tOff; soundOn = tOn;
+      let tOn = on >= 0 ? fr[on].t : null; const tOff = fr[off].t; soundEnd = tOff; soundOn = tOn;
       const opens = sn0.slice(0, Math.max(1, PSTEPS >> 3)).some(Boolean);
-      if (tOn != null && opens && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
+      // (the first sound may be a breath, the pedal, the room: the start is where the first notes are
+      // struck, near it)
+      if (tOn != null && opens && (globalThis.__onStrike ?? 1)) {
+        const ms0 = sn0.slice(0, PSTEPS).find(Boolean);
+        if (ms0) { let bj = -1, bv = 0; for (let j = 0; j < fr.length; j++) { if (fr[j].t < tOn - 0.2) continue; if (fr[j].t > tOn + 2.5) break; let v = 0; for (const mm of ms0) { const p = mm - SAL_LO; if (p >= 0 && p < NP) v += fr[j].on[p]; } v /= ms0.length; if (v > bv * 1.15) { bv = v; bj = j; } }
+          // (the first strike nearly as strong as the strongest: the same notes may be struck again later)
+          if (bj >= 0 && bv > 0.2) { for (let j = 0; j < bj; j++) { if (fr[j].t < tOn - 0.2) continue; let v = 0; for (const mm of ms0) { const p = mm - SAL_LO; if (p >= 0 && p < NP) v += fr[j].on[p]; } if (v / ms0.length >= bv * (globalThis.__strikeFrac ?? 0.35)) { bj = j; break; } } }
+          if (bj >= 0 && bv > 0.2 && fr[bj].t > tOn + 0.3) tOn = fr[bj].t; }
+      }
+      if (tOn != null && opens && Math.abs(T[0] - tOn) > 0.6 && T[0] - tOn < 20 && tOn < T[1] - 0.3) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
       // (the more music past where the following ended, the more bars before the end followed again)
       if (tOff - T[nb] > 1 && tOff - T[nb] < 30) { const dd = []; for (let k = 0; k < nb; k++) dd.push(T[k + 1] - T[k]); dd.sort((a, b) => a - b); const md = dd[nb >> 1] || 1; const k1 = Math.max(0, nb - 4 - 2 * Math.ceil((tOff - T[nb]) / md)); T[nb] = tOff; redo(k1, nb, T[k1], tOff); }
       // (a first bar of a note or two after the clef — an upbeat: it lasts only as long as those notes,
@@ -1902,7 +1911,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
         const tA = T[nb - 2] + 0.25 * (T[nb - 1] - T[nb - 2]);
         for (let j = off - 3; j > 3 && fr[j].t > tA; j--) {
           const before = Math.max(lv[j - 1], lv[j - 2], lv[j - 3]), after = Math.max(lv[j + 1], lv[j + 2], lv[j + 3]);
-          if (after > before * 3 && after > Math.max(flo2 * 6, ref * 0.02)) {
+          if (after > before * (globalThis.__lcRise ?? 3) && after > Math.max(flo2 * 6, ref * 0.02)) {
             let j0 = j; while (j0 > 1 && lv[j0 - 1] < lv[j0]) j0--;
             const tn = fr[j0].t;
             if (Math.abs(tn - T[nb - 1]) > 0.3 && tn < T[nb] - 0.3) { const k1 = Math.max(0, nb - 5); T[nb - 1] = tn; redo(k1, nb - 1, T[k1], tn); }
