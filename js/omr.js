@@ -3040,7 +3040,8 @@ function barXsOf(B, w, s) {
 }
 function joinAlike(systems, staves, B, w) {
   if (!(globalThis.__joinAlike ?? 1) || systems.length < 2) return systems;
-  const xsCache = new Map(); const xsOf = (i) => { if (!xsCache.has(i)) xsCache.set(i, barXsOf(B, w, staves[i])); return xsCache.get(i); };
+  // (a PDF's barlines as drawn, where it has them: the picture's own search takes stems for them)
+  const xsCache = new Map(); const xsOf = (i) => { if (!xsCache.has(i)) { const q = staves[i]; xsCache.set(i, (globalThis.__joinVec ?? 1) && q.pdfMusic && q.bars && q.bars.length >= 2 ? q.bars.map((b) => b.x).filter((x) => x > q.x0 + q.sp * 1.5) : barXsOf(B, w, q)); } return xsCache.get(i); };
   const alike = (a, b) => {
     const A = staves[a], Bs = staves[b], sp = Math.max(A.sp, Bs.sp);
     if (Math.abs(A.x0 - Bs.x0) > sp * 2.5 || Math.abs(A.x1 - Bs.x1) > sp * 1.5 || Bs.top - A.bottom > sp * 16 || Bs.top <= A.bottom) return null;
