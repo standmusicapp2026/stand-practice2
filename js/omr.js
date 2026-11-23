@@ -1563,7 +1563,7 @@ function readStaff(s, ctx, header) {
     // a barline stands alone: just beside it the staff is empty (unlike the digits of a time signature)
     const side = (xx) => { const a = yTop(xx), z = yBot(xx); let n = 0; for (let y = a; y <= z; y++) n += C[y * w + xx] || 0; return n / (z - a + 1); };
     const beside = Math.min(side(Math.round(x - sp * 0.22)), side(Math.round(e + sp * 0.22)));
-    if (beside > 0.45) { if (ctx.dbg) (ctx.barTrace = ctx.barTrace || []).push({ x, why: 'beside', beside }); x = e + 1; continue; }
+    if (beside > 0.45) { barLog(ctx, { x, why: 'beside', beside }); x = e + 1; continue; }
     // and straight: hardly anything joins it sideways (digits and clefs have strokes off their sides)
     {
       const a0 = yTop(cx), z0 = yBot(cx); let wide = 0, tot = 0;
@@ -1571,7 +1571,7 @@ function readStaff(s, ctx, header) {
         let l = x, r = e; while (l > 0 && C[y * w + l - 1]) l--; while (r < w - 1 && C[y * w + r + 1]) r++;
         tot++; if (r - l + 1 > (e - x + 1) + sp * 0.35) wide++;
       }
-      if (tot && wide / tot > 0.3) { if (ctx.dbg) (ctx.barTrace = ctx.barTrace || []).push({ x, why: 'wide', r: wide / tot }); x = e + 1; continue; }
+      if (tot && wide / tot > 0.3) { barLog(ctx, { x, why: 'wide', r: wide / tot }); x = e + 1; continue; }
     }
     const stemOfHead = heads.some((hd) => hd.stem && Math.abs(hd.stem.x - cx) < sp * 0.45);
     // a stem from the top line to the bottom line looks like a barline, but has a head (or a beam)
@@ -1588,7 +1588,7 @@ function readStaff(s, ctx, header) {
       return tot && tt && t / tt > 0.4 ? n / tot : 0;
     };
     const capped = [yTop(cx), yBot(cx)].some((y) => blobAt(y, 1) > 0.6 || blobAt(y, -1) > 0.6);
-    if (capped) { if (ctx.dbg) (ctx.barTrace = ctx.barTrace || []).push({ x, why: 'capped' }); x = e + 1; continue; }
+    if (capped) { barLog(ctx, { x, why: 'capped' }); x = e + 1; continue; }
     const ya = yTop(cx), yb = yBot(cx);
     let up = 0; while (ya - up - 1 > 0 && (B[(ya - up - 1) * w + Math.round(cx)])) up++;
     let dn = 0; while (yb + dn + 1 < h && (B[(yb + dn + 1) * w + Math.round(cx)])) dn++;
@@ -1602,7 +1602,7 @@ function readStaff(s, ctx, header) {
     // (the 'head' whose stem it seemed to be may turn out to be part of a time signature or a clef
     // just after it: decided once those are read)
     else if (shaped && stemOfHead) { pendingBars.push({ x: cx, w: width, thick: width > sp * 0.3, by: heads.filter((hd) => hd.stem && Math.abs(hd.stem.x - cx) < sp * 0.45) }); x = e + 1; continue; }
-    else if (ctx.dbg) (ctx.barTrace = ctx.barTrace || []).push({ x, why: 'ends', stemOfHead, width, up: up / sp, dn: dn / sp, toPrev, toNext });
+    else barLog(ctx, { x, why: 'ends', stemOfHead, width, up: up / sp, dn: dn / sp, toPrev, toNext });
     x = e + 1;
   }
   const merged = [];
@@ -1629,6 +1629,7 @@ function readStaff(s, ctx, header) {
   if (ctx.dbg) { head.trace = ctx.trace; ctx.trace = []; }
   if (ctx.dbg) head.zone = inZone.map((c) => ({ x0: c.x0, w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2), top: +pAt(s, c.y0, c.x0).toFixed(1), bot: +pAt(s, c.y1, c.x0).toFixed(1), k: classify(shapeOf(C, w, c.x0, c.y0, c.x1, c.y1, sp, labC, c.id), ['treble', 'bass', 'alto', 'sharp', 'flat', 'natural', 'd2', 'd3', 'd4', 'd6', 'd8', 'tC']) }));
   const startX = head.end;
+  if (globalThis.__multiDbg) console.log('DBG head', Math.round(s.x0), Math.round(s.top), 'end', Math.round(startX), 'sp', sp.toFixed(1), 'bars', merged.map((b) => Math.round(b.x)).join(','), JSON.stringify(head, (k, v) => (k === 'trace' || k === 'zone' ? undefined : v)));
   // barlines inside the clef, key or time signature are part of them
   for (let k = merged.length - 1; k >= 0; k--) if (merged[k].x < startX - sp * 0.2 && merged[k].x > s.x0 + sp * 0.8) merged.splice(k, 1);
   // ---- accidentals in front of notes
@@ -2109,7 +2110,20 @@ function readStaff(s, ctx, header) {
       return tot ? n / tot : 1; };
     return inkAt(1) < 0.15 && inkAt(-1) < 0.15;
   });
+  // (two strokes from the top line to the bottom one, closer than half a space or so: a double barline,
+  // even when what follows it — the naturals of a change of key — looked like a note's head beside it)
+  if (globalThis.__dblPend ?? 1) for (const pb of pendingBars) {
+    if (pb.done) continue;
+    const twin = pendingBars.find((q) => q !== pb && !q.done && Math.abs(q.x - pb.x) < sp * 0.75) || merged.find((b) => !b.double && Math.abs(b.x - pb.x) < sp * 0.75);
+    if (!twin) continue;
+    pb.done = true; if (pendingBars.includes(twin)) twin.done = true;
+    for (const hd of [...pb.by, ...(twin.by || [])]) { const i = heads.indexOf(hd); if (i >= 0 && Math.abs(hd.cx - Math.max(pb.x, twin.x)) < sp * 1.6 && hd.cx > Math.max(pb.x, twin.x)) heads.splice(i, 1); }
+    const mi = merged.indexOf(twin);
+    if (mi >= 0) { merged[mi].x = Math.max(twin.x, pb.x); merged[mi].double = true; merged[mi].w += pb.w; }
+    else { merged.push({ x: Math.max(pb.x, twin.x), w: pb.w + twin.w, thick: pb.thick || twin.thick, double: true }); merged.sort((a, b2) => a.x - b2.x); }
+  }
   for (const pb of pendingBars) {
+    if (pb.done) continue;
     if (pb.by.length && pb.by.every((hd) => heads.includes(hd)) && bareBy(pb) && !merged.some((b) => Math.abs(b.x - pb.x) < sp * 1.0)) {
       for (const hd of pb.by) { const i = heads.indexOf(hd); if (i >= 0) heads.splice(i, 1); }
       merged.push({ x: pb.x, w: pb.w, thick: pb.thick }); merged.sort((a, b2) => a.x - b2.x);
@@ -2174,6 +2188,7 @@ function readStaff(s, ctx, header) {
   // number of bars above it)
   const multis = [];
   for (const c of compsC) {
+    if (globalThis.__multiDbg && c.w >= sp * 2 && c.h < sp * 1.5 && Math.abs(pAt(s, (c.y0 + c.y1) / 2, (c.x0 + c.x1) / 2) - 4) < 2) console.log('DBG thick cand', c.x0, c.x1, (c.w / sp).toFixed(2), (c.h / sp).toFixed(2), 'startX', Math.round(startX));
     if (c.x0 < startX - sp * 0.2 || c.x1 > s.x1 + sp * 0.3 || c.w < sp * 2.4 || c.h > sp * 3.2) continue;
     const xm = Math.round((c.x0 + c.x1) / 2), pm = pAt(s, (c.y0 + c.y1) / 2, xm);
     if (Math.abs(pm - 4) > 1.3) continue;
@@ -2249,24 +2264,36 @@ function readStaff(s, ctx, header) {
     const xs = [startX, ...merged.map((b) => b.x).filter((x) => x > startX + sp)];
     for (let i = 0; i + 1 < xs.length; i++) {
       const a = xs[i], z = xs[i + 1], m = (a + z) / 2;
+      const W = (why) => { if (globalThis.__multiDbg) console.log('DBG multiAny', Math.round(a), Math.round(z), why); };
       if (z - a < sp * 2.5) continue;
-      if (heads.some((hd) => hd.cx > a && hd.cx < z)) continue;
-      if (rests.some((r) => r.multi && r.cx > a && r.cx < z)) continue;
+      if (heads.some((hd) => hd.cx > a && hd.cx < z)) { W('heads'); continue; }
+      if (rests.some((r) => r.multi && r.cx > a && r.cx < z)) { W('has multi'); continue; }
       // (nor a stem: a stroke two and a half spaces tall or more, thin, inside the bar — a note there)
-      if (compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && q.h > sp * 2.5 && q.y1 > yAt(s, 8, q.x0) && q.y0 < yAt(s, 0, q.x0))) continue;
+      // (the thin line of a double barline at either end of the bar, from the top line to the bottom
+      // one, is no stem)
+      const barLine = (q) => (globalThis.__multiDbl ?? 1) && q.w < sp * 0.6 && Math.abs(q.y0 - yAt(s, 8, q.x0)) < sp * 0.35 && Math.abs(q.y1 - yAt(s, 0, q.x0)) < sp * 0.35 && (q.x0 - a < sp * 1.6 || z - q.x1 < sp * 1.6);
+      { const st = compsC.find((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && q.h > sp * 2.5 && q.y1 > yAt(s, 8, q.x0) && q.y0 < yAt(s, 0, q.x0) && !barLine(q)); if (st) { W('stem ' + [st.x0, st.x1, st.y0, st.y1, (st.w / sp).toFixed(2), (st.h / sp).toFixed(2), yAt(s, 8, st.x0).toFixed(0), yAt(s, 0, st.x0).toFixed(0)].join(' ')); continue; } }
       // (rest-like ink in the staff's middle: something is printed there)
-      if (!compsC.some((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, (q.x0 + q.x1) / 2) - 4) < 2.5 && q.h > sp * 0.35 && q.w > sp * 0.25)) continue;
+      const inks = compsC.filter((q) => q.x0 > a + sp * 0.3 && q.x1 < z - sp * 0.3 && Math.abs(pAt(s, (q.y0 + q.y1) / 2, (q.x0 + q.x1) / 2) - 4) < 2.5 && q.h > sp * 0.35 && q.w > sp * 0.25);
+      if (!inks.length) { W('no ink'); continue; }
+      // (a bar with nothing read in it but rest-like ink — a short block, a thick bar — is still a bar:
+      // at least one bar of rest, when its number cannot be read)
+      const bare = (globalThis.__bareRest ?? 1) && !rests.some((r) => r.cx > a && r.cx < z);
+      const im = (Math.min(...inks.map((q) => q.x0)) + Math.max(...inks.map((q) => q.x1))) / 2;
+      const one1 = () => { if (bare) { rests.push({ x: Math.round(im - sp), t: 1, cx: im, w: sp * 2, dots: 0, full: true, multi: 1 }); W('bare rest'); } };
       let ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return qc > a + (z - a) * 0.2 && qc < z - (z - a) * 0.2 && q.y1 < top - sp * 0.25 && q.y0 > top - sp * 3.5 && q.h > sp * 0.9 && q.h < sp * 2.6 && q.w < sp * 3.4 && ctx.staffOf((q.y0 + q.y1) / 2, qc) === s; }).sort((p1, p2) => p1.x0 - p2.x0);
       // (only the row of print nearest the staff: a tempo mark above the number is no part of it)
       if ((globalThis.__multiRow ?? 1) && ds.length) { const low = Math.max(...ds.map((q) => q.y1)); ds = ds.filter((q) => q.y1 > low - sp * 0.6); }
-      if (!ds.length || ds.length > 2) continue;
+      // (more print than a number: only what stands right over the rest — a tempo mark run into it)
+      if (ds.length > 2 && (globalThis.__multiNear ?? 1)) { const nr = ds.filter((q) => Math.abs((q.x0 + q.x1) / 2 - im) < sp * 1.3); if (nr.length >= 1 && nr.length <= 2) ds = nr; }
+      if (!ds.length || ds.length > 2) { W('digits ' + ds.length); one1(); continue; }
       // (the digits side by side, over the middle of the bar)
-      const dm = (ds[0].x0 + ds[ds.length - 1].x1) / 2; if (Math.abs(dm - m) > (z - a) * 0.25) continue;
+      const dm = (ds[0].x0 + ds[ds.length - 1].x1) / 2; if (Math.abs(dm - m) > (z - a) * 0.25 && Math.abs(dm - im) > sp * 1.3) { W('off middle'); one1(); continue; }
       // (digits that end a word — "Music21", "Op. 12" — are no count: other letters run into them
       // on the same line, close by)
       if (globalThis.__multiWord ?? 1) {
         const ya = Math.min(...ds.map((q) => q.y0)), yb = Math.max(...ds.map((q) => q.y1)), xa = ds[0].x0, xb = ds[ds.length - 1].x1;
-        if (compsC.some((q) => !ds.includes(q) && q.y1 > ya - sp * 0.2 && q.y0 < yb + sp * 0.2 && q.h > sp * 0.3 && ((q.x1 <= xa && q.x1 > xa - sp * 1.2) || (q.x0 >= xb && q.x0 < xb + sp * 1.2)))) continue;
+        if (compsC.some((q) => !ds.includes(q) && q.y1 > ya - sp * 0.2 && q.y0 < yb + sp * 0.2 && q.h > sp * 0.3 && ((q.x1 <= xa && q.x1 > xa - sp * 1.2) || (q.x0 >= xb && q.x0 < xb + sp * 1.2)))) { W('word'); one1(); continue; }
       }
       let n = 0, okAll = true;
       const DG =['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'];
@@ -2283,7 +2310,7 @@ function readStaff(s, ctx, header) {
         const k = one(q, q.x0, q.x1);
         if (k && k.d < 0.34) n = n * 10 + +k.cls.slice(1); else okAll = false;
       }
-      if (!okAll || n < 2 || n > 199) continue;
+      if (!okAll || n < 2 || n > 199) { one1(); W('digit class ' + n + ' ' + ds.map((q) => { const k = one(q, q.x0, q.x1); return k && k.cls + ':' + k.d.toFixed(2); }).join(',')); continue; }
       for (let k = rests.length - 1; k >= 0; k--) if (rests[k].cx > a && rests[k].cx < z) rests.splice(k, 1);
       rests.push({ x: Math.round(m - sp), t: 1, cx: m, w: sp * 2, dots: 0, multi: n });
       if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ multi: n, x: m, any: true });
@@ -3724,6 +3751,7 @@ export function fitBar(bar, total, opts = {}) {
   return bar;
 }
 
+function barLog(ctx, o) { if (ctx.dbg) (ctx.barTrace = ctx.barTrace || []).push(o); if (globalThis.__barDbg) console.log('DBG bar', JSON.stringify(o)); }
 // For Compose: read a picture and return bars of one staff per system, in reading order,
 // with the clef, key and time that were found.
 export async function recognise(canvas, opts = {}) {
