@@ -2187,6 +2187,28 @@ function readStaff(s, ctx, header) {
   // ---- bars of rest counted together (a thick bar across the middle of the staff, with the
   // number of bars above it)
   const multis = [];
+  // (the digits of a number of bars, each read on its own; two digits printed touching — a bold
+  // "13" — are one piece of ink: cut where the ink is thinnest near its middle)
+  const D10 = ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'];
+  const digitBoxes = (q) => {
+    if (!(globalThis.__multiSplit ?? 1) || q.w < sp * 1.75 || q.w > sp * 4.5 || q.id === undefined) return [q];
+    const mine = Array.isArray(q.id) ? (k) => q.id.includes(labC[k]) : (k) => labC[k] === q.id;
+    const ink = (x) => { let n = 0; for (let y = q.y0; y <= q.y1; y++) if (mine(y * w + x)) n++; return n; };
+    let xs = -1, best = Infinity;
+    for (let x = Math.round(q.x0 + q.w * 0.3); x <= Math.round(q.x0 + q.w * 0.7); x++) { const n = ink(x); if (n < best) { best = n; xs = x; } }
+    if (xs < 0 || best > (q.y1 - q.y0 + 1) * 0.45) return [q];
+    const box = (xa, xb) => { let ya = Infinity, yb = -1; for (let y = q.y0; y <= q.y1; y++) for (let x = xa; x <= xb; x++) if (mine(y * w + x)) { if (y < ya) ya = y; if (y > yb) yb = y; } return yb < 0 ? null : { x0: xa, y0: ya, x1: xb, y1: yb, w: xb - xa + 1, h: yb - ya + 1, id: q.id }; };
+    const l = box(q.x0, xs - 1), r = box(xs + 1, q.x1);
+    return l && r && l.h > q.h * 0.6 && r.h > q.h * 0.6 ? [l, r] : [q];
+  };
+  const readDigits = (ds, thr) => {
+    let n = 0, ok = true;
+    for (const q of ds.flatMap(digitBoxes)) {
+      const k = classifyLoose(shapeOf(C, w, q.x0, q.y0, q.x1, q.y1, sp, labC, q.id), D10)[0];
+      if (k && k.d < thr) n = n * 10 + +k.cls.slice(1); else ok = false;
+    }
+    return { n, ok };
+  };
   for (const c of compsC) {
     if (globalThis.__multiDbg && c.w >= sp * 2 && c.h < sp * 1.5 && Math.abs(pAt(s, (c.y0 + c.y1) / 2, (c.x0 + c.x1) / 2) - 4) < 2) console.log('DBG thick cand', c.x0, c.x1, (c.w / sp).toFixed(2), (c.h / sp).toFixed(2), 'startX', Math.round(startX));
     if (c.x0 < startX - sp * 0.2 || c.x1 > s.x1 + sp * 0.3 || c.w < sp * 2.4 || c.h > sp * 3.2) continue;
@@ -2204,7 +2226,7 @@ function readStaff(s, ctx, header) {
     if (!tot || ok / tot < 0.75) continue;
     if (heads.some((hd) => hd.cx > c.x0 && hd.cx < c.x1 && Math.abs(pAt(s, hd.cy, hd.cx) - 4) < 3)) continue;
     // the number: digits above the staff over the middle of the bar
-    let ds = compsC.filter((q) => q.x1 > c.x0 && q.x0 < c.x1 && q.y1 < yAt(s, 8, q.x0) - sp * 0.2 && q.y1 > yAt(s, 8, q.x0) - sp * 5.5 && q.h > sp * 0.9 && q.h < sp * 3.5 && q.w < sp * 2.5).sort((a, b2) => a.x0 - b2.x0);
+    let ds = compsC.filter((q) => q.x1 > c.x0 && q.x0 < c.x1 && q.y1 < yAt(s, 8, q.x0) - sp * 0.2 && q.y1 > yAt(s, 8, q.x0) - sp * 5.5 && q.h > sp * 0.9 && q.h < sp * 3.5 && q.w < sp * ((globalThis.__multiSplit ?? 1) ? 4.5 : 2.5)).sort((a, b2) => a.x0 - b2.x0);
     // (only the row of print nearest the staff: a tempo word above the number — "Mässig", "Allegro" —
     // is no part of it; and a row that runs on into letters beside it is a word, not a number)
     if ((globalThis.__multiRow ?? 1) && ds.length) {
@@ -2214,8 +2236,8 @@ function readStaff(s, ctx, header) {
       if (ds.length > 3 || compsC.some((q) => !ds.includes(q) && q.y1 > ya - sp * 0.2 && q.y0 < yb + sp * 0.2 && q.h > sp * 0.3 && ((q.x1 <= xa && q.x1 > xa - sp * 1.2) || (q.x0 >= xb && q.x0 < xb + sp * 1.2)))) ds = [];
     }
     let n = 0;
-    for (const q of ds) {
-      const k = classifyLoose(shapeOf(C, w, q.x0, q.y0, q.x1, q.y1, sp, labC, q.id), ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'])[0];
+    for (const q of ds.flatMap(digitBoxes)) {
+      const k = classifyLoose(shapeOf(C, w, q.x0, q.y0, q.x1, q.y1, sp, labC, q.id), D10)[0];
       if (k && k.d < 0.45) n = n * 10 + +k.cls.slice(1);
     }
     multis.push({ x: c.x0, x1: c.x1, n: Math.max(1, n || 1) });
@@ -2230,7 +2252,7 @@ function readStaff(s, ctx, header) {
   for (const r of rests) {
     // (a breve rest's number is the group's: see below)
     if (r.multi || r.t !== 1 || r.breve) continue;
-    let ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return Math.abs(qc - r.cx) < sp * 1.3 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 4.5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * 2.2; }).sort((a, b2) => a.x0 - b2.x0);
+    let ds = compsC.filter((q) => { const qc = (q.x0 + q.x1) / 2, top = yAt(s, 8, qc); return Math.abs(qc - r.cx) < sp * 1.3 && q.y1 < top - sp * 0.25 && q.y1 > top - sp * 4.5 && q.h > sp * 0.9 && q.h < sp * 3.2 && q.w < sp * ((globalThis.__multiSplit ?? 1) ? 4.5 : 2.2); }).sort((a, b2) => a.x0 - b2.x0);
     // (only the row of print nearest the staff: a tempo word above the number is no part of it)
     if ((globalThis.__multiRow ?? 1) && ds.length) {
       const low = Math.max(...ds.map((q) => q.y1)); ds = ds.filter((q) => q.y1 > low - sp * 0.6);
@@ -2240,11 +2262,7 @@ function readStaff(s, ctx, header) {
     }
     if (!ds.length || ds.length > 2) continue;
     if (heads.some((hd) => Math.abs(hd.cx - r.cx) < sp * 2.5)) continue;
-    let n = 0, okAll = true;
-    for (const q of ds) {
-      const k = classifyLoose(shapeOf(C, w, q.x0, q.y0, q.x1, q.y1, sp, labC, q.id), ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'])[0];
-      if (k && k.d < 0.4) n = n * 10 + +k.cls.slice(1); else okAll = false;
-    }
+    const { n, ok: okAll } = readDigits(ds, 0.4);
     if (okAll && n >= 2 && n <= 99) { r.multi = n; if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ multi: n, x: r.x, whole: true }); }
   }
   // (old church rests side by side — a block for four bars, a whole rest for one — under one number:
