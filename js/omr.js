@@ -3793,7 +3793,17 @@ export async function recognise(canvas, opts = {}) {
   raw.forEach((b, i) => {
     if (!b.v2 || !b.v2.length) return;
     const pick = i === 0 || (i === bars.length - 1 && firstShort);
-    const f2 = fitBar(b.v2, totalOf(i), { pickup: pick, sp: first.sp, compound: compoundOf(i) });
+    // (a second voice that comes in after the first has begun, its rests hidden: the time before it
+    // a rest, not its notes drawn out)
+    let v2in = b.v2;
+    if ((globalThis.__v2Rest ?? 1) && !pick) {
+      const s0 = sumOf(v2in, totalOf(i)), gap = totalOf(i) - s0, f0 = v2in[0], b1 = b[0];
+      if (gap >= WHOLE / 16 && f0 && !f0.rest && b1 && f0.x > b1.x + first.sp * 1.2) {
+        const rs = []; let left = gap; for (const t of [1, 2, 4, 8, 16]) { const tk = WHOLE / t; while (left >= tk - 0.5) { rs.push({ rest: true, t, dots: 0, x: b1.x, hidden: true }); left -= tk; } }
+        if (left < 1) v2in = [...rs, ...v2in];
+      }
+    }
+    const f2 = fitBar(v2in, totalOf(i), { pickup: pick, sp: first.sp, compound: compoundOf(i) });
     const ok = (x) => { const sm = sumOf(x, totalOf(i)); return pick ? sm <= totalOf(i) + 1 : Math.abs(sm - totalOf(i)) < 1; };
     if (ok(bars[i]) && ok(f2)) {
       // (two voices of the same rhythm, note for note — a double stop with a stem each way — are chords)
