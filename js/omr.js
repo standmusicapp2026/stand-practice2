@@ -1676,6 +1676,8 @@ function readStaff(s, ctx, header) {
         // (a slur or tie run into the sign: its box without the thin curves)
         if (x1 >= 0 && (y0 <= ya || y1 >= yb) && slurAcc) { const b = boxIn(ctx.D); if (b[1] >= 0 && b[2] > ya && b[3] < yb) [x0, x1, y0, y1] = b; }
         if (x1 < 0 || x0 > x + sp * 0.2 || (y1 - y0) < sp * (cls === 'flat' ? 1.8 : 2.0) || x1 - x0 < sp * 0.35) continue;
+        // (the key signature's last sign, just before the line's first note, is no accidental of it)
+        if ((globalThis.__accKeyEnd ?? 1) && x0 < startX - sp * 0.2) continue;
         // not cut off at the edges of the window (then it is part of something bigger)
         let cutK = false;
         if (y0 <= ya || y1 >= yb) { if (!(globalThis.__cutSign ?? 1) || cls === 'flat' || (y0 <= ya && y1 >= yb)) continue; cutK = true; }
