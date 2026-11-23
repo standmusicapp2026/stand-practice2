@@ -2098,6 +2098,9 @@ function readStaff(s, ctx, header) {
     for (let k2 = heads.length - 1; k2 >= 0; k2--) if (heads[k2].cx > x0 && heads[k2].cx < best.x1 && heads[k2].cy > yT && heads[k2].cy < yB) heads.splice(k2, 1);
     for (let k = rests.length - 1; k >= 0; k--) if (rests[k].cx > x0 - sp * 0.2 && rests[k].cx < best.x1 + sp * 0.2) rests.splice(k, 1);
   }
+  // a 'barline' inside a time signature is its digits' upright strokes in line (the 1 over the 4 of 1/4,
+  // the staff's middle line joining them): no barline
+  if (globalThis.__tsBar ?? 1) for (const sg of signs) if (sg.time) for (let k = merged.length - 1; k >= 0; k--) if (!merged[k].double && merged[k].x > sg.x + sp * 0.1 && merged[k].x < sg.x1 - sp * 0.05) merged.splice(k, 1);
   // barlines that only seemed to be stems: of 'heads' read inside a time signature or a clef
   // (or of a 'head' that is no more than the stroke itself: beside the stroke, where the head would
   // be, the staff is empty on both sides)
