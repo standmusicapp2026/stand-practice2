@@ -39,7 +39,8 @@ export function readElsewhere(canvas) {
 const SHIFTS = [0, 2, 10, 3, 9, 5, 7, 1, 11, 4, 8, 6];
 // where the music can go from one note to the next thing heard
 const MOVE = [0.14, 0.62, 0.15, 0.05, 0.02];   // stay (a repeated attack), next, skip 1, 2, 3
-const JUMP = 0.01;                               // anywhere (a jump, starting again)
+const JUMP = 0.003;                              // a jump (starting again, a repeat): mostly near where the playing is,
+const JUMP_NEAR = 20, JUMP_FAR = 0.03;           // a few events either side; rarely anywhere (the same phrase further on must not pull)
 
 // how well one thing heard fits one event of the score (0..1), with the music moved by `sh`
 export function fit(obs, ev, sh) {
@@ -176,11 +177,15 @@ export class PageFollower {
     // (but never straight into the place where the page turns, or past it: that place is reached
     // note by note. A phrase that comes back there must not pull the playing ahead and turn early)
     const cut = this._jumpCut ?? -1;
-    const jumpAt = (j) => (gz ? JUMP * ((1 - gz.w) / n + (gz.w * gz.K[j]) / gz.sumK) : JUMP / n) * (cut >= 0 && j >= cut ? (globalThis.__jumpCutK ?? 0.04) : 1);
+    // (near: where the playing most likely was, the nearer the likelier)
+    let near = null;
+    if (globalThis.__jumpNear ?? 1) { let b = 0; for (let j = 1; j < n; j++) if (prev[j] > prev[b]) b = j; near = new Float64Array(n); let z = 0; for (let j = 0; j < n; j++) { near[j] = Math.exp(-Math.abs(j - b) / JUMP_NEAR); z += near[j]; } for (let j = 0; j < n; j++) near[j] = (1 - JUMP_FAR) * near[j] / z + JUMP_FAR / n; }
+    const J = near ? JUMP : 0.01;
+    const jumpAt = (j) => (gz ? J * ((1 - gz.w) * (near ? near[j] : 1 / n) + (gz.w * gz.K[j]) / gz.sumK) : J * (near ? near[j] : 1 / n)) * (cut >= 0 && j >= cut ? (globalThis.__jumpCutK ?? 0.04) : 1);
     for (let j = 0; j < n; j++) {
       let l = like(fit(obs, seq[j], sh));
       if (gz) l *= 1 - gz.w + gz.w * gz.K[j];
-      out[j] = (out[j] * (1 - JUMP) + jumpAt(j)) * l; s += out[j];
+      out[j] = (out[j] * (1 - J) + jumpAt(j)) * l; s += out[j];
     }
     for (let j = 0; j < n; j++) out[j] /= s || 1;
     return { p: out, ev: s };
