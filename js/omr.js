@@ -1390,7 +1390,7 @@ function readStaff(s, ctx, header) {
     // (or on to the edge of the picture: a staff cut out of a system, its barlines cut with it)
     const toTop = ya - up - 1 <= 1 && up > sp * 0.9, toBottom = yb + dn + 1 >= h - 2 && dn > sp * 0.9;
     const shaped = width <= sp * 0.75 && (up < sp * 0.9 || toPrev || toTop || (up > sp * 2.2 && dn < sp * 0.9 && ctx.staffAbove(s))) && (dn < sp * 0.9 || toNext || toBottom || (dn > sp * 2.2 && up < sp * 0.9 && ctx.staffBelow(s)));
-    if (!stemOfHead && shaped) bars.push({ x: cx, w: width, thick: width > sp * 0.3 });
+    if (!stemOfHead && shaped) bars.push({ x: cx, w: width, thick: width > sp * 0.3, run: !!(toPrev || toNext) });
     // (the 'head' whose stem it seemed to be may turn out to be part of a time signature or a clef
     // just after it: decided once those are read)
     else if (shaped && stemOfHead) { pendingBars.push({ x: cx, w: width, thick: width > sp * 0.3, by: heads.filter((hd) => hd.stem && Math.abs(hd.stem.x - cx) < sp * 0.45) }); x = e + 1; continue; }
@@ -2965,6 +2965,28 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     }
     if (joined) prev.push(i); else systems.push([i]);
   });
+  // (a barline goes through every staff of a system — a piano's two hands, the parts of a score: one
+  // read in a single staff only, not running on toward the next, is a chord's stem through the staff,
+  // or a beam's edge; the bar it would make is not there)
+  // (in the other staff, a stroke from its top line to its bottom one at the same place — a barline
+  // not believed there, for a note pressed against it, still says the bar is there)
+  const inkedThrough = (t, x0) => {
+    for (let dx = -Math.round(t.sp * 0.3); dx <= Math.round(t.sp * 0.3); dx++) {
+      const x = Math.round(x0 + dx); if (x < 0 || x >= w) continue;
+      const a = Math.round(yAt(t, 8, x)), z = Math.round(yAt(t, 0, x)); let n = 0;
+      for (let y = a; y <= z; y++) n += B[y * w + x] ? 1 : 0;
+      if (n / (z - a + 1) >= 0.85) return true;
+    }
+    return false;
+  };
+  if (globalThis.__barSys ?? 1) for (const sys of systems) {
+    if (sys.length < 2) continue;
+    for (const i of sys) {
+      const s = read[i], sp2 = s.sp;
+      s.bars = s.bars.filter((b) => b.run || b.x < s.x0 + sp2 * 1.5 || b.x > s.x1 - sp2 * 1.5
+        || sys.some((j) => j !== i && (read[j].bars.some((c) => Math.abs(c.x - b.x) < sp2 * 0.8) || inkedThrough(read[j], b.x))));
+    }
+  }
   // the staves of a system (a piano's two hands) share their key: a staff that found nothing,
   // but saw something like the first sharp or flat, takes the key of the others
   for (const sys of systems) {
