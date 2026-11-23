@@ -1752,7 +1752,10 @@ async function followSalience(L, A, B, onProgress, stop) {
   if (items.pick && best.at && best.at[items.pick] >= 0 && best.at[items.pick] < T[1]) T[0] = best.at[items.pick];
   else if ((globalThis.__entryBar ?? 1) && (q0 % PSTEPS) / PSTEPS > 0.1 && k0 + 3 < T.length) {
     const d = [T[k0 + 2] - T[k0 + 1], T[k0 + 3] - T[k0 + 2]].sort((p, q) => p - q), bd = (d[0] + d[1]) / 2, t0 = T[k0 + 1] - bd;
-    if (bd > 0 && (k0 === 0 || t0 > T[k0 - 1])) T[k0] = Math.max(t0, fr[0].t);
+    // (the bars before it are shared out again below, from where the music begins: it is enough that
+    // this bar begins after that — the follower's guess for them, squeezed, is no bound)
+    const on0 = (globalThis.__entryFix ?? 1) && k0 >= 1 ? (() => { const loud = Math.max(...fr.map((f) => f.rms), 1e-6); return (fr.find((f) => f.rms > loud * (globalThis.__onTh ?? 0.03)) || fr[0]).t; })() : null;
+    if (bd > 0 && (k0 === 0 || t0 > (on0 != null ? on0 + 0.5 : T[k0 - 1]))) T[k0] = Math.max(t0, fr[0].t);
   }
   if (k0 >= 1) {
     const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * (globalThis.__onTh ?? 0.03)) || fr[0]).t - 0.2;
@@ -1761,7 +1764,7 @@ async function followSalience(L, A, B, onProgress, stop) {
     if ((globalThis.__introW ?? 1) && on < T[k0] - 0.5) {
       const ls = L.bars.map((b) => b.len).filter((v) => v > 0).sort((p, q) => p - q), full = ls.length ? ls[ls.length >> 1] : null;
       if (full) {
-        const w = []; for (let k = 0; k < k0; k++) { const v = L.bars[k].len; w.push(v > 0 && v < full * 0.8 ? v / full : 1); }
+        const w = []; for (let k = 0; k < k0; k++) { const v = L.bars[k].len; w.push(v > 0 && v < full * 0.8 && (k === 0 || !(globalThis.__entryFix ?? 1)) ? v / full : 1); }
         const tot = w.reduce((s, v) => s + v, 0);
         if (w.some((v) => v < 1)) { let c = 0; for (let k = 0; k < k0; k++) { T[k] = on + ((T[k0] - on) * c) / tot; c += w[k]; } }
       }
@@ -1772,7 +1775,9 @@ async function followSalience(L, A, B, onProgress, stop) {
   // shared out at an even pace, each bar by how long it is written)
   if ((globalThis.__restRuns ?? 1) && best.at) {
     const ls = L.bars.map((b) => b.len).filter((v) => v > 0).sort((p, q) => p - q), full = ls.length ? ls[ls.length >> 1] : null;
-    const w = L.bars.map((b) => (full && b.len > 0 && b.len < full * 0.8 ? b.len / full : 1)), U = [0]; for (let k = 0; k < nb; k++) U.push(U[k] + w[k]);
+    // (a bar of rests only is a whole bar: the lengths read from its rests are not believed)
+    const hasN = new Set(L.notes.map((n) => n.bar));
+    const w = L.bars.map((b, k) => (full && b.len > 0 && b.len < full * 0.8 && (hasN.has(k) || !(globalThis.__entryFix ?? 1)) ? b.len / full : 1)), U = [0]; for (let k = 0; k < nb; k++) U.push(U[k] + w[k]);
     const s1 = best.sn, ons = []; for (let q = 0; q < s1.length; q++) if (s1[q] && (q === 0 || s1[q - 1] !== s1[q]) && best.at[q] >= 0) { const k = Math.floor(q / PSTEPS); ons.push({ k, u: U[k] + ((q % PSTEPS) / PSTEPS) * w[k], t: best.at[q] }); }
     const minRun = globalThis.__runMin ?? 2;
     for (let i = 0; i + 1 < ons.length; i++) {
