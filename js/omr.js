@@ -2371,6 +2371,8 @@ function readStaff(s, ctx, header) {
         if (merged.some((b) => Math.abs(b.x - vb.x) < sp * 0.9)) continue;
         merged.push({ x: Math.round(vb.x), w: Math.round(vb.w), thick: vb.w > sp * 0.3, vec: true });
       }
+      // (where the PDF drew its barlines, a barline only the picture saw is a stem or a tie's end)
+      if ((globalThis.__vecBarsOnly ?? 1) && V.bars.length >= 2) { const keep = merged.filter((b) => b.vec || V.bars.some((v) => Math.abs(v.x - b.x) < sp * 0.6)); if (keep.length >= 1) merged.splice(0, merged.length, ...keep); }
       merged.sort((a, b) => a.x - b.x);
     }
   }
