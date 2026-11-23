@@ -3711,7 +3711,7 @@ export async function recognise(canvas, opts = {}) {
   let bars = [], meta = [];
   const barSys = [];
   // each line: its own clef, key and time at its start (when they change), and the changes along it
-  let pending = {};
+  let pending = {}, lastNum = null;
   A.systems.forEach((sys, si) => {
     const st = staffIn(sys);
     const b = staffEvents(st, { voices: true });
@@ -3725,6 +3725,21 @@ export async function recognise(canvas, opts = {}) {
     }
     m[0] = { ...head, ...m[0] };
     pending = { ...(b.after || {}) };
+    // (the bar numbers printed over the music: a line that begins in the middle of a bar has its first
+    // barline numbered as the bar before was — that short piece is the end of the bar before)
+    // (the bar numbers printed over the music: a line that begins in the middle of a bar has its first
+    // barline numbered as the bar after the last one numbered before — that short piece is the end
+    // of the bar before)
+    if ((globalThis.__barNums ?? 1) && st.nums && st.nums.length) {
+      const sx = st.startX || st.x0, bx = (st.bars || []).map((q) => q.x).filter((x) => x > sx + st.sp * 1.2).sort((p, q) => p - q);
+      const at = st.nums.filter((q) => q.n > 0 && q.n < 2000 && q.x <= st.x1).map((q) => { if (q.x < sx + st.sp * 2) return { n: q.n, k: 0 }; const j = bx.findIndex((x) => Math.abs(x - q.x) < st.sp * 3); return j >= 0 ? { n: q.n, k: j + 1 } : null; }).filter(Boolean);
+      const f = at[0];
+      if (f && lastNum && f.k === 1 && b.length > 1 && bars.length && !b[0].some((it) => it.multi || it.full) && f.n - lastNum.n === bars.length + f.k - lastNum.idx - 1) {
+        bars[bars.length - 1] = [...bars[bars.length - 1], ...b[0]]; b.shift(); const m0 = m.shift(); m[0] = { ...m0, ...m[0] };
+        for (const q of at) q.k--;
+      }
+      const l = at[at.length - 1]; if (l) lastNum = { n: l.n, idx: bars.length + l.k };
+    }
     bars.push(...b); meta.push(...m); b.forEach(() => barSys.push(si));
   });
   // a bar of several bars' rest becomes that many empty bars
