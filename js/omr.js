@@ -2029,7 +2029,11 @@ function readStaff(s, ctx, header) {
   if (globalThis.__multiAny ?? 1) {
     const xs = [startX, ...merged.map((b) => b.x).filter((x) => x > startX + sp)];
     for (let i = 0; i + 1 < xs.length; i++) {
-      const a = xs[i], z = xs[i + 1], m = (a + z) / 2;
+      let a = xs[i]; const z = xs[i + 1];
+      // (a change of key at the bar's start — after a double barline — is no note in it: the bar is
+      // looked at from where the new key ends)
+      if (globalThis.__multiKey ?? 1) { const kg = signs.find((g) => g.key !== undefined && g.x1 && g.x >= a - sp && g.x < z - sp * 2); if (kg && kg.x1 > a) a = kg.x1; }
+      const m = (a + z) / 2;
       const W = (why) => { if (globalThis.__multiDbg) console.log('DBG multiAny', Math.round(a), Math.round(z), why); };
       if (z - a < sp * 2.5) continue;
       if (heads.some((hd) => hd.cx > a && hd.cx < z)) { W('heads'); continue; }
