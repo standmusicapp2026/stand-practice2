@@ -2177,6 +2177,10 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       if (p.every(Number.isFinite)) { confOut = p.map((v) => 1 - v); riskOut = 'gb'; }
     } catch (err) { console.warn('conf model', err); }
   }
+  // (a note is heard a moment after it is struck — its attack takes a few frames to show: each bar
+  // a touch earlier, as the hand placed none of them)
+  const LEAD = globalThis.__tLead ?? 0.04;
+  if (ai && LEAD > 0 && !(anch && anch.length)) for (let k = 0; k < T.length; k++) if (T[k] != null) T[k] = Math.max(0, T[k] - LEAD);
   return { T, evs, conf: confOut, cost: best.cost, shift: best.shift, pace: best.pace, clef, good: best.heard, how: ai ? 'ai' : 'pitches', risk: riskOut };
 }
 // How sure each bar is, by the evidence: its written notes heard at their places, against the same
