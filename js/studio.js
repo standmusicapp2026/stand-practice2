@@ -394,6 +394,8 @@ function stripLayout(A, W, H, canvas) {
     segs.push(seg);
     const barTime = globalThis.__barTime ?? 1, tSigns = barTime ? (s0.signs || []).filter((g) => g.time && g.time[0] > 0 && g.time[1] > 0) : [];
     for (const g of tSigns) if (g.x < cuts[0] - sp * 0.5) curTime = g.time;
+    // (the time signature at the head of the piece, when none came before)
+    if (barTime && (globalThis.__headTime ?? 1) && !curTime && s0.time && s0.time[0] > 0 && s0.time[1] > 0) curTime = s0.time;
     for (let k = 0; k < cuts.length - 1; k++) {
       const a = cuts[k], b = cuts[k + 1];
       for (const g of tSigns) if (g.x >= a - sp * 0.5 && g.x < b - sp * 0.5) curTime = g.time;
@@ -2030,6 +2032,38 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     const want = ca + (cb - ca) * u; let j = ja; while (j < jb && osC[j] < want) j++;
     return WA * fr[j].t + (1 - WA) * lin;
   };
+  // (bars of rest the others fill: their beats, found where the notes struck fall at a steady,
+  // slowly bending pace — from ta to tb, nb beats each — not just shared out by how much is struck)
+  const BL = globalThis.__beatDP ?? 0;
+  const beatsOf = (k) => { const tl = L.bars[k] && L.bars[k].tl; if (!(tl > 0)) return 0; const q = tl * 4; return Math.abs(q - Math.round(q)) < 0.01 ? Math.round(q) : Math.round(tl * 8); };
+  const beatBars = (ta, tb, bb) => {
+    const N = bb.reduce((a2, v) => a2 + v, 0); if (globalThis.__salDbg) globalThis.__salDbg.push(['beat', ta, tb, bb, L.bars.slice(0, 12).map((b) => b.tl ?? null)]); if (!(BL > 0) || !(N >= 2) || bb.some((v) => !(v > 0)) || !(tb - ta > 1)) return null;
+    const ja = tIdx(ta), jb = tIdx(tb); if (!(jb - ja > N * 4)) return null;
+    const NP = SAL_HI - SAL_LO + 1, env = new Float32Array(jb - ja + 1);
+    for (let j = ja; j <= jb; j++) { let v = 0; for (let p = 0; p < NP; p++) v += fr[j].on[p]; env[j - ja] = v; }
+    const mx = Math.max(...env, 1e-9); for (let j = 0; j < env.length; j++) env[j] /= mx;
+    const P = (jb - ja) / N; let prev = new Map([[0, [0, -1, 0]]]); const hist = [prev];
+    for (let k = 1; k <= N; k++) {
+      const cur = new Map(); let lo = Math.max(1, Math.floor(k * P * 0.75)), hi = Math.min(jb - ja, Math.ceil(k * P * 1.25));
+      if (k === N) lo = hi = jb - ja;
+      for (let p = lo; p <= hi; p++) {
+        let best = null;
+        for (const [q, [sc, , iv]] of prev) {
+          const d = p - q; if (d < P * 0.6 || d > P * 1.5) continue;
+          const pen = iv ? BL * Math.log(d / iv) ** 2 : BL * 0.5 * Math.log(d / P) ** 2, s = sc + env[p] - pen * 10;
+          if (!best || s > best[0]) best = [s, q, d];
+        }
+        if (best) cur.set(p, best);
+      }
+      if (!cur.size) return null; prev = cur; hist.push(cur);
+    }
+    const pos = [jb - ja]; let p = jb - ja;
+    for (let k = N; k > 0; k--) { const h = hist[k].get(p); if (!h) return null; p = h[1]; pos.push(p); }
+    pos.reverse(); const out = []; let c = 0;
+    for (const v of bb) { out.push(c === 0 ? ta : fr[ja + pos[c]].t); c += v; }
+    if (globalThis.__salDbg) globalThis.__salDbg.push(['beatOut', +(fr[1].t - fr[0].t).toFixed(4), out.map((v) => +v.toFixed(2)), pos.map((p) => +fr[ja + p].t.toFixed(2))]);
+    return out;
+  };
   // (the bars of rest before the soloist's first note)
   const items = midiSteps(L, clef, 0), q0 = items.findIndex(Boolean), k0 = Math.floor(q0 / PSTEPS);
   // (the bar the soloist comes in during, with rest before the first note: its start is not heard in
@@ -2041,12 +2075,20 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     if (bd > 0 && (k0 === 0 || t0 > (on0 != null ? on0 + 0.5 : T[k0 - 1]))) T[k0] = Math.max(t0, fr[0].t);
   }
   if (k0 >= 1) {
-    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * 0.08) || fr[0]).t - 0.2;
+    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * (globalThis.__onLoud ?? 0.08)) || fr[0]).t - (globalThis.__onBack ?? 0.2);
     // (each bar its share by how long it is written: a short first bar — a pickup — a short share)
     const ls = L.bars.map((b) => b.len).filter((v) => v > 0).sort((p, q) => p - q), full = ls.length ? ls[ls.length >> 1] : null;
     const w = []; for (let k = 0; k < k0; k++) { const v = L.bars[k].len; w.push((globalThis.__introW ?? 1) && full && k === 0 && v > 0 && v < full * 0.8 ? v / full : 1); }
     const tot = w.reduce((a2, v) => a2 + v, 0);
-    if (on < T[k0] - 0.5 && !(anch && anch.some((a) => a.k <= k0))) { let c = 0; for (let k = 0; k < k0; k++) { T[k] = warpAt(on, T[k0], c / tot); c += w[k]; } }
+    if (on < T[k0] - 0.5 && !(anch && anch.some((a) => a.k <= k0))) { const bt = beatBars(on, T[k0], w.map((v, k) => beatsOf(k) ? Math.max(1, Math.round(beatsOf(k) * v)) : 0)); let c = 0; for (let k = 0; k < k0; k++) { T[k] = bt ? bt[k] : warpAt(on, T[k0], c / tot); c += w[k]; } }
+    // (the bars of rest far quicker than the bars played after them: the recording began partway in,
+    // the first of them before it — back from the entry at the pace that follows, none before the start)
+    const IP = globalThis.__introPace ?? 0;
+    if (IP > 0 && k0 + 4 < T.length && !(anch && anch.some((a) => a.k <= k0))) {
+      const d = []; for (let q = k0; q < k0 + 4; q++) d.push(T[q + 1] - T[q]); d.sort((p, q) => p - q);
+      const bd = (d[1] + d[2]) / 2, have = (T[k0] - T[0]) / Math.max(1e-6, tot);
+      if (bd > 0.3 && have < bd * IP) { let c = tot; for (let k = 0; k < k0; k++) { T[k] = Math.max(fr[0].t, T[k0] - c * bd); c -= w[k]; } }
+    }
   }
   // (bars where the page has only rests — the piano's interludes — evenly between the bars around them
   // that have notes, or that were put by hand: nothing on the page says otherwise, and the pace holds)
@@ -2077,8 +2119,9 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
         // (each its share by how long it is written, when the time signatures say: a bar of 1/4 a third of one of 3/4)
         const wl = []; for (let q = i + 1; q < k; q++) wl.push(L.bars[q].tl);
         const byTime = (globalThis.__restTime ?? 1) && wl.every((v) => v > 0) && wl.some((v) => v !== wl[0]), tot = byTime ? wl.reduce((a2, v) => a2 + v, 0) : n;
+        const bt = beatBars(ta, tb, wl.map((_, m) => beatsOf(i + 1 + m)));
         let cum = 0;
-        for (let q = i + 2; q < k; q++) { cum += byTime ? wl[q - i - 2] : 1; T[q] = warpAt(ta, tb, cum / tot); }
+        for (let q = i + 2; q < k; q++) { cum += byTime ? wl[q - i - 2] : 1; T[q] = bt ? bt[q - i - 1] : warpAt(ta, tb, cum / tot); }
       }
       i = k;
     }
