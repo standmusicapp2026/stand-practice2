@@ -1772,7 +1772,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
 // (a page of more than one staff — a piano's, both hands — is played as written: another key, much less
 // likely than for a singer or a B-flat instrument)
 let shExtra = 0, onDense = 0;   // (onDense: a piano's running notes, see pacedSalience)
-const shPen = (sh) => (sh === 0 ? 0 : 0.01 + shExtra + (sh <= -12 ? (globalThis.__octPen ?? 0.035) * Math.floor(-sh / 12) : 0) + (sh >= 24 ? 0.03 : 0));
+const shPen = (sh) => (sh === 0 ? 0 : 0.01 + shExtra + (sh % 12 && !shExtra ? (globalThis.__transPen ?? 0) : 0) + (sh <= -12 ? (globalThis.__octPen ?? 0.035) * Math.floor(-sh / 12) : 0) + (sh >= 24 ? 0.03 : 0));
 // how much of what sounds is what the page has at that moment, with the bars at times T (from each
 // small frame of the recording: the page's notes there, how strongly they sound; a moment of the
 // recording loud with music outside the bars counts as nothing heard)
@@ -1842,6 +1842,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // (bars put right by hand: the key already found kept, every pace tried through those bars)
   const anch = opts.anchors && opts.anchors.length ? opts.anchors : null;
   if (anch && opts.shift !== undefined && opts.shift !== null) coarse.length = 0;
+  if (Array.isArray(globalThis.__shifts)) coarse.splice(0, coarse.length, ...globalThis.__shifts);
   for (const shift of coarse) {
     const sn = midiSteps(L, clef, shift);
     const r = pacedSalience(sn, nb, fr, 2.2, onw);
@@ -1850,8 +1851,9 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
   }
   first.sort((p, q) => p.c - q.c);
+  if (globalThis.__salDbg) globalThis.__salDbg.push(['first', first.slice(0, 10).map((q) => [q.shift, +q.c.toFixed(4)])]);
   const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 5).map((q) => q.shift), 0])];
-  let all = null; const cands = [];
+  let all = null, best0 = null; const cands = [];
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
     // (seconds a bar: from a quick two-in-a-bar to a very slow song, seven seconds a bar)
@@ -1861,16 +1863,22 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
       // how much is what the page has there — and loud music outside the bars counts against)
       if (r && (globalThis.__judgeTime ?? 1)) r.agree = agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5;
+      if (globalThis.__salDbg && r) globalThis.__salDbg.push(['agree', shift, pace, +(r.agree ?? 0).toFixed(4)]);
       // (a pace the playing did not keep: the bars found are much longer or shorter than it — the page
       // stretched or squeezed to fit — counts against)
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
       if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
       if (r) cands.push({ T: r.T, agree: r.agree });
       if (r && (!best || ((globalThis.__judgeTime ?? 1) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
+      if (r && shift === 0 && (globalThis.__judgeTime ?? 1) && (!best0 || r.agree > best0.agree)) best0 = { ...r, shift, pace, sn };
     }
     await new Promise((r2) => setTimeout(r2, 0));
     if (stop && stop()) return null;
   }
+  // (another key only when it fits clearly better than the page as written: an instrument really in
+  // another key — a B-flat clarinet, a horn in F, a singer lower — fits it by 0.17 or more on recordings
+  // moved to those keys; a part that only seemed to fit elsewhere, among others playing, by 0.09 at most)
+  if ((globalThis.__keyMargin ?? 0.12) > 0 && best && best0 && best.shift !== 0 && Math.abs(best.shift) >= (globalThis.__keyMarginMin ?? 5) && best.agree - best0.agree < (globalThis.__keyMargin ?? 0.12)) best = best0;
   // (the key by the page's notes heard step by step; then, in that key, the pace by how well every
   // moment of the playing fits)
   if (all && all.length) {
