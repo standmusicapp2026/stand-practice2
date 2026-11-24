@@ -2075,7 +2075,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     if (bd > 0 && (k0 === 0 || t0 > (on0 != null ? on0 + 0.5 : T[k0 - 1]))) T[k0] = Math.max(t0, fr[0].t);
   }
   if (k0 >= 1) {
-    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * (globalThis.__onLoud ?? 0.08)) || fr[0]).t - (globalThis.__onBack ?? 0.2);
+    const loud = Math.max(...fr.map((f) => f.rms), 1e-6), on = (fr.find((f) => f.rms > loud * (globalThis.__onLoud ?? 0.03)) || fr[0]).t - (globalThis.__onBack ?? 0.2);
     // (each bar its share by how long it is written: a short first bar — a pickup — a short share)
     const ls = L.bars.map((b) => b.len).filter((v) => v > 0).sort((p, q) => p - q), full = ls.length ? ls[ls.length >> 1] : null;
     const w = []; for (let k = 0; k < k0; k++) { const v = L.bars[k].len; w.push((globalThis.__introW ?? 1) && full && k === 0 && v > 0 && v < full * 0.8 ? v / full : 1); }
