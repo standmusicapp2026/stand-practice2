@@ -343,6 +343,8 @@ function stripLayout(A, W, H, canvas) {
     return out;
   };
   let numOff = null;
+  // (the time signature in force, from line to line: how long each bar is written, in whole notes)
+  let curTime = null;
   A.systems.forEach((sys, si) => {
     const sts = sys.map((i) => A.staves[i]);
     const evAll = sts.map((st, k) => pcsOf(st, k, sts.length));
@@ -390,8 +392,12 @@ function stripLayout(A, W, H, canvas) {
     }
     const seg = { x: x0, y: top, w: x1 - x0, h: bot - top, sx, staff: s0.top - top, sX0: Math.max(0, s0.x0 - x0), sX1: Math.min(x1 - x0, s0.x1 - x0), sys: si };
     segs.push(seg);
+    const barTime = globalThis.__barTime ?? 1, tSigns = barTime ? (s0.signs || []).filter((g) => g.time && g.time[0] > 0 && g.time[1] > 0) : [];
+    for (const g of tSigns) if (g.x < cuts[0] - sp * 0.5) curTime = g.time;
     for (let k = 0; k < cuts.length - 1; k++) {
       const a = cuts[k], b = cuts[k + 1];
+      for (const g of tSigns) if (g.x >= a - sp * 0.5 && g.x < b - sp * 0.5) curTime = g.time;
+      const tl = curTime ? curTime[0] / curTime[1] : null;
       if (b - a < sp * 1.5) continue;
       // (past the line's last barline, a short stretch with no note on any staff: the next line's clef,
       // key or time shown in advance, not a bar)
@@ -408,7 +414,7 @@ function stripLayout(A, W, H, canvas) {
       const mm = !inBar.length && multis.find((m) => m.x >= a && m.x < b);
       if (mm) {
         const bi0 = bars.length;
-        for (let q = 0; q < mm.n; q++) bars.push({ x0: sx + (a - x0) + ((b - a) * q) / mm.n, x1: sx + (a - x0) + ((b - a) * (q + 1)) / mm.n, seg: segs.length - 1, rests: 1, restFirst: true, mm: { n: mm.n, i: q } });
+        for (let q = 0; q < mm.n; q++) bars.push({ x0: sx + (a - x0) + ((b - a) * q) / mm.n, x1: sx + (a - x0) + ((b - a) * (q + 1)) / mm.n, seg: segs.length - 1, rests: 1, restFirst: true, mm: { n: mm.n, i: q }, ...(tl ? { tl } : {}) });
         // (what the other staves play meanwhile, in the bar it falls in)
         evAll.forEach((evs, si2) => { if (si2 === 0) return; for (const e of evs) if (e.x >= a && e.x < b) events.push({ bar: bi0 + Math.min(mm.n - 1, Math.floor(((e.x - a) / (b - a)) * mm.n)), x: sx + (e.x - x0), pcs: [...e.pcs], ms: [...e.ms] }); });
         continue;
@@ -416,7 +422,7 @@ function stripLayout(A, W, H, canvas) {
       // (how long the bar is by what is written in it, in whole notes: a whole-bar rest says only "a
       // whole bar", so none)
       const inL = lens.filter((q) => q.x >= a && q.x < b), blen = inL.length && !inL.some((q) => q.full) ? inL.reduce((s2, q) => s2 + q.t, 0) : null;
-      bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1, rests: r0.length, restFirst: firstR < firstN - sp * 0.3, len: blen });
+      bars.push({ x0: sx + (a - x0), x1: sx + (b - x0), seg: segs.length - 1, rests: r0.length, restFirst: firstR < firstN - sp * 0.3, len: blen, ...(tl ? { tl } : {}) });
       const groups = [];
       for (const h of inBar) { const g = groups[groups.length - 1]; if (g && Math.abs(g.x - h.x) < sp * 0.5) g.ps.push({ p: h.p, acc: h.acc }); else groups.push({ x: h.x, ps: [{ p: h.p, acc: h.acc }] }); }
       for (const g of groups) notes.push({ bar: bi, x: sx + (g.x - x0), ps: g.ps });
@@ -1640,6 +1646,14 @@ function midiSteps(L, clef, shift) {
     });
   }
   out.xAt = xAt; out.pick = pick;
+  // (bars written much shorter than the others — a bar of 1/4 among bars of 3/4: their steps may be
+  // passed three at a time)
+  const tls = L.bars.map((b) => b.tl).filter((v) => v > 0).sort((p, q) => p - q);
+  if ((globalThis.__shortBars ?? 1) && tls.length >= nb * 0.8) {
+    const md = tls[tls.length >> 1];
+    const sh = L.bars.map((b) => (b.tl > 0 && b.tl < md * 0.6 ? 1 : 0));
+    if (sh.some(Boolean)) out.short = sh;
+  }
   return out;
 }
 // The page through the recording (dynamic time warping with the pace held, as pacedAlign): at each
@@ -1698,18 +1712,22 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
     pen[i] = r;
   }
   const HOLD = globalThis.__hold ?? 0.6;
-  let D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
+  let D3 = new Float32Array(W).fill(1e9), D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
   const P = new Uint8Array((n + 1) * W);
+  const shB = sn.short || null;
   for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
   const pk = sn.pick || 0;   // (a pickup: the playing may begin at its notes, the bar's start unplayed)
   for (let i = 1; i <= n; i++) {
     const ri = rows[i - 1], rp = i >= 2 ? rows[i - 2] : null, pi = pen[i - 1], pp = i >= 2 ? pen[i - 2] : null;
+    // (three steps at once, in a bar written short)
+    const r3 = shB && i >= 3 && shB[Math.floor((i - 1) / PSTEPS)] && shB[Math.floor((i - 3) / PSTEPS)] && !pi && !pp && !pen[i - 3] ? rows[i - 3] : null;
     D0.fill(1e9, 0, 1);
     for (let j = 1; j <= m; j++) {
       const c = ri[j - 1] + (pi ? pi[j - 1] : 0);
       let v = D1[j - 1] + c, how = 1;
       if (pk && i === pk + 1) { const v6 = (j - 1) * SKIP * 0.5 + c; if (v6 < v) { v = v6; how = 6; } }
       if (rp) { const v2 = D2[j - 1] + rp[j - 1] + (pp ? pp[j - 1] : 0) + c; if (v2 < v) { v = v2; how = 2; } }
+      if (r3) { const v7 = D3[j - 1] + r3[j - 1] + rp[j - 1] + c; if (v7 < v) { v = v7; how = 7; } }
       if (j >= 2) { const v3 = D1[j - 2] + ri[j - 2] + c; if (v3 < v) { v = v3; how = 3; } }
       // (a note held three times as long: a pause, the end of a phrase)
       if (j >= 3) { const v4 = D1[j - 3] + ri[j - 3] + ri[j - 2] + c + 0.35; if (v4 < v) { v = v4; how = 4; } }
@@ -1717,7 +1735,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
       if (HOLD > 0 && j >= 2) { const v5 = D0[j - 1] + c + HOLD; if (v5 < v) { v = v5; how = 5; } }
       D0[j] = v; P[i * W + j] = how;
     }
-    const t = D2; D2 = D1; D1 = D0; D0 = t;
+    const t = D3; D3 = D2; D2 = D1; D1 = D0; D0 = t;
   }
   let bj = m, bc = 1e9; for (let j = 1; j <= m; j++) { const v = D1[j] + (m - j) * SKIP * 0.5; if (v < bc) { bc = v; bj = j; } }
   const at = new Float64Array(n).fill(-1), sc = new Float32Array(n);
@@ -1725,7 +1743,7 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
   while (i > 0 && j > 0) {
     at[i - 1] = fr[j - 1].t; sc[i - 1] = rows[i - 1][j - 1];
     const h = P[i * W + j];
-    if (h === 1) { i--; j--; cells++; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; cells += 2; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; cells += 2; } else if (h === 5) { j--; cells++; } else if (h === 6) { cells++; j--; i = 0; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; cells += 3; }
+    if (h === 1) { i--; j--; cells++; } else if (h === 7) { for (let q = 2; q <= 3; q++) { at[i - q] = fr[j - 1].t; sc[i - q] = rows[i - q][j - 1]; } i -= 3; j--; cells += 3; } else if (h === 2) { at[i - 2] = fr[j - 1].t; sc[i - 2] = rows[i - 2][j - 1]; i -= 2; j--; cells += 2; } else if (h === 3) { at[i - 1] = fr[j - 2].t; i--; j -= 2; cells += 2; } else if (h === 5) { j--; cells++; } else if (h === 6) { cells++; j--; i = 0; } else { at[i - 1] = fr[j - 3].t; i--; j -= 3; cells += 3; }
   }
   // (the cost of each moment of the path: the same measure whatever the pace — a slow pace, its page
   // squeezed into few moments, is not cheaper for it)
@@ -2048,7 +2066,11 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       }
       if (i >= 0 && k - i > 2 && k < nb) {
         const ta = T[i + 1], tb = T[k], n = k - i - 1;
-        for (let q = i + 2; q < k; q++) T[q] = warpAt(ta, tb, (q - i - 1) / n);
+        // (each its share by how long it is written, when the time signatures say: a bar of 1/4 a third of one of 3/4)
+        const wl = []; for (let q = i + 1; q < k; q++) wl.push(L.bars[q].tl);
+        const byTime = (globalThis.__restTime ?? 1) && wl.every((v) => v > 0) && wl.some((v) => v !== wl[0]), tot = byTime ? wl.reduce((a2, v) => a2 + v, 0) : n;
+        let cum = 0;
+        for (let q = i + 2; q < k; q++) { cum += byTime ? wl[q - i - 2] : 1; T[q] = warpAt(ta, tb, cum / tot); }
       }
       i = k;
     }
