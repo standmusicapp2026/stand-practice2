@@ -2038,12 +2038,16 @@ function readStaff(s, ctx, header) {
       if ((x1 - x0) < sp * 0.9) continue;
       const top = pAt(s, y0, (x0 + x1) / 2), bot = pAt(s, y1, (x0 + x1) / 2);
       let name = null;
-      if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4) name = 'treble';
+      // (a treble clef's curl rises a little over the staff and its tail hangs below it: a 'tr' over a
+      // note with its stem, as tall, stands far above and ends inside the staff)
+      if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4 && !((globalThis.__trebleSpan ?? 1) && (top > 12 || bot > -1.2) && k.d > 0.2)) name = 'treble';
       // (a clef changed along the line is printed smaller: a clear likeness, still most of the staff high)
       else if ((globalThis.__smallTreble ?? 1) && k.cls === 'treble' && k.d < 0.28 && top > 7.4 && bot < 2.2 && (y1 - y0) > sp * 2.6) name = 'treble';
       else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22) && !((globalThis.__bassStem ?? 1) && k.d > 0.22 && stemIn(x0, x1, y0, y1))) name = 'bass';
       // (a grace note with its slash, an accidental before it, has a bass clef's outline but not its two dots)
-      else if (k.cls === 'alto') { const mid = (top + bot) / 2; name = cLine(mid); }
+      // (a C clef is wide, even printed small along the line: a barline with a sharp beside it, as
+      // tall, has its bars but not its width)
+      else if (k.cls === 'alto' && !((globalThis.__cWide ?? 1) && (x1 - x0) < sp * 1.45)) { const mid = (top + bot) / 2; name = cLine(mid); }
       if (!name) continue;
       for (const q of all) used.add(q);
       for (const q of parts) if (q.w < sp * 0.7 && q.h < sp * 0.7) used.add(q);
