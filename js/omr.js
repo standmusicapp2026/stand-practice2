@@ -1762,6 +1762,19 @@ function readStaff(s, ctx, header) {
       if (nx && nx.acc === undefined && (globalThis.__twinAcc ?? 1)) nx.acc = 1;
     }
   }
+  // a filled 'head' with no stem, a thick band of ink running on through it both ways: a beam (where
+  // it crosses a staff line, a photo's blur makes a blob of it)
+  if (globalThis.__beamBlob ?? 1) {
+    const rowRun = (y, xa, xb) => { let n = 0; for (let x = Math.round(xa); x <= Math.round(xb); x++) if (x >= 0 && x < w && y >= 0 && y < h && C[y * w + x]) n++; return n; };
+    heads = heads.filter((hd) => {
+      if (hd.stem || hd.hollow) return true;
+      const yc = Math.round(hd.cy), L = hd.left ?? hd.cx - sp * 0.65, R = hd.right ?? hd.cx + sp * 0.65;
+      let band = 0;
+      for (let y = yc - Math.round(sp * 0.4); y <= yc + Math.round(sp * 0.4); y++) if (rowRun(y, L - sp * 1.2, L - 1) > sp * 1.0 && rowRun(y, R + 1, R + sp * 1.2) > sp * 1.0) band++;
+      if (band >= sp * 0.25) { if (TR) trk(1731, [hd]); return false; }
+      return true;
+    });
+  }
   // a 'head' inside an accidental is the bowl of a flat or the middle of a sharp
   const accBoxes = compsC.filter((c) => isAcc.has(c.id));
   heads = heads.filter((hd) => ![...accBoxes, ...accBoxesW].some((c) => hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1) && !((globalThis.__accEdge ?? 1) && accBoxesW.some((c) => hd.acc === undefined && hd.cx > c.x0 - sp * 0.35 && hd.cx <= c.x0 && hd.cy > c.y0 && hd.cy < c.y1)));
