@@ -3256,7 +3256,32 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     staves = staves.map((s) => {
       const xm = Math.round((s.x0 + s.x1) / 2); const q = alt.find((a) => (Math.abs(a.top - s.top) < s.sp * 0.4 && Math.abs(a.bottom - s.bottom) < s.sp * 0.4) || ((globalThis.__altAt ?? 1) && Math.abs(a.L[0][xm] - s.L[0][xm]) < s.sp * 0.8 && Math.abs(a.L[4][xm] - s.L[4][xm]) < s.sp * 0.8));
       if (globalThis.__stfDbg) globalThis.__stfDbg.push({ s: [s.top, s.x0, s.x1, xm].map(Math.round), q: q && [q.top, q.x0, q.x1].map(Math.round), aL: alt.map((a) => [Math.round(a.L[0][xm]), Math.round(a.L[4][xm])]), sL: [Math.round(s.L[0][xm]), Math.round(s.L[4][xm])] });
-      if (!q || q.x1 - q.x0 < s.x1 - s.x0 + s.sp * 3 || q.x0 > s.x0 + s.sp || q.x1 < s.x1 - s.sp) return s;
+      if (!q || q.x1 - q.x0 < s.x1 - s.x0 + s.sp * 3 || q.x0 > s.x0 + s.sp || q.x1 < s.x1 - s.sp) {
+        // (the lighter reading has this staff where the first one lost it — a faint stretch of the
+        // line in a photo's shade — but not all of it: the two together, piece by piece)
+        // (or it has it whole, a line lower or higher: the short one took a ledger line or a beam for
+        // its top or bottom line — the one whose five lines have more ink along them, where both are)
+        if (globalThis.__altShift ?? 1) {
+          const cover = (st, x0, x1) => { let n = 0, tot = 0; for (let x = Math.round(x0); x <= Math.round(x1); x += 2) for (let k = 0; k < 5; k++) { const y = Math.round(st.L[k][x]); tot++; let any = 0; for (let d = -1; d <= 1; d++) { const yy = y + d; if (yy >= 0 && yy < h) any |= B[yy * w + x]; } n += any; } return tot ? n / tot : 0; };
+          const a = alt.find((a) => a.x0 <= s.x0 + s.sp && a.x1 >= s.x1 - s.sp && a.x1 - a.x0 > s.x1 - s.x0 + s.sp * 6 && Math.abs(Math.abs(a.L[0][xm] - s.L[0][xm]) - s.sp) < s.sp * 0.3 && Math.abs(Math.abs(a.L[4][xm] - s.L[4][xm]) - s.sp) < s.sp * 0.3 && Math.abs(a.sp - s.sp) < s.sp * 0.1);
+          if (a && cover(a, s.x0, s.x1) >= cover(s, s.x0, s.x1)) return a;
+        }
+        if (globalThis.__altJoin ?? 1) {
+          const pieces = alt.filter((a) => {
+            if (a.x1 - a.x0 < s.sp * 6) return false;
+            const lo = Math.max(a.x0, s.x0), hi = Math.min(a.x1, s.x1);
+            // (on the same lines: where both are, or at the nearer ends)
+            const xa = hi > lo ? Math.round((lo + hi) / 2) : Math.round(a.x1 < s.x0 ? s.x0 : s.x1), xb = hi > lo ? xa : Math.round(a.x1 < s.x0 ? a.x1 : a.x0);
+            return [0, 4].every((k) => Math.abs(a.L[k][xb] - s.L[k][xa]) < s.sp * 0.5) && (a.x0 < s.x0 - s.sp * 3 || a.x1 > s.x1 + s.sp * 3);
+          });
+          if (pieces.length) {
+            const sam = [...s.samples, ...pieces.flatMap((a) => a.samples.filter((q) => q.xc < s.x0 - s.sp || q.xc > s.x1 + s.sp))].sort((a, b2) => a.xc - b2.xc);
+            const j = makeStaff(sam, B, w, h, T, sub);
+            if (j.x1 - j.x0 > s.x1 - s.x0 + s.sp * 3 && Math.abs(j.sp - s.sp) < s.sp * 0.1) return j;
+          }
+        }
+        return s;
+      }
       return q;
     });
     // a staff only the lighter reading finds, where nothing else is, the same size as the others
