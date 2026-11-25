@@ -3273,6 +3273,18 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
           const cover = (st, x0, x1) => { let n = 0, tot = 0; for (let x = Math.round(x0); x <= Math.round(x1); x += 2) for (let k = 0; k < 5; k++) { const y = Math.round(st.L[k][x]); tot++; let any = 0; for (let d = -1; d <= 1; d++) { const yy = y + d; if (yy >= 0 && yy < h) any |= B[yy * w + x]; } n += any; } return tot ? n / tot : 0; };
           const a = alt.find((a) => a.x0 <= s.x0 + s.sp && a.x1 >= s.x1 - s.sp && a.x1 - a.x0 > s.x1 - s.x0 + s.sp * 6 && Math.abs(Math.abs(a.L[0][xm] - s.L[0][xm]) - s.sp) < s.sp * 0.3 && Math.abs(Math.abs(a.L[4][xm] - s.L[4][xm]) - s.sp) < s.sp * 0.3 && Math.abs(a.sp - s.sp) < s.sp * 0.1);
           if (a && cover(a, s.x0, s.x1) >= cover(s, s.x0, s.x1)) return a;
+          // (a mere piece of staff, found lines off or the wrong size, where the lighter reading has a
+          // whole staff the size of the others: that one)
+          if (globalThis.__altPiece ?? 1) {
+            const H0 = staves.map((q) => q.bottom - q.top).sort((p2, q2) => p2 - q2), hm0 = H0[H0.length >> 1];
+            const W0 = staves.map((q) => q.x1 - q.x0).sort((p2, q2) => p2 - q2), wm0 = W0[W0.length >> 1];
+            if (s.x1 - s.x0 < wm0 * 0.4) {
+              const b2 = alt.find((a) => a.x0 <= s.x0 + s.sp && a.x1 >= s.x1 - s.sp && a.x1 - a.x0 > wm0 * 0.8 && Math.abs(a.bottom - a.top - hm0) < hm0 * 0.08
+                && a.L[0][xm] < s.L[4][xm] + s.sp * 0.5 && a.L[4][xm] > s.L[0][xm] - s.sp * 0.5
+                && !staves.some((o) => o !== s && o.L[0][xm] < a.L[4][xm] + o.sp && o.L[4][xm] > a.L[0][xm] - o.sp));
+              if (b2) return b2;
+            }
+          }
         }
         if (globalThis.__altJoin ?? 1) {
           const pieces = alt.filter((a) => {
