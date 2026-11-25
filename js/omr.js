@@ -2002,9 +2002,15 @@ function readStaff(s, ctx, header) {
       const stemIn = (a0, a1, b0, b1) => { let best = 0; for (let x = Math.round(a0); x <= Math.round(a1); x++) { let run = 0; for (let y = Math.round(b0); y <= Math.round(b1); y++) { if (C[y * w + x]) { run++; if (run > best) best = run; } else run = 0; } } return best > sp * 2.2; };
       // (but a bass clef's two dots, either side of its line, are not a note's)
       const inkDots = () => { const tY = yAt(s, 8, x1), bY = yAt(s, 0, x1); const full = (x) => { for (let y = Math.round(tY) + 1; y < bY - 1; y++) if (!C[y * w + x]) return false; return true; };
-        const dot = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = x1 + 1; x <= Math.round(x1 + sp * 0.8); x++) { if (full(x)) continue; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) if (C[yy * w + x]) n++; } return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
-        const gap = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = x1 + 1; x <= Math.round(x1 + sp * 0.8); x++) { if (full(x)) continue; if (C[y * w + x]) n++; } return n; };
-        return dot(7) && dot(5) && gap(6) <= sp * 0.5; };
+        const at = (xa, xb) => {
+          const dot = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = xa; x <= xb; x++) { if (full(x)) continue; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) if (C[yy * w + x]) n++; } return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
+          const gap = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = xa; x <= xb; x++) { if (full(x)) continue; if (C[y * w + x]) n++; } return n; };
+          return dot(7) && dot(5) && gap(6) <= sp * 0.5; };
+        if (at(x1 + 1, Math.round(x1 + sp * 0.8))) return true;
+        // (the dots touching the staff lines can be read as part of the clef: then they are its right edge,
+        // with nothing between them on the 4th line)
+        if (!(globalThis.__dotsIn ?? 1) || x1 - x0 < sp * 1.8) return false;
+        return at(Math.round(x1 - sp * 0.5), x1); };
       // (a bass clef drawn thinner than the fonts': where a bass clef stands, with its two dots, and
       // like one at least loosely)
       if ((globalThis.__bassGeo ?? 1) && !(['treble', 'bass', 'alto'].includes(k.cls) && k.d <= 0.38)) {
@@ -2013,7 +2019,7 @@ function readStaff(s, ctx, header) {
         if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ bassGeo: x0, tp: +tp.toFixed(1), bp: +bp.toFixed(1), lb: lb && +lb.d.toFixed(3) });
         if (tp > 7 && tp < 10.3 && bp > 0.3 && bp < 3.6 && x1 - x0 >= sp * 1.2 && x1 - x0 <= sp * 2.8 && lb && lb.d < 0.35 && inkDots()) k = { cls: 'bass', d: 0.3 };
       }
-      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ cb: k.cls === 'alto' ? cBars() : null, cs: k.cls === 'alto' ? +cSymOf(x0, x1, y0, y1).toFixed(2) : null, ni: noteIn(x0, x1, y0, y1), cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
+      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ idt: k.cls === 'bass' ? inkDots() : null, x1r: Math.round(x1), np: parts.length, cb: k.cls === 'alto' ? cBars() : null, cs: k.cls === 'alto' ? +cSymOf(x0, x1, y0, y1).toFixed(2) : null, ni: noteIn(x0, x1, y0, y1), cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
       // a note inside it is believed over a weak likeness
 
