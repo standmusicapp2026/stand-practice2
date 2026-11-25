@@ -1730,6 +1730,38 @@ function readStaff(s, ctx, header) {
       if (k.d < 0.33) { hd.acc = 2; isAcc.add(c.id); }
     }
   }
+  // a 'head' with a stem down and a second stroke beside it, as long, close and parallel: the two
+  // strokes of a sharp, its middle blurred into a blob (a slur through it, a photo)
+  if (globalThis.__twinStem ?? 1) {
+    const colRun = (x, y0, y1) => { let best = 0, run = 0; for (let y = Math.round(y0); y <= Math.round(y1); y++) { const on = y >= 0 && y < h && x > 0 && x < w - 1 && (C[y * w + x] || C[y * w + x - 1] || C[y * w + x + 1]); run = on ? run + 1 : 0; best = Math.max(best, run); } return best; };
+    const twins = [];
+    heads = heads.filter((hd) => {
+      const st = hd.stem; if (!st || st.up || hd.hollow) return true;
+      const xs = Math.round(st.x), y0 = hd.cy + sp * 0.9, y1 = hd.cy + sp * 2.0;
+      if (colRun(xs, y0, y1) < sp * 0.9 || colRun(xs, y0, hd.cy + sp * 3.2) > sp * 1.9) return true;
+      for (let d = Math.round(sp * 0.45); d <= Math.round(sp * 0.9); d++) for (const sg of [1, -1]) {
+        const x2 = xs + sg * d;
+        if (colRun(x2, y0, y1) < sp * 0.9) continue;
+        // (apart: white between the two strokes, and no other note's stem there)
+        const xm = Math.round((xs + x2) / 2); let wh = 0; for (let y = Math.round(y0); y <= Math.round(y1); y++) if (y >= 0 && y < h && !C[y * w + xm]) wh++;
+        if (wh < (y1 - y0) * 0.6) continue;
+        if (heads.some((q) => q !== hd && q.stem && Math.abs(q.stem.x - x2) < sp * 0.3)) continue;
+        // (and the strokes end soon: a stem runs on to its beam or flag, a sharp's strokes stop)
+        if (colRun(x2, y0, hd.cy + sp * 3.2) > sp * 1.9) continue;
+        // (nor a barline, from the top of the staff to its foot)
+        if (colRun(x2, s.top, s.bottom) > (s.bottom - s.top) * 0.85) continue;
+        if (TR) trk(1730, [hd]);
+        twins.push({ cy: hd.cy, x1: Math.max(xs, x2) });
+        return false;
+      }
+      return true;
+    });
+    // (the sharp's note: just after it, at its middle — a little below the blob, the sign's upper bar)
+    for (const t of twins) {
+      const nx = heads.filter((q) => q.left - t.x1 > -sp * 0.2 && q.left - t.x1 < sp * 1.6 && Math.abs(q.cy - (t.cy + sp)) < sp * 0.6).sort((p, q) => p.left - q.left)[0];
+      if (nx && nx.acc === undefined && (globalThis.__twinAcc ?? 1)) nx.acc = 1;
+    }
+  }
   // a 'head' inside an accidental is the bowl of a flat or the middle of a sharp
   const accBoxes = compsC.filter((c) => isAcc.has(c.id));
   heads = heads.filter((hd) => ![...accBoxes, ...accBoxesW].some((c) => hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1) && !((globalThis.__accEdge ?? 1) && accBoxesW.some((c) => hd.acc === undefined && hd.cx > c.x0 - sp * 0.35 && hd.cx <= c.x0 && hd.cy > c.y0 && hd.cy < c.y1)));
