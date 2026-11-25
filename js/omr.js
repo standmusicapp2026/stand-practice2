@@ -1676,7 +1676,7 @@ function readStaff(s, ctx, header) {
   // before each head instead of at whole shapes
   const slurAcc = globalThis.__slurAcc ?? 1;
   for (const hd of heads) {
-    if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp * 3 && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * (globalThis.__accWinY ?? 3)) globalThis.__accWin.push(['HEAD', Math.round(hd.cx), Math.round(hd.cy), Math.round(hd.left), hd.acc]);
+    if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp * 3 && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * (globalThis.__accWinY ?? 3)) globalThis.__accWin.push(['HEAD', Math.round(hd.cx), Math.round(hd.cy), Math.round(hd.left), hd.acc, hd.stem ? [Math.round(hd.stem.x), Math.round(hd.stem.top), Math.round(hd.stem.bot), hd.stem.up] : null, Math.round(hd.right ?? -1)]);
     if (hd.acc !== undefined || hd.left < startX) continue;
     let bestK = null;
     for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ...(globalThis.__wideSharp ?? 1 ? [['sharp', 1.25, 1.9, 1.9]] : []), ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8], ...(globalThis.__tallFlat ?? 1 ? [['flat', 1.0, 2.7, 0.8]] : [])]) {
@@ -1700,9 +1700,9 @@ function readStaff(s, ctx, header) {
         const se = globalThis.__stemEdge ?? 1;
         // (a 'note' sitting at the sign itself, its stroke read as a stem, is part of the sign)
         const atSign = (q) => (globalThis.__atSign ?? 1) && q.cy > y0 && q.cy < y1 && (((q.hollow || !q.stem) && q.cx > x0 - sp * 0.4 && q.cx < x1) || (q.cx > x0 + sp * 0.15 && q.cx < x1 - sp * 0.15));
-        if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -1 : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
+        if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -Math.max(1, sp * (globalThis.__stemEdgeSp ?? 0.15)) : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
         // (nor starting inside the head of the note before: its edge, and a slur or stem by it, can look like a sign)
-        if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * 0.2 && q.cy < y1 - sp * 0.2)) continue;
+        if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * (globalThis.__winHeadIn ?? -0.2) && q.cy < y1 - sp * (globalThis.__winHeadIn ?? -0.2))) continue;
         // (nor the flag of the note just before, hanging off its stem)
         // (a beamed note has no flag: there, only a box reaching up or down to its beam)
         if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
