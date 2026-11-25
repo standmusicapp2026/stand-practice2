@@ -1855,7 +1855,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   first.sort((p, q) => p.c - q.c);
   if (globalThis.__salDbg) globalThis.__salDbg.push(['first', first.slice(0, 10).map((q) => [q.shift, +q.c.toFixed(4)])]);
   const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 5).map((q) => q.shift), 0])];
-  let all = null, best0 = null; const cands = [];
+  let all = null, best0 = null; const cands = [], byShift = new Map();
   for (const shift of shifts) {
     const sn = midiSteps(L, clef, shift);
     // (seconds a bar: from a quick two-in-a-bar to a very slow song, seven seconds a bar)
@@ -1873,6 +1873,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       if (r) cands.push({ T: r.T, agree: r.agree });
       if (r && (!best || ((globalThis.__judgeTime ?? 1) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
       if (r && shift === 0 && (globalThis.__judgeTime ?? 1) && (!best0 || r.agree > best0.agree)) best0 = { ...r, shift, pace, sn };
+      if (r && (globalThis.__judgeTime ?? 1) && (!byShift.has(shift) || r.agree > byShift.get(shift).agree)) byShift.set(shift, { ...r, shift, pace, sn });
     }
     await new Promise((r2) => setTimeout(r2, 0));
     if (stop && stop()) return null;
@@ -1880,7 +1881,14 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // (another key only when it fits clearly better than the page as written: an instrument really in
   // another key — a B-flat clarinet, a horn in F, a singer lower — fits it by 0.17 or more on recordings
   // moved to those keys; a part that only seemed to fit elsewhere, among others playing, by 0.09 at most)
-  if ((globalThis.__keyMargin ?? 0.12) > 0 && best && best0 && best.shift !== 0 && Math.abs(best.shift) >= (globalThis.__keyMarginMin ?? 5) && best.agree - best0.agree < (globalThis.__keyMargin ?? 0.12)) best = best0;
+  // (a far key that is a near one an octave away — a singer a semitone lower, heard an octave down
+  // among the piano's notes — is that near key when it fits about as well)
+  const KM = globalThis.__keyMargin ?? 0.12;
+  if (KM > 0 && best && Math.abs(best.shift) >= (globalThis.__keyMarginMin ?? 5)) {
+    const oct = (globalThis.__keyOct ?? 1) ? [best.shift - 12, best.shift + 12].find((q) => q !== 0 && Math.abs(q) < (globalThis.__keyMarginMin ?? 5) && byShift.has(q)) : undefined;
+    if (oct !== undefined && best.agree - byShift.get(oct).agree < KM) best = byShift.get(oct);
+    else if (best0 && best.agree - best0.agree < KM) best = best0;
+  }
   // (the key by the page's notes heard step by step; then, in that key, the pace by how well every
   // moment of the playing fits)
   if (all && all.length) {

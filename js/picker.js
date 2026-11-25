@@ -86,7 +86,7 @@ async function showPage() {
   $('#pkPrev').disabled = PK.page === 0; $('#pkNext').disabled = PK.page >= PK.doc.pages - 1;
   // what was chosen on this page before (several pages can be chosen, one after another)
   const was = PK.picks.get(PK.page);
-  PK.box = null; PK.sel = was ? was.sel.slice() : []; PK.trim = was ? { ...was.trim } : null; PK.cut = was && was.cut ? { ...was.cut } : null; PK.lines = null; $('#pkHandleL').hidden = $('#pkHandleR').hidden = $('#pkHandleT').hidden = $('#pkHandleB').hidden = true;
+  PK.box = null; PK.sel = was ? was.sel.slice() : []; PK.trim = was ? { ...was.trim } : null; PK.cut = was && was.cut ? { ...was.cut } : null; PK.lines = null; $('#pkAll').hidden = true; $('#pkHandleL').hidden = $('#pkHandleR').hidden = $('#pkHandleT').hidden = $('#pkHandleB').hidden = true;
   syncDone();
   const stage = $('#pkStage'), r = stage.getBoundingClientRect();
   const [pw, ph] = PK.doc.sizes[PK.page];
