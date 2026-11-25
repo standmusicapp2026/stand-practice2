@@ -4076,11 +4076,15 @@ export async function recogniseBest(canvas, opts = {}) {
   let c2 = null;
   if (soft > 1.9) try { sharpNext = 1; c2 = await recognise(canvas, opts); } catch (err) { console.warn(err); } finally { sharpNext = 0; }
   const score = (r) => r.fitRead + Math.min(r.notes.length, 200) * 0.0004;
-  if (globalThis.__rbDbg) globalThis.__rbFits = { soft, a: a && a.fitRead, b: b && b.fitRead, c2: c2 && c2.fitRead };
+  if (globalThis.__rbDbg) globalThis.__rbFits = { soft, a: a && [a.fitRead, a.notes.length, a.analysis.staves.length], b: b && [b.fitRead, b.notes.length, b.analysis.staves.length], c2: c2 && [c2.fitRead, c2.notes.length, c2.analysis.staves.length] };
+  // (a reading that lost a whole line of music — fewer staves and fewer notes than another — is not
+  // the better one, however well the notes it kept fit their bars)
+  const nS = (r) => (r && r.analysis && r.analysis.staves ? r.analysis.staves.length : 0);
+  const lost = (r, o) => (globalThis.__lostStaff ?? 1) && r && o && nS(r) < nS(o) && r.notes.length < o.notes.length;
   let best = a;
-  for (const r of [b, c2]) if (r && (!best || score(r) > score(best) + 0.04)) best = r;
+  for (const r of [b, c2]) if (r && (!best || (score(r) > score(best) + 0.04 && !lost(r, best)) || lost(best, r))) best = r;
   // (clearly soft: the crisper reading is the likelier one, unless it is clearly worse)
-  if (c2 && soft > 2.3 && best !== c2 && score(c2) >= score(best) - 0.03) best = c2;
+  if (c2 && soft > 2.3 && best !== c2 && score(c2) >= score(best) - 0.03 && !lost(c2, best)) best = c2;
   return best;
 }
 let sharpNext = 0, softNext = 0;
