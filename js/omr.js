@@ -2374,6 +2374,8 @@ function readStaff(s, ctx, header) {
       { let bw = -1; for (let y = c.y0; y <= c.y1; y++) { let n = 0; for (let x = c.x0; x <= c.x1; x++) n += Os.img[y * w + x]; if (n > bw) { bw = n; cyH = y; } } }
       if (!band(cy) || ctx.staffOf(cy, cx) !== s) continue;
       if (heads.some((hd) => Math.abs(hd.cx - cx) < sp * 0.8 && Math.abs(hd.cy - cy) < sp * 0.8)) continue;
+      // (nor the curl of a note's flag, blurred into a blob, just right of the end of that note's stem)
+      if ((globalThis.__graceFlag ?? 1) && heads.some((hd) => hd.stem && hd.stem.end != null && cx > hd.stem.x && cx - hd.stem.x < sp * 1.4 && Math.abs(cyH - hd.stem.end) < sp * 1.6)) continue;
       // (not inside a normal head's shape, a beam, a clef or a letter: the ink around stays small)
       // (measured without thin curves: a slur may start at the grace note)
       const idD = ctx.labD[Math.round(cyH) * w + Math.round(cx)]; const grp = idD >= 0 ? ctx.compsD[idD] : null;
