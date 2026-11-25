@@ -1771,7 +1771,7 @@ function readStaff(s, ctx, header) {
       const yc = Math.round(hd.cy), L = hd.left ?? hd.cx - sp * 0.65, R = hd.right ?? hd.cx + sp * 0.65;
       let band = 0;
       for (let y = yc - Math.round(sp * 0.4); y <= yc + Math.round(sp * 0.4); y++) if (rowRun(y, L - sp * 1.2, L - 1) > sp * 1.0 && rowRun(y, R + 1, R + sp * 1.2) > sp * 1.0) band++;
-      if (band >= sp * 0.25) { if (TR) trk(1731, [hd]); return false; }
+      if (band >= sp * (globalThis.__beamBand ?? 0.25)) { if (TR) trk(1731, [hd]); return false; }
       return true;
     });
   }
@@ -4118,6 +4118,9 @@ export async function recogniseBest(canvas, opts = {}) {
   for (const r of [b, c2]) if (r && (!best || (score(r) > score(best) + 0.04 && !lost(r, best)) || lost(best, r))) best = r;
   // (clearly soft: the crisper reading is the likelier one, unless it is clearly worse)
   if (c2 && soft > 2.3 && best !== c2 && score(c2) >= score(best) - 0.03 && !lost(c2, best)) best = c2;
+  // (softish, and the crisper reading finds clearly more notes — open heads a blur had filled or lost —
+  // and fits about as well: it is the likelier one)
+  if ((globalThis.__crispMore ?? 1) && c2 && soft > 1.9 && best !== c2 && c2.notes.length >= best.notes.length * 1.03 && c2.fitRead >= best.fitRead - 0.06 && !lost(c2, best)) best = c2;
   return best;
 }
 let sharpNext = 0, softNext = 0;
