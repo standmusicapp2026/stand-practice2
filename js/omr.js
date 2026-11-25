@@ -2013,7 +2013,7 @@ function readStaff(s, ctx, header) {
         if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ bassGeo: x0, tp: +tp.toFixed(1), bp: +bp.toFixed(1), lb: lb && +lb.d.toFixed(3) });
         if (tp > 7 && tp < 10.3 && bp > 0.3 && bp < 3.6 && x1 - x0 >= sp * 1.2 && x1 - x0 <= sp * 2.8 && lb && lb.d < 0.35 && inkDots()) k = { cls: 'bass', d: 0.3 };
       }
-      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
+      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ cb: k.cls === 'alto' ? cBars() : null, cs: k.cls === 'alto' ? +cSymOf(x0, x1, y0, y1).toFixed(2) : null, ni: noteIn(x0, x1, y0, y1), cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
       // a note inside it is believed over a weak likeness
 
@@ -2027,7 +2027,10 @@ function readStaff(s, ctx, header) {
         if (likeT && tp > 8.4 && tp < 10.3 && bp < -1.2 && bp > -3.3 && hq > 5.2 && hq < 6.3 && wq > 2.2 && wq < 3.3) k = { cls: 'treble', d: 0.29, loose: true };
       }
       if (!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) continue;
-      const trustBass = ((globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots()) || ((globalThis.__cBars ?? 1) && k.cls === 'alto' && k.d <= 0.38 && cBars());
+      const trustBass = ((globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots()) || ((globalThis.__cBars ?? 1) && k.cls === 'alto' && k.d <= 0.38 && cBars())
+        // (a C clef blurred in a photo, its two bars run into one: mirrored above and below its middle,
+        // and the staff's height, is still one)
+        || ((globalThis.__cSymTrust ?? 1) && k.cls === 'alto' && k.d <= 0.38 && (y1 - y0) > sp * 2.8 && pAt(s, y0, (x0 + x1) / 2) > 6.5 && pAt(s, y1, (x0 + x1) / 2) < 1.5 && cSymOf(x0, x1, y0, y1) >= 0.85);
       if (ctx.dbg && k.cls === 'bass') (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, bassTrust: trustBass, x1, y7: Math.round(yAt(s, 7, x1)), y5: Math.round(yAt(s, 5, x1)) });
       // (a shape cut out from a barline is believed only as a clear treble clef or a bass clef with its dots)
       if (c.cut && !trustBass && !(k.cls === 'treble' && k.d < 0.3)) continue;
@@ -2963,7 +2966,11 @@ function readHeader(s, comps, ctx, prev, heads) {
         mgs.push(k.margin); prevX = k.x0; cnt++; lx = k.x1; cur = k.x0 + sp * 0.55; if (k.loose && !(k.ld < 0.09 && k.lm > 0.03)) nLoose++; else if (!nLoose) { exact = cnt; lxExact = lx; }
       }
       // (handwritten signs, known only loosely, count when there are several in their order)
-      if (nLoose && cnt < 3) { cnt = exact; lx = lxExact; }
+      // (but a second sign only loosely like one, after a first that is clearly the sign, both where
+      // the key's first two stand: two — a photo's blur, not a hand)
+      const headBy = (sg) => heads.some((hd) => hd.left - sg.x1 > -sp * 0.2 && hd.left - sg.x1 < sp * 0.9 && Math.abs(hd.p - sg.p) <= 1);
+      const pairOk = (globalThis.__looseSecond ?? 1) && !ctx.keyOnly && cnt === 2 && exact === 1 && firstD <= 0.33 && firstSign && !headBy(firstSign);
+      if (nLoose && cnt < 3 && !pairOk) { cnt = exact; lx = lxExact; }
       // (one sign right against a note at about its height is that note's accidental, not a key)
       // (nor is a lone 'sign' that is, whole, a time signature's C or cut C)
       if (cnt === 1 && firstSign && (globalThis.__keyNotC ?? 1)) {
@@ -3124,6 +3131,7 @@ function readHeader(s, comps, ctx, prev, heads) {
       timeAlt = { u: ups.map((q) => q.slice(0, 3)), l: dns.map((q) => q.slice(0, 3)) };
     } else if (!time) end = endKey;
   }
+  if (globalThis.__keyLog) globalThis.__keyLog.push({ y: Math.round(s.top), FINAL: kind * n, clefName });
   return { clef: clefName, key: kind * n, keyHint, time, timeAlt, end: Math.max(end, s.x0 + sp * 0.5), explicitClef: !!clef };
 }
 
