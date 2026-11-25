@@ -1961,7 +1961,10 @@ function readStaff(s, ctx, header) {
       // stands that far above and below the staff)
       if ((globalThis.__looseTreble ?? 1) && k.cls === 'treble' && k.d > 0.38 && k.d < 0.48) {
         const tp = pAt(s, y0, (x0 + x1) / 2), bp = pAt(s, y1, (x0 + x1) / 2), wq = (x1 - x0) / sp, hq = (y1 - y0) / sp;
-        if (tp > 8.4 && tp < 10.3 && bp < -1.2 && bp > -3.3 && hq > 5.2 && hq < 6.3 && wq > 2.2 && wq < 3.3) k = { cls: 'treble', d: 0.29, loose: true };
+        // (and like a treble clef at least loosely, with no note inside: a chord with its accidental and
+        // its stems stands as tall and as wide)
+        const likeT = !(globalThis.__looseTrebleLz ?? 1) || (lz.slice(0, 3).some((q) => q.cls === 'treble') && !noteIn(x0, x1, y0, y1));
+        if (likeT && tp > 8.4 && tp < 10.3 && bp < -1.2 && bp > -3.3 && hq > 5.2 && hq < 6.3 && wq > 2.2 && wq < 3.3) k = { cls: 'treble', d: 0.29, loose: true };
       }
       if (!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) continue;
       const trustBass = ((globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots()) || ((globalThis.__cBars ?? 1) && k.cls === 'alto' && k.d <= 0.38 && cBars());
