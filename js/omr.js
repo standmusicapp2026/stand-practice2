@@ -403,6 +403,21 @@ function findStaves(b, w, h, sp, T, gaps = false) {
   return out;
 }
 function makeStaff(samples, b, w, h, T, gaps = false) {
+  // (a staff's five lines are evenly spaced: a line read off that spacing — notes sitting on it, a
+  // beam along it, make it a thick band whose middle is not the line's — is put where the other four
+  // say it is)
+  if ((globalThis.__lineFit ?? 1) && samples.length) {
+    // (the spacing there: of the pieces of staff nearest along the line — a photographed page is not
+    // evenly scaled from one side to the other)
+    const gapAt = (i) => { const gs = []; for (let j = Math.max(0, i - 2); j <= Math.min(samples.length - 1, i + 2); j++) for (let k = 1; k < 5; k++) gs.push(samples[j].ys[k] - samples[j].ys[k - 1]); gs.sort((a, c) => a - c); return gs[gs.length >> 1]; };
+    samples = samples.map((q, i) => {
+      const G = gapAt(i), TOL = G * (globalThis.__lineFitTol ?? 0.15);
+      const a = q.ys.map((y, k) => y - k * G).sort((u, v) => u - v)[2];
+      const res = q.ys.map((y, k) => y - (a + k * G));
+      if (!res.some((r) => Math.abs(r) > TOL) || res.filter((r) => Math.abs(r) > TOL).length > 1) return q;
+      return { ...q, ys: q.ys.map((y, k) => (Math.abs(res[k]) > TOL ? a + k * G : y)) };
+    });
+  }
   // each line's height at every x: straight between samples, level beyond them
   const L = [0, 1, 2, 3, 4].map(() => new Float32Array(w));
   const xs = samples.map((q) => q.xc);
@@ -3455,6 +3470,17 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       const col = systems.map((sy) => (sy.length === nParts ? read[sy[k]] : null));
       for (let si = 0; si < col.length; si++) {
         const st = col[si]; if (!st) continue;
+        // (a key unlike the lines before and after, whose keys agree — whatever their clefs, which a
+        // cello part changes from line to line: misread. At the first or last line, the same count of
+        // the other accidental than the two next to it, which agree: two sharps read as two flats)
+        if (globalThis.__keyOnly ?? 1) {
+          const kOf = (x) => (x ? x.key || 0 : null), kk = kOf(st), kp = kOf(col[si - 1]), kn = kOf(col[si + 1]);
+          let fix = null;
+          if (kp !== null && kn !== null && kp === kn && kk !== kp) fix = kp;
+          else if (kp === null && kn !== null && kOf(col[si + 2]) === kn && kk === -kn && kk !== 0) fix = kn;
+          else if (kn === null && kp !== null && kOf(col[si - 2]) === kp && kk === -kp && kk !== 0) fix = kp;
+          if (fix !== null) { st.key = fix; if (st.head) st.head.key = fix; st.startFixed = true; }
+        }
         const nb = [col[si - 1], col[si + 1], col[si - 2], col[si + 2]].filter(Boolean);
         const agree = (x, y) => x.clef === y.clef && (x.key || 0) === (y.key || 0);
         // (the lines around: two next to it that agree, or three of the four nearest)
