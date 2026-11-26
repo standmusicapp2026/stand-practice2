@@ -410,6 +410,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 mp.event = { [weak self] m in self?.send("standMediaEvent", m) }
                 mp.play(storeID: body["id"] as? String ?? "", title: body["title"] as? String ?? "")
             case "musicCmd": music?.command(body)
+            case "chapters":
+                // a YouTube video's chapters, for its moments (StandYouTubeFind.swift)
+                let rid = body["rid"] as? Int ?? 0
+                StandYouTubeFind.chapters(body["id"] as? String ?? "") { [weak self] items in self?.send("standMediaEvent", ["op": "chapters", "rid": rid, "items": items]) }
             case "check":
                 // Find a score: which of these free scores are really there, as PDFs (asked for their
                 // heading only), so only those that open are shown

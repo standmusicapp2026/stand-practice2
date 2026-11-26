@@ -11473,6 +11473,23 @@ $('#mpKeep').addEventListener('click', () => {
   db.put('scores', V.score); keepSync();
   if (!$('#panel-listen').hidden) renderListen();
 });
+// A YouTube video divided into chapters — a piece's movements: they become its moments, named, the
+// first time it plays here (only when it has none of its own yet; asked for once per video)
+const YTCH = { asked: new Set(), rid: 0, wait: new Map() };
+function ytChapters() {
+  const key = MP.key; if (!key || !key.startsWith('yt:') || YTCH.asked.has(key) || !MOM.all) return;
+  YTCH.asked.add(key);
+  if (MOM.all['ch:' + key] || (MOM.all[key] || []).length) return;
+  if (!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media)) return;
+  const rid = ++YTCH.rid;
+  YTCH.wait.set(rid, (items) => {
+    MOM.all['ch:' + key] = 1;
+    const list = (items || []).filter((m) => m && m.t >= 0 && m.name).map((m) => ({ t: +m.t, name: String(m.name).slice(0, 40) }));
+    if (list.length >= 2 && !(MOM.all[key] || []).length) { MOM.all[key] = list; toast(tr('The video’s movements are kept as its moments: tap one to go there.'), 3600); }
+    momentsSave(); if (MP.key === key) momentsSync();
+  });
+  NATIVE.standMedia.postMessage({ op: 'chapters', rid, id: key.slice(3) });
+}
 function mediaStatus(s) {
   if (!s || (s.kind !== 'youtube' && s.kind !== 'music')) return;
   if (!MP.on) mediaPillShow(true);
@@ -11481,7 +11498,7 @@ function mediaStatus(s) {
   MP.t = s.t || 0; MP.key = s.id ? (s.kind === 'music' ? 'am:' : 'yt:') + s.id : '';
   MP.d = s.d || 0; MP.playing = !!s.playing; MP.speed = s.speed || 1; MP.at = performance.now();
   mpLine();
-  momentsSync(); keepSync();
+  momentsSync(); keepSync(); ytChapters();
   const p = $('#mediaPill');
   // (Apple Music plays at its own speed: no speed button for it)
   p.classList.toggle('music', s.kind === 'music');
@@ -11585,6 +11602,7 @@ window.standMediaEvent = (m) => {
   else if (m.op === 'musicFailed') musicFailed(m);
   else if (m.op === 'status') mediaStatus(m);
   else if (m.op === 'found') ytFound(m);
+  else if (m.op === 'chapters') { const f = YTCH.wait.get(m.rid); if (f) { YTCH.wait.delete(m.rid); f(m.items || []); } }
   else if (m.op === 'checked') { const f = FREE.wait.get(m.rid); if (f) { FREE.wait.delete(m.rid); f(m.ok || {}); } }
 };
 // In a browser: the same player in a frame that floats over the page. It is moved by any of its dark
