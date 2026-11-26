@@ -2152,7 +2152,8 @@ async function layout(fade) {
     prefetch(token);   // queued now, so it comes straight after these and before anything else
     const stale = idx.map((i, k) => staleFor(i, pageKey(i, made[k].iw, made[k].ih).key));
     const quick = await Promise.all(proms.map((p, k) => (stale[k] ? Promise.race([p, new Promise((r) => setTimeout(() => r(null), 30))]) : p)));
-    if (token !== layoutToken) return;
+    // (the score closed meanwhile — back to the library while its pages were drawn: nothing to lay out)
+    if (token !== layoutToken || !V.score || !V.doc) return;
     // (a drawing let go before it was shown has no size: drawn again)
     const canvases = quick.map((c, k) => (c && c.width ? c : null) || stale[k]);
     // a drawing stopped on the way (very quick turning): asked for again
