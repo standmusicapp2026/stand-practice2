@@ -9282,6 +9282,7 @@ function fillKeySelects() {
   $('#keySel').value = S.key; $('#sysSel').value = S.system;
 }
 function updateTunerSetup() {
+  { const c = $('#refChipVal'); if (c) c.textContent = String(S.ref); }
   tuner.ref = S.ref; tuner.key = S.key; tuner.system = S.system; tuner.long = S.instrument === 'bass';
   drone.ref = S.ref; drone.refresh();
   scale.ref = S.ref;
@@ -9306,6 +9307,8 @@ function updateTunerSetup() {
   }
 }
 holdRepeat($('#refUp'), () => { S.ref = clamp(S.ref + 1, 400, 466); updateTunerSetup(); saveSettings(); });
+// (the iPhone on its side: the reference A as one chip — each tap the next usual one: 440, 441, 442, 443, 415)
+$('#refChip').addEventListener('click', () => { const seq = [440, 441, 442, 443, 415]; const i = seq.indexOf(S.ref); S.ref = seq[(i + 1) % seq.length]; updateTunerSetup(); saveSettings(); });
 holdRepeat($('#refDown'), () => { S.ref = clamp(S.ref - 1, 400, 466); updateTunerSetup(); saveSettings(); });
 $('#sysSel').addEventListener('change', (e) => { S.system = e.target.value; saveSettings(); updateTunerSetup(); });
 $('#keySel').addEventListener('change', (e) => { S.key = +e.target.value; saveSettings(); updateTunerSetup(); });
