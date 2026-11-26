@@ -2423,14 +2423,24 @@ function readStaff(s, ctx, header) {
     const { Os } = ctx;
     const ws = heads.filter((hd) => !hd.hollow && hd.wRow).map((hd) => hd.right - hd.left + 1).sort((a, b2) => a - b2);
     const headW = ws.length >= 3 ? ws[ws.length >> 1] : 0;
-    for (const c of Os.comps) {
+    for (let c of Os.comps) {
+      // (a slur starting at the grace note touches its head: the head alone, without thin curves)
+      if ((globalThis.__graceSlur ?? 1) && c.w > sp * 0.95 && c.w < sp * 1.9 && c.h >= sp * 0.3 && c.h <= sp * 1.3 && ctx.labD) {
+        let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
+        for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) { const i = y * w + x; if (Os.img[i] && ctx.labD[i] >= 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+        if (x1 >= 0 && x1 - x0 + 1 <= sp * 0.95 && x1 - x0 + 1 >= sp * 0.5) c = { ...c, x0, x1, y0, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+      }
       const GD = globalThis.__graceDbg, cx = (c.x0 + c.x1) / 2, cy = (c.y0 + c.y1) / 2;
       if (GD && c.h > sp * 0.2 && band(cy)) GD.push({ x: Math.round(cx), y: Math.round(cy), w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2) });
-      if (c.h < sp * 0.3 || c.h > sp * 1.2 || c.w < sp * 0.5 || c.w > sp * 0.95 || c.x0 < startX || c.x1 > s.x1) continue;
+      // (as wide as a grace head can be: a little under the page's own heads, whatever their size)
+      const gMax = (globalThis.__graceWide ?? 1) && headW ? Math.max(sp * 0.95, Math.min(sp * 1.12, headW * 0.78)) : sp * 0.95;
+      if (c.h < sp * 0.3 || c.h > sp * 1.2 || c.w < sp * 0.5 || c.w > gMax || c.x0 < startX || c.x1 > s.x1) continue;
       // the middle of the head: its widest row (a flag or a ledger line may hang on)
       let cyH = cy;
       { let bw = -1; for (let y = c.y0; y <= c.y1; y++) { let n = 0; for (let x = c.x0; x <= c.x1; x++) n += Os.img[y * w + x]; if (n > bw) { bw = n; cyH = y; } } }
       if (!band(cy) || ctx.staffOf(cy, cx) !== s) continue;
+      // (not the curl of a clef changed along the line)
+      if ((globalThis.__graceClef ?? 1) && signs.some((g) => g.clef && cx > g.x - sp * 0.3 && cx < (g.x1 ?? g.x + sp * 2.5) + sp * 0.3)) continue;
       if (heads.some((hd) => Math.abs(hd.cx - cx) < sp * 0.8 && Math.abs(hd.cy - cy) < sp * 0.8)) continue;
       // (nor the curl of a note's flag, blurred into a blob, just right of the end of that note's stem)
       if ((globalThis.__graceFlag ?? 1) && heads.some((hd) => hd.stem && hd.stem.end != null && cx > hd.stem.x && cx - hd.stem.x < sp * 1.4 && Math.abs(cyH - hd.stem.end) < sp * 1.6)) continue;
@@ -2438,7 +2448,19 @@ function readStaff(s, ctx, header) {
       // (measured without thin curves: a slur may start at the grace note)
       const idD = ctx.labD[Math.round(cyH) * w + Math.round(cx)]; const grp = idD >= 0 ? ctx.compsD[idD] : null;
       if (grp && (grp.h > sp * 4.2 || grp.w > sp * 2.4)) continue;
-      const st = stemOf(C, w, h, { cx, cy: cyH, p: 0 }, (c.w / 2) * 0.95, sp * 0.75);
+      let st = stemOf(C, w, h, { cx, cy: cyH, p: 0 }, (c.w / 2) * 0.95, sp * 0.75);
+      // (the stem standing just off the head's edge)
+      // (a grace note's flag hugs its stem, which then looks too thick: a plain upright run from the
+      // head's right edge up, or its left edge down)
+      if (!st && (globalThis.__graceEdge ?? 1)) {
+        const runV = (x, y0, dir) => { let y = Math.round(y0), last = y, gap = 0; while (y > 0 && y < h - 1 && Math.abs(y - y0) < sp * 4) { if (C[y * w + x]) { last = y; gap = 0; } else if (++gap > 2) break; y += dir; } return Math.abs(last - y0); };
+        let bst = null;
+        for (const [xa, xb, dir] of [[c.x1 - Math.round(sp * 0.3), c.x1 + Math.round(sp * 0.1), -1], [c.x0 - Math.round(sp * 0.1), c.x0 + Math.round(sp * 0.3), 1]])
+          for (let x = xa; x <= xb; x++) { const len = runV(x, cyH + dir * sp * 0.25, dir) + sp * 0.25; if (!bst || len > bst.len) bst = { x, len, end: cyH + dir * len, up: dir < 0 }; }
+        // (a sharp or a natural has two such uprights side by side: a grace note's stem stands alone)
+        const twin = bst && [-1, 1].some((sd) => { for (let d = Math.round(sp * 0.2); d <= Math.round(sp * 0.75); d++) { const x = bst.x + sd * d; if (runV(x, cyH + (bst.up ? -1 : 1) * sp * 0.25, bst.up ? -1 : 1) >= sp * 1.1 || runV(x, cyH, bst.up ? 1 : -1) >= sp * 1.1) return true; } return false; });
+        if (bst && bst.len >= sp * 1.6 && !twin) st = bst;
+      }
       if (GD) GD.push({ x: Math.round(cx), st: st && +(st.len / sp).toFixed(2) });
       if (!st || st.len < sp * 1.3 || st.len > sp * 3.4) continue;
       const next = heads.filter((hd) => hd.cx > cx + sp * 0.6 && hd.cx < cx + sp * 3.2).sort((a, b2) => a.cx - b2.cx)[0];
