@@ -398,6 +398,10 @@ function findStaves(b, w, h, sp, T, gaps = false) {
       const keep = sam.filter((q) => Math.abs(mid(q) - med) < Math.min(l.sp, s.sp) * 0.5);
       if (keep.length >= 2) { const j = makeStaff(keep, b, w, h, T, gaps); if (l.mixed && s.mixed) j.mixed = true; out[out.length - 1] = j; continue; }
     }
+    // (a 'staff' of two strong pieces against one read all along from many weaker ones: the long one —
+    // the two strong pieces may be a row of ledger lines over high notes read as the top line)
+    const thin = (a, c) => (globalThis.__thinStaff ?? 1) && !a.mixed && c.mixed && a.samples.length <= 2 && c.samples.length >= 8 && c.x1 - c.x0 > (a.x1 - a.x0) * 2.5;
+    if (l && s.top < l.bottom + s.sp * 0.5 && (thin(l, s) || thin(s, l))) { if (thin(l, s)) out[out.length - 1] = s; continue; }
     if (l && s.top < l.bottom + s.sp * 0.5) { if ((l.mixed && !s.mixed) || (!!l.mixed === !!s.mixed && (strongN(s) > strongN(l) || (strongN(s) === strongN(l) && s.samples.length > l.samples.length)))) out[out.length - 1] = s; continue; } out.push(s);
   }
   return out;
@@ -1721,8 +1725,24 @@ function readStaff(s, ctx, header) {
         // (nor the flag of the note just before, hanging off its stem)
         // (a beamed note has no flag: there, only a box reaching up or down to its beam)
         if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
-        const k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+        let k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
         if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2), x0, x1, y0, y1]);
+        // (a slur crossing the top of a flat's stem, or the top of a sharp — its box then cut at the
+        // window's top: the sign is the box without the slur's band on top)
+        const trimF = cls === 'flat' && !(k.cls === cls && k.d < 0.34) && y1 - y0 > sp * 2.6;
+        const trimS = cls === 'sharp' && cutK && y0 <= ya && y1 < yb && !(k.cls === cls && k.d < (globalThis.__cutD ?? 0.22));
+        if ((globalThis.__accTrim ?? 1) && (trimF || trimS)) {
+          for (let t = Math.round(sp * 0.15); t <= Math.round(sp * 0.8) && y1 - y0 - t >= sp * (cls === 'flat' ? 2.2 : 2.3); t += Math.max(1, Math.round(sp * 0.1))) {
+            let a0 = Infinity, a1 = -1;
+            for (let y = y0 + t; y <= y1; y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (C[y * w + xx]) { if (xx < a0) a0 = xx; if (xx > a1) a1 = xx; }
+            if (a1 - a0 < sp * 0.35) continue;
+            // (no other note's head or stem in what is left: a note and its stem make a 'flat' too)
+            if (heads.some((q) => q !== hd && ((q.cx > a0 - sp * 0.3 && q.cx < a1 + sp * 0.3 && q.cy > y0 + t - sp * 0.3 && q.cy < y1 + sp * 0.3) || (q.stem && q.stem.x >= a0 - 2 && q.stem.x <= a1 + 2 && q.stem.top < y1 && q.stem.bot > y0 + t)))) continue;
+            const k2 = classify(shapeOf(C, w, a0, y0 + t, a1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+            if (k2.cls === cls && k2.d < (cls === 'flat' ? (globalThis.__accTrimD ?? 0.25) : 0.3) && (k.cls !== cls || k2.d < k.d || cutK)) k = { ...k2, box: [a0, a1, y0 + t, y1] };
+          }
+          if (k.box) { [x0, x1, y0, y1] = k.box; cutK = false; }
+        }
         if (k.cls === cls && k.d < (cutK ? (globalThis.__cutD ?? 0.22) : cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
       }
     }
