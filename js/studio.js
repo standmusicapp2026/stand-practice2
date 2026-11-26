@@ -1852,6 +1852,17 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, 2.2, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
     if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
   }
+  // (a quick piece cannot be followed at that pace: then the keys are tried at quicker ones)
+  for (const pace of [1.2, 0.8]) {
+    if (first.length || coarse.length < 2 || !(globalThis.__coarseFit ?? 1)) break;
+    for (const shift of coarse) {
+      const sn = midiSteps(L, clef, shift);
+      const r = pacedSalience(sn, nb, fr, pace, onw);
+      if (r) first.push({ shift, c: (globalThis.__firstAgree ?? 1) ? -(agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5) : r.cost + shPen(shift) });
+      if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, +pace.toFixed(2), +r.cost.toFixed(4), +r.heard.toFixed(3)]);
+      if (first.length % 6 === 0) { await new Promise((r2) => setTimeout(r2, 0)); if (stop && stop()) return null; }
+    }
+  }
   first.sort((p, q) => p.c - q.c);
   if (globalThis.__salDbg) globalThis.__salDbg.push(['first', first.slice(0, 10).map((q) => [q.shift, +q.c.toFixed(4)])]);
   const shifts = anch && opts.shift !== undefined && opts.shift !== null ? [opts.shift] : [...new Set([...first.slice(0, globalThis.__nShift ?? 5).map((q) => q.shift), 0])];
