@@ -900,6 +900,30 @@ async function addPdf(data, name, meta, opt = {}) {
   await db.put('files', file); await db.put('scores', score);
   return score;
 }
+// Photos or pictures brought in (from Photos, Files, another app): they open as they are, as a PDF
+// would — no scanning, cropping or cleaning. (The scanner's pages still go through the review.)
+// Each picture is turned upright as the camera held it, and made no bigger than the screen needs.
+async function photoPage(b) {
+  try {
+    const bm = await createImageBitmap(b, { imageOrientation: 'from-image' });
+    const k = Math.min(1, 3200 / Math.max(bm.width, bm.height));
+    if (k >= 1 && /jpe?g|png/i.test(b.type || '')) { bm.close && bm.close(); return b; }
+    const c = document.createElement('canvas'); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+    c.getContext('2d').drawImage(bm, 0, 0, c.width, c.height); bm.close && bm.close();
+    const out = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9)); c.width = c.height = 0;
+    return out || b;
+  } catch { return b; }
+}
+async function addPhotosDirect(blobs, name) {
+  toast(blobs.length > 1 ? `Adding ${blobs.length} pictures…` : 'Adding the picture…', 60000);
+  try {
+    const pages = []; for (const b of blobs) pages.push(await photoPage(b));
+    const sc = await addImages(pages, name, { nameTitle: true });
+    await refreshLibrary(); setHomeTab('mine');
+    toast('Added: ' + label(sc), 3000);
+    openScore(sc.id);
+  } catch (e) { console.error(e); toast('Those pictures could not be added.', 3500); }
+}
 async function addImages(blobs, name, opt = {}) {
   const file = { id: uid(), kind: 'images', data: blobs };
   const doc = await openDocument(file);
@@ -1003,7 +1027,7 @@ $('#importInput').addEventListener('change', async (e) => {
   { const sc = fs.filter((x) => /\.(4sc|4ss)$/i.test(x.name)); if (sc.length) await bringItems(sc.map((f) => ({ rel: f.name, size: f.size, mt: f.lastModified || 0, read: async () => f })), 'forScore'); }
   if (pdfs.length) await importPdfs(pdfs.map((f) => ({ name: f.name, data: () => f.arrayBuffer() })));
   if (other.length) setTimeout(() => toast(`${other.length === 1 ? other[0].name + ' is' : other.length + ' files are'} not a PDF or a picture, so ${other.length === 1 ? 'it was' : 'they were'} left out.`, 4000), pdfs.length ? 3500 : 0);
-  if (imgs.length) openReview(imgs, imgs[0].name);
+  if (imgs.length) addPhotosDirect(imgs, imgs[0].name);
 });
 // =====================================================================
 // Bring your scores from another app (forScore, MobileSheets, piaScore, Newzik, a folder of PDFs)
@@ -1341,7 +1365,8 @@ async function phoneAdd(blobs, names, scanned) {
   toast(pics.length > 1 || pdfs.length > 1 ? 'Adding your scores…' : 'Adding your score…', 60000);
   let last = null;
   // (pictures go through the review first, as on the iPad: straightened, cleaned and cropped)
-  if (pics.length && !scanned?.reviewed) {
+  // (only pages from the scanner go through the review; photos and pictures come in as they are)
+  if (pics.length && scanned === true) {
     for (const [b, n] of pdfs) last = await window.__phs.addOwn(await b.arrayBuffer(), n || 'Score');
     $('#toast').hidden = true;
     openReview(pics.map((b) => (b.type ? b : new Blob([b], { type: 'image/jpeg' }))), scanned === true ? 'Scan.jpg' : (names[blobs.indexOf(pics[0])] || 'Photos.jpg'));
@@ -1423,7 +1448,7 @@ window.standIncoming = async (msg) => {
     const pdfIdx = blobs.map((_, i) => i).filter(isPdfAt), imgIdx = blobs.map((_, i) => i).filter((i) => !isPdfAt(i));
     let res = null;
     if (pdfIdx.length) res = await importPdfs(pdfIdx.map((i) => ({ name: names[i], data: () => blobs[i].arrayBuffer(), meta: msg.meta && msg.meta.title && pdfIdx.length === 1 ? msg.meta : null })));
-    if (imgIdx.length) { setHomeTab('mine'); openReview(imgIdx.map((i) => (blobs[i].type ? blobs[i] : new Blob([blobs[i]], { type: 'image/jpeg' }))), names[imgIdx[0]] || 'Scan.jpg'); return; }
+    if (imgIdx.length) { setHomeTab('mine'); addPhotosDirect(imgIdx.map((i) => (blobs[i].type ? blobs[i] : new Blob([blobs[i]], { type: 'image/jpeg' }))), names[imgIdx[0]] || 'Photos.jpg'); return; }
     // one PDF opens straight away (a preview with Keep and Remove)
     if (res && res.added === 1 && pdfIdx.length === 1 && res.last) {
       if (PREVIEW.at && Date.now() - PREVIEW.at < 10 * 60000) { PREVIEW.at = 0; res.last.preview = true; await db.put('scores', res.last); await refreshLibrary(); toast('A look at ' + label(res.last) + '. Keep it to add it to your stand.', 3500); }
