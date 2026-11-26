@@ -97,6 +97,9 @@ let tintCanvas = null;
 let hidLy = new Set(), activeLy = '';
 export function setHiddenLayers(ids) { hidLy = new Set(ids || []); }
 export function setActiveLayer(id) { activeLy = id || ''; }
+// (the passages' boxes on the music: shown, or put away — the passages themselves stay)
+let passShown = true;
+export function setPassagesShown(on) { passShown = on !== false; }
 export const isHiddenItem = (s) => !!(s && s.ly && hidLy.has(s.ly));
 const tagNew = (s) => { if (activeLy && s && !('ly' in s) && s.t !== 'passage' && s.t !== 'bg') s.ly = activeLy; return s; };
 export const PASSAGE_KINDS = {
@@ -136,7 +139,7 @@ function drawPassage(ctx, s, W, H) {
 export function drawItem(ctx, s, W, H, live) {
   if (isHiddenItem(s) || s.t === 'note') return;   // (notes are cards over the page, never drawn into it)
   ctx.save();
-  if (s.t === 'passage') { drawPassage(ctx, s, W, H); ctx.restore(); return; }
+  if (s.t === 'passage') { if (passShown) drawPassage(ctx, s, W, H); ctx.restore(); return; }
   if (s.t === 'stamp') { drawStamp(ctx, s, W, H); ctx.restore(); return; }
   if (s.t === 'mask') {
     const m = maskImage(s.d);

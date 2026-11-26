@@ -24,7 +24,7 @@ import { ask, choose } from './dialog.js';
 import { forScorePdfs } from './forscore.js';
 import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js';
 import { DuoFollower, shiftOfName } from './duofollow.js';
-import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
+import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, setPassagesShown, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPicture, exportPdf, imagesToPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
@@ -93,7 +93,7 @@ const S = {
   instrument: 'other', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
-async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {});
+async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); setPassagesShown(S.passShow !== false);
   // (Stand's own choices for the pages, not those of the score last open)
   // (a score never set opens the standard way: two pages side by side when the iPad is sideways,
   // one when upright. Before, the way the first score happened to be shown when this came in was
@@ -258,7 +258,7 @@ function showPanel(name, tab) {
   if (name === 'app') { $('#pairNew').querySelector('span').textContent = PHONE ? 'Link an iPad' : 'Link an iPhone'; drawLinked($('#pairCard')); }
   if (name === 'scales') renderScaleStrip();
   if (name === 'pages') { PG.sel.clear(); PG.selecting = false; PG.staged = null; for (const [o, t] of PG.thumbs) if (PG.edited.has(o)) t.stale = true; PG.edited.clear(); renderPagesPanel(); }
-  if (name === 'passages') renderPassages();
+  if (name === 'passages') { renderPassages(); $('#passShow').checked = S.passShow !== false; }
   if (name === 'study') renderStudy();
   if (name === 'record') {
     syncLink(); if (host.state === 'linked') showRemotePreview();
@@ -3959,6 +3959,12 @@ function setLyHidden(id, hide) {
   for (const p of V.pages) if (p.layer && p.layer.ready) p.layer.redraw();
   PG.thumbs.forEach((t) => { t.stale = true; });
 }
+// Passages › Show the boxes: off, the music is clear of them (the passages and their practice stay)
+$('#passShow')?.addEventListener('change', (e) => {
+  S.passShow = e.target.checked; saveSettings(); setPassagesShown(S.passShow);
+  for (const p of V.pages) if (p.layer && p.layer.ready) p.layer.redraw();
+  PG.thumbs.forEach((t) => { t.stale = true; });
+});
 function useLayer(id) {
   if (id && lyHidden(id)) setLyHidden(id, false);    // writing in a layer shows it
   LY.active = id || ''; setActiveLayer(LY.active); syncLayerUi();
