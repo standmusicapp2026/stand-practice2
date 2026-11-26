@@ -2034,7 +2034,7 @@ function readStaff(s, ctx, header) {
         if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ bassGeo: x0, tp: +tp.toFixed(1), bp: +bp.toFixed(1), lb: lb && +lb.d.toFixed(3) });
         if (tp > 7 && tp < 10.3 && bp > 0.3 && bp < 3.6 && x1 - x0 >= sp * 1.2 && x1 - x0 <= sp * 2.8 && lb && lb.d < 0.35 && inkDots()) k = { cls: 'bass', d: 0.3 };
       }
-      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ idt: k.cls === 'bass' ? inkDots() : null, x1r: Math.round(x1), np: parts.length, cb: k.cls === 'alto' ? cBars() : null, cs: k.cls === 'alto' ? +cSymOf(x0, x1, y0, y1).toFixed(2) : null, ni: noteIn(x0, x1, y0, y1), cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
+      if (globalThis.__consTrace) console.log('T ' + JSON.stringify({ stm: k.cls === 'bass' ? stemIn(x0, x1, y0, y1) : null, idt: k.cls === 'bass' ? inkDots() : null, x1r: Math.round(x1), np: parts.length, cb: k.cls === 'alto' ? cBars() : null, cs: k.cls === 'alto' ? +cSymOf(x0, x1, y0, y1).toFixed(2) : null, ni: noteIn(x0, x1, y0, y1), cand: Math.round(x0), y: Math.round(y0), w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3), l: lz.slice(0, 2).map((q) => [q.cls, +q.d.toFixed(3)]), top: +pAt(s, y0, (x0 + x1) / 2).toFixed(1), bot: +pAt(s, y1, (x0 + x1) / 2).toFixed(1) }));
       if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
       // a note inside it is believed over a weak likeness
 
@@ -2058,13 +2058,16 @@ function readStaff(s, ctx, header) {
       if (!trustBass && (k.d > 0.3 || ((globalThis.__looseNote ?? 1) && k.d >= 0.3)) && noteIn(x0, x1, y0, y1)) continue;
       if ((x1 - x0) < sp * 0.9) continue;
       const top = pAt(s, y0, (x0 + x1) / 2), bot = pAt(s, y1, (x0 + x1) / 2);
+      // (a bass clef by the loose likeness beyond doubt — its dots blurred into it in a photo, a sharp
+      // after it run into it — is one, without its dots and whatever upright stands at its edge)
+      const bassSure = (globalThis.__bassLoose ?? 1) && k.cls === 'bass' && k.d < 0.3 && lz[0] && lz[0].cls === 'bass' && lz[0].d < 0.06 && lz[1] && lz[1].d - lz[0].d > 0.06;
       let name = null;
       // (a treble clef's curl rises a little over the staff and its tail hangs below it: a 'tr' over a
       // note with its stem, as tall, stands far above and ends inside the staff)
       if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4 && !((globalThis.__trebleSpan ?? 1) && (top > 12 || bot > -1.2) && k.d > 0.2)) name = 'treble';
       // (a clef changed along the line is printed smaller: a clear likeness, still most of the staff high)
       else if ((globalThis.__smallTreble ?? 1) && k.cls === 'treble' && k.d < 0.28 && top > 7.4 && bot < 2.2 && (y1 - y0) > sp * 2.6) name = 'treble';
-      else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22) && !((globalThis.__bassStem ?? 1) && k.d > 0.22 && stemIn(x0, x1, y0, y1))) name = 'bass';
+      else if (k.cls === 'bass' && top > 5 && bot > 0.5 && (!(globalThis.__midBassDots ?? 1) || trustBass || k.d < 0.22 || bassSure) && !((globalThis.__bassStem ?? 1) && k.d > 0.22 && !bassSure && stemIn(x0, x1, y0, y1))) name = 'bass';
       // (a grace note with its slash, an accidental before it, has a bass clef's outline but not its two dots)
       // (a C clef is wide, even printed small along the line: a barline with a sharp beside it, as
       // tall, has its bars but not its width)
@@ -2981,7 +2984,7 @@ function readHeader(s, comps, ctx, prev, heads) {
     }
     let bestFirst = 9, keyFirst = null, keyMgs = [];
     for (const a of [1, -1]) {
-      let cur = end - sp * 0.3, cnt = 0, lx = end, firstD = 9, prevX = 0, step = 0, nLoose = 0, exact = 0, lxExact = end, firstSign = null; const mgs = [];
+      let cur = end - sp * 0.3, cnt = 0, lx = end, firstD = 9, prevX = 0, step = 0, nLoose = 0, exact = 0, lxExact = end, firstSign = null, firstLoose = false; const mgs = [], ds = [];
       for (const pp of ORDER[a]) {
         let k = null, p = Array.isArray(pp) ? pp[0] : pp;
         for (const q of Array.isArray(pp) ? pp : [pp]) {
@@ -3010,14 +3013,16 @@ function readHeader(s, comps, ctx, prev, heads) {
         if (cnt >= 2 && Math.abs((k.x0 - prevX) - step) > step * 0.45) break;
         if (cnt >= 1) step = cnt === 1 ? k.x0 - prevX : step;
         if (!cnt) { firstD = k.d; firstSign = { x0: k.x0, x1: k.x1, p }; }
-        mgs.push(k.margin); prevX = k.x0; cnt++; lx = k.x1; cur = k.x0 + sp * 0.55; if (k.loose && !(k.ld < 0.09 && k.lm > 0.03)) nLoose++; else if (!nLoose) { exact = cnt; lxExact = lx; }
+        mgs.push(k.margin); ds.push(k.d); if (!cnt) firstLoose = !!(k.loose && !(k.ld < 0.09 && k.lm > 0.03)); prevX = k.x0; cnt++; lx = k.x1; cur = k.x0 + sp * 0.55; if (k.loose && !(k.ld < 0.09 && k.lm > 0.03)) nLoose++; else if (!nLoose) { exact = cnt; lxExact = lx; }
       }
       // (handwritten signs, known only loosely, count when there are several in their order)
       // (but a second sign only loosely like one, after a first that is clearly the sign, both where
       // the key's first two stand: two — a photo's blur, not a hand)
       const headBy = (sg) => heads.some((hd) => hd.left - sg.x1 > -sp * 0.2 && hd.left - sg.x1 < sp * 0.9 && Math.abs(hd.p - sg.p) <= 1);
       const pairOk = (globalThis.__looseSecond ?? 1) && !ctx.keyOnly && cnt === 2 && exact === 1 && firstD <= 0.33 && firstSign && !headBy(firstSign);
-      if (nLoose && cnt < 3 && !pairOk) { cnt = exact; lx = lxExact; }
+      // (and the other way round: the first blurred, the second clearly the sign)
+      const pairOk2 = (globalThis.__looseFirst ?? 1) && !ctx.keyOnly && cnt === 2 && nLoose === 1 && firstLoose && firstD <= 0.4 && ds[1] <= 0.26 && firstSign && !headBy(firstSign);
+      if (nLoose && cnt < 3 && !pairOk && !pairOk2) { cnt = exact; lx = lxExact; }
       // (one sign right against a note at about its height is that note's accidental, not a key)
       // (nor is a lone 'sign' that is, whole, a time signature's C or cut C)
       if (cnt === 1 && firstSign && (globalThis.__keyNotC ?? 1)) {
