@@ -279,3 +279,14 @@
 .pk-vhandle { position: absolute; z-index: 3; height: 30px; margin-top: -15px; width: 64px; margin-left: -32px; touch-action: none; cursor: ns-resize; }
 .pk-vhandle::after { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 14px; margin-top: -7px; border-radius: 7px; background: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .pk-vhandle::before { content: ""; position: absolute; left: 24px; right: 24px; top: 50%; height: 2px; margin-top: -4px; border-radius: 1px; background: rgba(255,255,255,.85); box-shadow: 0 4px 0 rgba(255,255,255,.85); z-index: 1; }
+/* the keys, on a sheet of their own (? in a score) */
+.cp-keys { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(10, 14, 24, .35); padding: 24px; }
+.cp-keys > * { max-width: 980px; }
+.cp-keys-head { display: flex; align-items: baseline; gap: 12px; width: 100%; background: var(--surface-solid); padding: 18px 22px 8px; border-radius: 20px 20px 0 0; }
+.cp-keys-head b { font-size: 20px; }
+.cp-keys-head span { color: var(--muted); font-size: 14px; flex: 1; }
+.cp-keys { grid-template-rows: auto auto; align-content: center; }
+.cp-keys-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 18px 26px; width: 100%; max-height: 70vh; overflow-y: auto; background: var(--surface-solid); padding: 10px 22px 22px; border-radius: 0 0 20px 20px; }
+.cp-keys h4 { margin: 8px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.cp-key { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; font-size: 14px; }
+.cp-key kbd { flex: none; min-width: 64px; font: 600 13px/1.6 -apple-system, "SF Pro Text", system-ui, sans-serif; padding: 0 8px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line); text-align: center; }

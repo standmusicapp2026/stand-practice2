@@ -2394,6 +2394,8 @@ function wireKeys() {
   document.addEventListener('keydown', (e) => {
     if ($('#compose').hidden || e.target.matches('input, select, textarea')) return;
     const k = e.key;
+    // (a keyboard used for the first time here: where to see all its keys)
+    if (!C.keysTold) { C.keysTold = true; let seen = false; try { seen = localStorage.getItem('stand.keysTold') === '1'; localStorage.setItem('stand.keysTold', '1'); } catch {} if (!seen && k !== '?') setTimeout(() => hint('Typing on a keyboard: press ? to see every key.', 3500), 400); }
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'c') { e.preventDefault(); copySel(); return; }
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'x') { e.preventDefault(); cutSel(); return; }
@@ -2421,7 +2423,27 @@ function wireKeys() {
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'a') { e.preventDefault(); const all = M.allStaves(C.score); selectBars(all[0], all[all.length - 1], 0, C.score.measures.length - 1); relayout(); syncSelBar(); renderTab(); hint('The whole score is selected.', 1800); return; }
     // ⌘⌥1–4 (or Ctrl⌥): write in voice 1 to 4
     if ((e.metaKey || e.ctrlKey) && e.altKey && /^Digit[1-4]$/.test(e.code)) { e.preventDefault(); C.tool.voice = +e.code.slice(5); renderTab(); hint(`Voice ${C.tool.voice}.`, 1400); return; }
+    // ⌘L lyrics, ⌘K chord symbol (Sibelius, Dorico and MuseScore): the words' tab open, its field ready
+    if ((e.metaKey || e.ctrlKey) && (k.toLowerCase() === 'l' || k.toLowerCase() === 'k') && !e.altKey) {
+      e.preventDefault(); C.tab = 'text'; $('#cpPal').classList.remove('folded'); renderTab();
+      const f = document.querySelector(`.cp-row input[aria-label="${k.toLowerCase() === 'l' ? 'Lyrics' : 'Chord symbol'}"]`); if (f) f.focus(); return;
+    }
+    // ⌘E dynamics (Sibelius, MuseScore): its tab
+    if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'e' && !e.altKey) { e.preventDefault(); C.tab = 'dyn'; $('#cpPal').classList.remove('folded'); renderTab(); return; }
+    // ⌘B a bar after the selection (⌘⇧B before it); none chosen: at the end
+    if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'b' && !e.altKey) { e.preventDefault(); insertBars(1, !e.shiftKey); hint(e.shiftKey ? 'A bar added before.' : 'A bar added.', 1200); return; }
     if (e.metaKey || e.ctrlKey) return;
+    // ? the keys, all of them
+    if (k === '?') { e.preventDefault(); keysSheet(); return; }
+    // accidentals as Dorico has them: - flat, = sharp (and the selected notes take it)
+    if (k === '-' && !e.altKey) { e.preventDefault(); setAcc(-1); return; }
+    if (k === '=' && !e.altKey) { e.preventDefault(); setAcc(1); return; }
+    // S a slur, < and > hairpins (Sibelius, MuseScore), / a grace note before (MuseScore)
+    if ((k === 's' || k === 'S') && !e.shiftKey && C.sel.size) { e.preventDefault(); setSlur(); return; }
+    if ((k === '<' || k === '>') && C.sel.size) { e.preventDefault(); setHairpin(k); return; }
+    if (k === '/' && C.sel.size) { e.preventDefault(); setGrace(1, true); return; }
+    // ⇧ with a letter that is no note: articulations (MuseScore) — S staccato, N tenuto, V accent, O marcato
+    if (e.shiftKey && C.sel.size) { const art = { S: 'stacc', N: 'ten', V: 'acc', O: 'marc' }[k.toUpperCase()]; if (art) { e.preventDefault(); toggleArt(art); return; } }
     // ⌥2–9: a note that interval above the selected one, added to its chord (⇧⌥: below)
     if (e.altKey && /^Digit[2-9]$/.test(e.code) && C.sel.size) { e.preventDefault(); addInterval(+e.code.slice(5), e.shiftKey ? -1 : 1); return; }
     if (k === 't' || k === 'T' || k === '+') { if (C.sel.size) { e.preventDefault(); setTie(); } return; }
@@ -2435,6 +2457,24 @@ function wireKeys() {
     const L = 'cdefgab'.indexOf(k.toLowerCase());
     if (L >= 0 && !e.altKey) writeAfter(L);
   });
+}
+// The keys, on a sheet of their own (? in the score)
+function keysSheet() {
+  const old = document.getElementById('cpKeys'); if (old) { old.remove(); return; }
+  const rows = [
+    ['Writing', [['A – G', 'A note after the selected one'], ['0', 'A rest'], ['1 – 7', 'Note value (64th to whole)'], ['.', 'Dot'], ['⇧ A – G', 'Add that note to the chord'], ['⌥ 2 – 9', 'Add an interval above (⇧⌥ below)'], ['T', 'Tie'], ['R', 'Repeat the selection'], ['/', 'Grace note before']]],
+    ['Pitch', [['↑ ↓', 'Up or down a semitone'], ['⇧ ↑ ↓', 'Up or down a step of the scale'], ['⌘ ↑ ↓', 'Up or down an octave'], ['-  =', 'Flat, sharp'], ['J', 'Spell the other way']]],
+    ['Marks', [['S', 'Slur'], ['<  >', 'Crescendo, diminuendo'], ['⇧ S  N  V  O', 'Staccato, tenuto, accent, marcato'], ['⌘ E', 'Dynamics'], ['⌘ L', 'Lyrics'], ['⌘ K', 'Chord symbol']]],
+    ['Score', [['← →', 'Select the next or previous note (⇧ to extend)'], ['⌘ A', 'Select everything'], ['⌘ C  X  V', 'Copy, cut, paste'], ['⌘ Z', 'Undo (⇧ to redo)'], ['⌘ B', 'Add a bar (⇧ before)'], ['⌘⌥ 1 – 4', 'Voice 1 to 4'], ['Q  W', 'Twice as long, half as long'], ['X', 'Flip stems'], ['Space', 'Play or stop'], ['Delete', 'Delete'], ['Esc', 'Nothing selected']]],
+  ];
+  const box = el('div', 'cp-keys'); box.id = 'cpKeys'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', 'Keyboard');
+  const head = el('div', 'cp-keys-head'); head.append(el('b', '', 'Keyboard'), el('span', '', 'As in Sibelius, Dorico and MuseScore'));
+  const x = el('button', 'icon-btn small'); x.innerHTML = '<svg><use href="#i-close"/></svg>'; x.setAttribute('aria-label', 'Close'); x.addEventListener('click', () => box.remove()); head.append(x);
+  const cols = el('div', 'cp-keys-cols');
+  for (const [t, list] of rows) { const c = el('section'); c.append(el('h4', '', t)); for (const [kk, what] of list) { const r = el('div', 'cp-key'); r.append(el('kbd', '', kk), el('span', '', what)); c.append(r); } cols.append(c); }
+  box.append(head, cols);
+  box.addEventListener('click', (e) => { if (e.target === box) box.remove(); });
+  document.getElementById('compose').append(box);
 }
 // A note (a letter, 0–6 from C) or a rest (null) written after the selected one, with the value
 // chosen in the palette; it becomes the selection, so typing goes on.
