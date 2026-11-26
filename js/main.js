@@ -11967,6 +11967,9 @@ $('#goalSel').addEventListener('change', (e) => { S.goal = +e.target.value; save
 // App settings: appearance, page turning by winking, backup
 // =====================================================================
 const NATIVE = window.webkit && window.webkit.messageHandlers ? window.webkit.messageHandlers : null;
+// (the page just opened — at launch, or again after iOS stopped it: a video still floating from before
+// is nobody's now; it goes, so it never stands alone over the screen)
+try { if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) NATIVE.standMedia.postMessage({ op: 'close' }); } catch {}
 const CAPS = window.standCaps || {};
 function applyAppearance() {
   const root = document.documentElement;

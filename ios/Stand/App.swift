@@ -575,6 +575,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         let again = stops.count >= 2
         StandLog.write("the page stopped (\(state)), opened again" + (again ? " on the home screen (stopped twice in two minutes)" : ""))
         pageReady = false
+        // (the floating video goes with it: the page opening again knows nothing of it, and it was left
+        // alone over the screen, its buttons gone with the page — the app looked stuck on the video)
+        media?.close()
         webView.load(URLRequest(url: URL(string: again ? "stand://app/index.html" : "stand://app/index.html?recover=1")!))
     }
 
@@ -659,6 +662,14 @@ final class IMSLPBrowser: UIViewController, WKNavigationDelegate, WKUIDelegate, 
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(close))
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
+        // (the terms accepted with "I understand", but the page did not go on — the acceptance kept
+        // but the page shown from before: it is asked for again, fresh, so the score comes through
+        // without closing the sheet and opening it again)
+        let ucc = WKUserContentController()
+        ucc.add(retryRelay, name: "imslpRetry")
+        ucc.addUserScript(WKUserScript(source: Self.retryJS, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        config.userContentController = ucc
+        retryRelay.owner = self
         web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self
         web.uiDelegate = self
@@ -682,6 +693,40 @@ final class IMSLPBrowser: UIViewController, WKNavigationDelegate, WKUIDelegate, 
         web.load(URLRequest(url: start))
     }
     @objc private func close() { dismiss(animated: true) }
+
+    // A tap on "I understand" (or Accept, I agree, Continue); two and a half seconds later the same
+    // button still on the same page: the page is asked for again from IMSLP (at most twice; then
+    // the link first opened).
+    private static let retryJS = """
+    (function () {
+      var words = /\\b(i understand|i agree|accept|agree|continue)\\b/i;
+      document.addEventListener('click', function (e) {
+        var t = e.target && e.target.closest ? e.target.closest('a, button, input[type=submit], input[type=button]') : null;
+        if (!t) return;
+        var tx = ((t.innerText || t.value || '') + '').trim();
+        if (!words.test(tx) || tx.length > 40) return;
+        var href = location.href;
+        setTimeout(function () {
+          if (location.href !== href || !t.isConnected) return;
+          var r = t.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1) return;
+          try { window.webkit.messageHandlers.imslpRetry.postMessage(href); } catch (err) {}
+        }, 2500);
+      }, true);
+    })();
+    """
+    private final class RetryRelay: NSObject, WKScriptMessageHandler {
+        weak var owner: IMSLPBrowser?
+        func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) { owner?.stuck(m.body as? String ?? "") }
+    }
+    private let retryRelay = RetryRelay()
+    private var retries = 0
+    fileprivate func stuck(_ href: String) {
+        guard web.url?.absoluteString == href else { return }
+        retries += 1
+        if retries <= 2 { status.text = "Opening the score…"; web.reloadFromOrigin() }
+        else if retries == 3 { status.text = "Opening the score…"; web.load(URLRequest(url: start, cachePolicy: .reloadIgnoringLocalCacheData)) }
+    }
 
     private func isPDF(_ response: URLResponse) -> Bool {
         let mime = (response.mimeType ?? "").lowercased()
