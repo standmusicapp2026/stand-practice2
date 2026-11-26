@@ -793,7 +793,8 @@ function partFromName(name, title) {
 function titleFromName(name, composer) {
   // (a name a camera, scanner or program gave the file — IMG_2041, file 003, Scan 3 — says nothing: the
   // score is called what it is until it is renamed)
-  { const nb = niceTitle(String(name || '')); if (!nb || JUNK_NAME.test(nb)) return (composer ? composer + ' – ' : '') + tr('Untitled score'); }
+  // (a scanner's name, "Scan 10", is kept: it tells scans apart)
+  { const nb = niceTitle(String(name || '')); if (!nb || /^(img|image|dsc|dscn|pxl|photo|foto|file|ficheiro|archivo|document|documento|untitled|download|\d+)[\s_\-.()]*\d*[\s_\-.()]*\d*$/i.test(nb)) return (composer ? composer + ' – ' : '') + tr('Untitled score'); }
   // (a number the file was put in order by, "06_Clarinet…", is not part of the name: "5 Pieces" is)
   name = String(name || '').replace(/^\d{1,2}[_-]+(?=\p{L})/u, '');
   let t = niceTitle(name).replace(/\s*\((?:[^()]*,[^()]*)\)\s*$/, '').replace(/\s+(score|parts?|part|solo part|complete|full score)$/i, '');
