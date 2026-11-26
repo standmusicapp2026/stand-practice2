@@ -4731,6 +4731,116 @@ function progCol(T, x, y, w, kf = 1, ky = 1) {
   return { items: out, y };
 }
 const LAYOUTS = [
+  // ---- teaching
+  { k: 'assign', cat: 'teach', label: 'This week’s practice', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('spaced', 0.07, 0.045, 'For my student', { w: 0.5, al: 'left', c: '#567c8d', fs: 0.017 }),
+      T('title', 0.07, 0.07, 'This week’s practice', { w: 0.7, c: '#1f2430', fs: 0.05 }),
+      T('note', 0.62, 0.075, 'name …', { w: 0.31, al: 'right', fs: 0.026, c: '#567c8d' })];
+    const rows = [['Warm-up', 'Open strings, long bows, 4 counts each', '5'], ['Scale', 'G major, 2 octaves, slurred in pairs', '5'], ['Study', 'No. 3: bars 1–12, slowly, then a little faster', '10'], ['Piece', 'The middle section: the shift in bar 21 five times right', '10']];
+    rows.forEach(([h, what, min], i) => {
+      const y = 0.17 + i * 0.12;
+      out.push(rbox(0.07, y, 0.86, 0.1, i % 2 ? '#f6f7fb' : '#eef4f0'), T('heading', 0.1, y + 0.016, h, { w: 0.3, fs: 0.022, c: '#2f4156' }),
+        T('body', 0.1, y + 0.052, what, { w: 0.62, fs: 0.017, c: '#4a5563' }), T('note', 0.74, y + 0.025, min + ' min', { w: 0.16, al: 'right', fs: 0.026, c: '#567c8d' }));
+    });
+    out.push(T('heading', 0.07, 0.67, 'Each day you practise, colour a circle', { w: 0.86, fs: 0.02, c: '#2f4156' }));
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach((d, i) => {
+      const x = 0.1 + i * 0.12;
+      out.push({ t: 'shape', k: 'round', x: x + 0.03, y: 0.755, w: 0.07, h: 0.07 / 1.414, f: '#ffffff', lc: '#b9cbd3', lw: 0.0015, a: 1, rot: 0 }, T('body', x, 0.8, d, { w: 0.06, al: 'center', fs: 0.016, c: '#6b7480' }));
+    });
+    out.push(T('sticky', 0.07, 0.86, 'A question for next lesson:', { w: 0.42, fs: 0.02 }), T('note', 0.55, 0.9, 'next lesson: …', { w: 0.38, al: 'right', fs: 0.024, c: '#567c8d' }));
+    return out;
+  } },
+  { k: 'report', cat: 'teach', label: 'Progress report', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 },
+      T('spaced', 0.1, 0.05, 'Progress report', { w: 0.8, c: LC.gold, fs: 0.018 }),
+      T('elegant', 0.1, 0.08, 'Student’s Name', { w: 0.8, c: LC.ink, fs: 0.05 }),
+      T('body', 0.1, 0.15, 'Cello · Autumn term', { w: 0.8, al: 'center', i: 1, fs: 0.02, c: LC.soft }), rule(0.3, 0.2, 0.4, LC.gold2)];
+    const skills = ['Sound and bowing', 'Intonation', 'Rhythm and pulse', 'Reading music', 'Technique (shifting, vibrato)', 'Musicality', 'Practice at home'];
+    out.push(T('heading', 0.62, 0.235, 'Getting there  ·  Good  ·  Excellent', { w: 0.3, al: 'right', fs: 0.013, c: LC.soft, ff: 'avenir' }));
+    skills.forEach((sk, i) => {
+      const y = 0.27 + i * 0.065;
+      out.push(T('body', 0.1, y, sk, { w: 0.5, fs: 0.02, c: LC.ink }), rule(0.1, y + 0.048, 0.8, LC.rule, 0.001));
+      for (let d = 0; d < 3; d++) out.push({ t: 'shape', k: 'round', x: 0.68 + d * 0.085, y: y + 0.018, w: 0.03, h: 0.03 / 1.414, f: '#ffffff', lc: LC.gold2, lw: 0.0013, a: 1, rot: 0 });
+    });
+    out.push(T('heading', 0.1, 0.75, 'Comments', { w: 0.8, fs: 0.022, c: LC.ink, ff: 'baskerville' }),
+      ...Array.from({ length: 4 }, (_, i) => rule(0.1, 0.81 + i * 0.035, 0.8, LC.rule, 0.001)),
+      T('note', 0.1, 0.95, 'Teacher …', { w: 0.8, al: 'right', fs: 0.022, c: LC.gold }));
+    return out;
+  } },
+  { k: 'lessonplan', cat: 'teach', label: 'Lesson plan', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.07, 0.04, 'Lesson plan', { w: 0.5, c: '#1f2430' }), T('note', 0.55, 0.06, 'student · date', { w: 0.38, al: 'right', fs: 0.024, c: '#567c8d' }),
+      rbox(0.07, 0.12, 0.86, 0.075, '#fdf6e3'), T('heading', 0.1, 0.133, 'Today’s one goal', { w: 0.3, fs: 0.019, c: '#8a6a3a' }), T('body', 0.1, 0.163, 'By the end, the student can …', { w: 0.8, fs: 0.017, i: 1, c: '#6b6f7a' })];
+    [['0′', 'Welcome · how was the week?', '5'], ['5′', 'Warm-up and technique', '10'], ['15′', 'Study', '10'], ['25′', 'Repertoire: the passage that needs it most', '20'], ['45′', 'Play through · praise one thing', '10'], ['55′', 'Assign the week: write it down together', '5']].forEach(([t, h, min], i) => {
+      const y = 0.23 + i * 0.1;
+      out.push(T('note', 0.07, y + 0.012, t, { w: 0.08, fs: 0.024, c: '#9aa3ad' }), rbox(0.16, y, 0.77, 0.085, i % 2 ? '#f6f7fb' : '#eef4f0'),
+        T('heading', 0.19, y + 0.016, h, { w: 0.58, fs: 0.019, c: '#2f4156' }), T('note', 0.78, y + 0.02, min + ' min', { w: 0.12, al: 'right', fs: 0.022, c: '#567c8d' }));
+    });
+    out.push(T('heading', 0.07, 0.85, 'After the lesson', { w: 0.4, fs: 0.02, c: '#2f4156' }), ...Array.from({ length: 2 }, (_, i) => rule(0.07, 0.9 + i * 0.035, 0.86, '#e3e8ee', 0.001)));
+    return out;
+  } },
+  { k: 'stars', cat: 'teach', label: 'Star chart', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fffaf0', pat: '', a: 1 },
+      T('poster', 0.08, 0.05, 'My practice stars', { w: 0.84, c: '#d9822b', fs: 0.06 }),
+      T('body', 0.1, 0.14, 'A star for every day you play. Ten stars in a row: a prize!', { w: 0.8, al: 'center', fs: 0.02, c: '#7a5a3a' })];
+    ['Week 1', 'Week 2', 'Week 3', 'Week 4'].forEach((w, r) => {
+      const y = 0.22 + r * 0.17;
+      out.push(rbox(0.07, y, 0.86, 0.14, ['#fde9c9', '#e3f1e0', '#e2ecf8', '#f6e1ea'][r]), T('heading', 0.1, y + 0.05, w, { w: 0.14, fs: 0.022, c: '#5a4632' }));
+      for (let d = 0; d < 7; d++) out.push({ t: 'stamp', k: 'txt', x: 0.3 + d * 0.09, y: y + 0.07, s: 0.03, txt: '☆', c: '#d9822b', a: 0.9 });
+    });
+    out.push(T('sticky', 0.55, 0.9, 'My prize: …', { w: 0.36, fs: 0.022 }));
+    return out;
+  } },
+  // ---- ensembles and gigs
+  { k: 'setlist', cat: 'ensemble', label: 'Set list', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#111318', pat: '', a: 1 },
+      T('spaced', 0.08, 0.05, 'Set list', { w: 0.84, c: '#c9a96a', fs: 0.02 }),
+      T('poster', 0.08, 0.08, 'Friday at the Jazz Club', { w: 0.84, c: '#f3ead8', fs: 0.05 })];
+    ['Opening tune', 'Second song', 'A ballad', 'Something fast', 'Solo spot', 'The crowd favourite', 'Last one', 'Encore'].forEach((t, i) => {
+      const y = 0.19 + i * 0.085;
+      out.push(T('note', 0.08, y, String(i + 1).padStart(2, '0'), { w: 0.08, fs: 0.03, c: '#c9a96a' }), T('heading', 0.18, y + 0.005, t, { w: 0.5, fs: 0.026, c: '#f3ead8', ff: 'avenir' }),
+        T('body', 0.7, y + 0.01, 'key …  ·  4′', { w: 0.22, al: 'right', fs: 0.017, c: '#9aa0aa' }), rule(0.08, y + 0.066, 0.84, '#2b2f38', 0.001));
+    });
+    return out;
+  } },
+  { k: 'gig', cat: 'ensemble', label: 'Gig sheet', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.07, 0.04, 'Gig sheet', { w: 0.5, c: '#1f2430' }), T('note', 0.55, 0.06, 'date …', { w: 0.38, al: 'right', fs: 0.026, c: '#567c8d' })];
+    const boxes = [[0.07, 0.13, 'Where', 'Venue, address, how to get in, parking'], [0.51, 0.13, 'When', 'Arrive · sound check · doors · we play · finish'], [0.07, 0.33, 'Wear', 'All black · shoes for a long stand'], [0.51, 0.33, 'Bring', 'Stand, light, spare strings, rosin, music, water'], [0.07, 0.53, 'Who', 'Contact on the day, phone'], [0.51, 0.53, 'Money', 'Fee, how it is paid']];
+    for (const [x, y, h, sub] of boxes) out.push(rbox(x, y, 0.42, 0.17, x < 0.5 ? '#eef4f0' : '#f6f7fb'), T('heading', x + 0.03, y + 0.02, h, { w: 0.36, fs: 0.022, c: '#2f4156' }), T('body', x + 0.03, y + 0.06, sub, { w: 0.36, fs: 0.016, i: 1, c: '#6b7480' }));
+    out.push(T('heading', 0.07, 0.74, 'Music to play', { w: 0.86, fs: 0.022, c: '#2f4156' }), T('checklist', 0.07, 0.785, 'First piece\nSecond piece\nThird piece\nEncore', { w: 0.86, fs: 0.019, lh: 1.7, c: '#2f4156' }));
+    return out;
+  } },
+  { k: 'seating', cat: 'ensemble', label: 'Seating plan', land: true, make: () => {
+    const T = tbP(true), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.06, 0.05, 'Seating plan', { w: 0.5, c: '#1f2430' }), T('note', 0.55, 0.07, 'concert …', { w: 0.39, al: 'right', fs: 0.026, c: '#567c8d' })];
+    // (chairs in rows round the conductor: three arcs, each a little wider)
+    [[7, 0.26, '#eef4f0'], [9, 0.42, '#f6f7fb'], [11, 0.58, '#eef4f0']].forEach(([n, R, f]) => {
+      for (let i = 0; i < n; i++) { const a = Math.PI * (0.08 + 0.84 * (i / (n - 1))), x = 0.5 - Math.cos(a) * R * 0.72, y = 0.84 - Math.sin(a) * R * 1.05; out.push({ t: 'shape', k: 'round', x, y, w: 0.05, h: 0.05 * 1.414, f, lc: '#b9cbd3', lw: 0.0012, a: 1, rot: 0 }); }
+    });
+    out.push(rbox(0.44, 0.86, 0.12, 0.08, '#fdf6e3'), T('heading', 0.44, 0.88, 'Conductor', { w: 0.12, al: 'center', fs: 0.016, c: '#8a6a3a' }));
+    out.push(T('body', 0.06, 0.9, 'Write each name on a chair.', { w: 0.34, fs: 0.017, i: 1, c: '#6b7480' }));
+    return out;
+  } },
+  // ---- practice, more
+  { k: 'ladder', cat: 'practice', label: 'Tempo ladder', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.07, 0.04, 'Tempo ladder', { w: 0.6, c: '#1f2430' }), T('body', 0.07, 0.11, 'One passage, a few clicks faster each step. Tick a step after three clean times in a row.', { w: 0.86, fs: 0.018, c: '#6b7480' })];
+    out.push(T('note', 0.07, 0.17, 'Passage: bars … to …', { w: 0.86, fs: 0.026, c: '#567c8d' }));
+    for (let i = 0; i < 10; i++) {
+      const y = 0.83 - i * 0.065, x = 0.1 + i * 0.06;
+      out.push(rbox(x, y, 0.3, 0.05, i % 2 ? '#f6f7fb' : '#eef4f0'), T('heading', x + 0.02, y + 0.012, '♩ = ' + (60 + i * 8), { w: 0.18, fs: 0.018, c: '#2f4156' }));
+      for (let d = 0; d < 3; d++) out.push({ t: 'shape', k: 'round', x: x + 0.22 + d * 0.025, y: y + 0.025, w: 0.018, h: 0.018 / 1.414, f: '#ffffff', lc: '#b9cbd3', lw: 0.0012, a: 1, rot: 0 });
+    }
+    return out;
+  } },
+  { k: 'goals', cat: 'practice', label: 'Goals for the term', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }, T('spaced', 0.1, 0.05, 'This term', { w: 0.8, c: LC.gold, fs: 0.018 }), T('elegant', 0.1, 0.08, 'Three goals', { w: 0.8, c: LC.ink, fs: 0.05 }), rule(0.3, 0.16, 0.4, LC.gold2)];
+    ['A piece to play by heart', 'A skill to master', 'A concert or exam to prepare'].forEach((g, i) => {
+      const y = 0.2 + i * 0.25;
+      out.push(T('note', 0.1, y, String(i + 1), { w: 0.06, fs: 0.05, c: LC.gold2 }), T('heading', 0.18, y + 0.01, g, { w: 0.72, fs: 0.024, c: LC.ink, ff: 'baskerville' }),
+        T('checklist', 0.18, y + 0.06, 'First step …\nHalfway …\nDone when …', { w: 0.72, fs: 0.018, lh: 1.75, c: LC.soft }));
+    });
+    return out;
+  } },
   // ---- concerts
   { k: 'programme', cat: 'concert', label: 'Programme', make: () => {
     const T = tbP(false);
@@ -5305,7 +5415,7 @@ const LAYOUTS = [
   ] },
 ];
 function tb(style, x, y, txt, extra = {}) { return measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }); }
-const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['social', 'For sharing']];
+const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['teach', 'Teaching'], ['ensemble', 'Ensembles and gigs'], ['social', 'For sharing']];
 // Every layout in other colours: the same design, its paper, ink and accent moved together to another
 // family (or turned to dark paper). nh/ns: the hue and strength the neutral colours (paper, ink,
 // rules) take; ah/as: the hue and strength of the accents; inv: light ink on dark paper.
@@ -7541,6 +7651,8 @@ async function doExportPicture(i) {
   } catch (e) { console.error(e); toast('The picture could not be made: ' + (e.message || e)); }
 }
 // a notebook's own bar
+// Designs: every layout, colour and type, straight from the notebook's bar
+$('#nbLayoutsBtn').addEventListener('click', () => { if (!V.inking) setInking(true); openLayGallery(); });
 $('#nbPhotoBtn').addEventListener('click', () => { if (!V.inking) setInking(true); $('#insFile').click(); });
 $('#nbAddBtn').addEventListener('click', () => {
   // which paper for the new page: the same, or any other
