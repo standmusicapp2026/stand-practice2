@@ -1066,6 +1066,24 @@
   <div class="run-txt"><strong id="runTitle"></strong><span id="runSub"></span></div>
   <button class="icon-btn small" id="runNext" aria-label="Next"><svg style="transform:scaleX(-1)"><use href="#i-back"/></svg></button>
   <button class="icon-btn small" id="runEnd" aria-label="End"><svg><use href="#i-close"/></svg></button>
+  <div class="run-tools" id="runTools" hidden>
+    <button class="run-tempo" id="runTempo" aria-label="Metronome at this passage's tempo"><span class="rt-note">♩</span><b id="runBpm">60</b><small id="runGoal"></small></button>
+    <button class="run-step" id="runSlower" aria-label="4 slower">−4</button>
+    <button class="run-step" id="runFaster" aria-label="4 faster">+4</button>
+    <button class="btn small primary run-clean" id="runClean">Clean at this tempo</button>
+    <button class="icon-btn small" id="runNoteBtn" aria-label="A note for next time"><svg><use href="#i-pen"/></svg></button>
+  </div>
+  <div class="run-note" id="runNote" hidden></div>
+</div>
+<div class="study-end" id="studyEnd" hidden role="dialog" aria-label="Session done">
+  <div class="se-card">
+    <h3>Well practised</h3>
+    <p class="se-sum" id="seSum"></p>
+    <ul class="se-list" id="seList"></ul>
+    <label class="se-lab" for="seNote">A note for your next session</label>
+    <textarea id="seNote" rows="2" placeholder="What to start with, what to remember…"></textarea>
+    <div class="se-btns"><button class="btn ghost" id="seSkip">Close</button><button class="btn primary" id="seSave">Keep the note</button></div>
+  </div>
 </div>
 
 <aside class="panel wide" id="panel-goal" hidden aria-label="Practice">

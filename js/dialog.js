@@ -41,3 +41,21 @@ export function choose(text, items, { sub = '', cancel = 'Cancel' } = {}) {
     back.addEventListener('click', (e) => { if (e.target === back) done(null); });
   });
 }
+
+// A few words typed: askText('A note…', 'what was there') -> Promise<string | null> (null: cancelled)
+export function askText(text, value = '', { ok = 'Keep', cancel = 'Cancel', ph = '' } = {}) {
+  return new Promise((resolve) => {
+    const back = document.createElement('div'); back.className = 'ask-back';
+    const box = document.createElement('div'); box.className = 'ask'; box.setAttribute('role', 'dialog');
+    const h = document.createElement('p'); h.className = 'ask-title'; h.textContent = text; box.append(h);
+    const inp = document.createElement('textarea'); inp.rows = 3; inp.value = value; inp.placeholder = ph; inp.className = 'ask-text'; box.append(inp);
+    const row = document.createElement('div'); row.className = 'ask-row';
+    const no = document.createElement('button'); no.className = 'btn'; no.textContent = cancel;
+    const yes = document.createElement('button'); yes.className = 'btn primary'; yes.textContent = ok;
+    row.append(no, yes); box.append(row); back.append(box); document.body.append(back);
+    const done = (v) => { back.remove(); resolve(v); };
+    no.addEventListener('click', () => done(null)); yes.addEventListener('click', () => done(inp.value));
+    back.addEventListener('click', (e) => { if (e.target === back) done(null); });
+    setTimeout(() => inp.focus(), 30);
+  });
+}

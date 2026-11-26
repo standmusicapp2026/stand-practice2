@@ -2505,3 +2505,28 @@ body.media-on #pageScrub { display: none; }
 .pass-show { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 4px; padding: 10px 14px; border-radius: 14px; background: var(--surface-solid); border: 1px solid var(--line); }
 .pass-show > span { display: grid; gap: 2px; }
 .pass-show small { color: var(--muted); font-size: 13px; }
+/* a practice session: its tools on the bar (the passage's tempo, logged clean, a note), and the end */
+.run-tools { display: flex; align-items: center; gap: 6px; flex-basis: 100%; padding-top: 8px; margin-top: 6px; border-top: 1px solid var(--line); }
+.run-tools[hidden], .run-note[hidden] { display: none; }
+.run-tempo { display: inline-flex; align-items: baseline; gap: 4px; padding: 6px 12px; border-radius: 999px; background: var(--surface-solid); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.run-tempo b { font-size: 16px; }
+.run-tempo small { color: var(--muted); font-size: 12px; }
+.run-tempo.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.run-tempo.on small { color: rgba(255,255,255,.8); }
+.run-step { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-solid); font-size: 14px; font-variant-numeric: tabular-nums; }
+.run-clean { margin-left: auto; }
+.run-note { flex-basis: 100%; font-size: 13px; color: var(--muted); padding-top: 6px; }
+.study-end { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(10,14,24,.35); padding: 20px; }
+.study-end[hidden] { display: none; }
+.se-card { width: min(440px, 100%); background: var(--surface-solid); border-radius: 22px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+.se-card h3 { margin: 0 0 4px; font-size: 22px; }
+.se-sum { color: var(--muted); margin: 0 0 12px; }
+.se-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; max-height: 30vh; overflow-y: auto; }
+.se-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 15px; }
+.se-list .num { color: var(--muted); }
+.se-lab { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.se-card textarea, .ask-text { width: 100%; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--line); padding: 10px 12px; font: inherit; background: var(--bg); color: var(--text); resize: none; }
+.ask-text { margin: 8px 0 4px; }
+.se-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.run-pill { flex-wrap: wrap; }
+.run-pill[data-kind="study"] { opacity: 1; background: var(--surface-solid); padding: 6px 10px 8px; }

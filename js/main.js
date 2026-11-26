@@ -20,12 +20,12 @@ import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
-import { ask, choose } from './dialog.js';
+import { ask, choose, askText } from './dialog.js';
 import { forScorePdfs } from './forscore.js';
 import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js';
 import { DuoFollower, shiftOfName } from './duofollow.js';
 import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, setPassagesShown, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
-import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
+import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress, passageOf, logTempo, setPassageNote } from './passages.js';
 import { exportPicture, exportPdf, imagesToPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview, addReviewPages } from './review.js';
@@ -12858,6 +12858,7 @@ async function runGo(idx, atEnd = false) {
   RUN.busy = true;
   try {
     const sameScore = V.score && V.score.id === it.sid && !$('#score').hidden;
+    if (RUN.kind === 'study' && RUN.idx !== idx) runTimeTo(RUN.items[RUN.idx]);
     RUN.idx = idx;
     if (!sameScore) {
       const sc = scores.find((s) => s.id === it.sid) || await db.get('scores', it.sid).catch(() => null);
@@ -12937,15 +12938,61 @@ function prewarmRun(it) {
 function startRun(kind, name, items) {
   if (!items.length) return;
   RUN.on = true; RUN.kind = kind; RUN.name = name; RUN.items = items; RUN.idx = 0; RUN.busy = false;
+  // (a practice session: when it began, what was done in it; the note left last time, shown first)
+  if (kind === 'study') { RUN.t0 = Date.now(); RUN.done = new Map(); RUN.atT = Date.now(); if (S.studyNote) setTimeout(() => toast(tr('From your last session') + ': ' + S.studyNote, 6000), 900); }
   hidePanel();
   runGo(0);
 }
 function endRun() {
   dropRunPre();
+  const was = RUN.kind === 'study' && RUN.on ? { t0: RUN.t0, done: RUN.done, items: RUN.items } : null;
+  if (was) runTimeTo(runItem());
   RUN.on = false; RUN.items = []; RUN.idx = 0;
   $('#runPill').hidden = true;
   if (V.doc && !$('#score').hidden) layout();
+  if (was && Date.now() - was.t0 > 60000) studyEndShow(was);
 }
+// ---- the practice session's own tools, on its bar: the passage's tempo (the metronome at it), a
+// tempo played cleanly logged (and the next a little faster), a note for next time
+const runPass = (it) => (it && it.pid ? passageOf(it.sid, it.pid) : null);
+function runTimeTo(it) { if (!RUN.done || !it) return; const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 }; r.ms += Date.now() - (RUN.atT || Date.now()); RUN.done.set(k, r); RUN.atT = Date.now(); }
+function runToolsShow(it) {
+  const box = $('#runTools'), nt = $('#runNote');
+  const p = RUN.kind === 'study' ? runPass(it) : null;
+  box.hidden = !p; nt.hidden = !(p && p.note);
+  if (!p) return;
+  const last = p.log.length ? p.log[p.log.length - 1].bpm : p.start || 60;
+  RUN.bpm = metro.running ? metro.bpm : last;
+  $('#runBpm').textContent = String(RUN.bpm);
+  $('#runGoal').textContent = p.target ? '→ ' + p.target : '';
+  $('#runTempo').classList.toggle('on', !!metro.running);
+  if (p.note) nt.textContent = tr('Your note') + ': ' + p.note;
+}
+function runSetBpm(v) { RUN.bpm = clamp(Math.round(v), 20, 300); $('#runBpm').textContent = String(RUN.bpm); if (metro.running) setBpm(RUN.bpm); }
+$('#runTempo').addEventListener('click', () => { if (metro.running) stopMetro(); else { setBpm(RUN.bpm || 60); startMetro(); } setTimeout(() => $('#runTempo').classList.toggle('on', !!metro.running), 60); });
+$('#runSlower').addEventListener('click', () => runSetBpm((RUN.bpm || 60) - 4));
+$('#runFaster').addEventListener('click', () => runSetBpm((RUN.bpm || 60) + 4));
+$('#runClean').addEventListener('click', () => {
+  const it = runItem(); const p = logTempo(it && it.sid, it && it.pid, RUN.bpm || 60); if (!p) return;
+  const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 }; r.best = Math.max(r.best, RUN.bpm); RUN.done.set(k, r);
+  if (p.target && RUN.bpm >= p.target) toast(tr('Target tempo reached. Well done!'), 2600);
+  else { toast(`${RUN.bpm} bpm ` + tr('kept. Next: a little faster.'), 2200); runSetBpm(Math.min(p.target || 300, RUN.bpm + 4)); }
+});
+$('#runNoteBtn').addEventListener('click', async () => {
+  const it = runItem(), p = runPass(it); if (!p) return;
+  const v = await askText(tr('A note for this passage, shown next time'), p.note || '');
+  if (v === null) return; setPassageNote(it.sid, it.pid, v); runToolsShow(it);
+});
+// the session done: how long, what was played, and one note for next time
+function studyEndShow(was) {
+  const min = Math.max(1, Math.round((Date.now() - was.t0) / 60000));
+  $('#seSum').textContent = `${min} min · ${was.done.size} ${was.done.size === 1 ? tr('passage') : tr('passages')}`;
+  const ul = $('#seList'); ul.textContent = '';
+  for (const r of was.done.values()) { const li = el('li'); li.append(el('span', '', r.name), el('span', 'num', Math.max(1, Math.round(r.ms / 60000)) + ' min' + (r.best ? ' · ' + r.best + ' bpm' : ''))); ul.append(li); }
+  $('#seNote').value = ''; $('#studyEnd').hidden = false;
+}
+$('#seSkip').addEventListener('click', () => { $('#studyEnd').hidden = true; });
+$('#seSave').addEventListener('click', () => { S.studyNote = $('#seNote').value.trim().slice(0, 240) || undefined; saveSettings(); $('#studyEnd').hidden = true; if (S.studyNote) toast(tr('Kept. It shows when your next session starts.'), 2400); });
 const PRIO_LABEL = ['Skip', 'Low', 'Medium', 'High'];
 function runShow(newScore) {
   const it = runItem(); if (!it) { $('#runPill').hidden = true; return; }
@@ -12954,6 +13001,7 @@ function runShow(newScore) {
   const n = RUN.items.length;
   $('#runPill').hidden = false;
   $('#runPill').dataset.kind = RUN.kind;
+  runToolsShow(it);
   if (RUN.kind === 'study') {
     $('#runTitle').textContent = `${it.name}`;
     $('#runSub').textContent = `Passage ${RUN.idx + 1} of ${n} · ${PRIO_LABEL[it.prio] || ''} · ${title}`;
