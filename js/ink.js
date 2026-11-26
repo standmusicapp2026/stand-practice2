@@ -556,15 +556,24 @@ export class InkLayer {
     // (where something went: only there is the page drawn again)
     let d = null;
     const grow = (x0, y0, x1, y1) => { if (!d) d = { x0, y0, x1, y1 }; else { d.x0 = Math.min(d.x0, x0); d.y0 = Math.min(d.y0, y0); d.x1 = Math.max(d.x1, x1); d.y1 = Math.max(d.y1, y1); } };
+    // (a line far from where the eraser went is passed over at once, by its box: rubbing out was slow on a
+    // page with many markings, every point of every line measured at every move)
+    let ex0 = Infinity, ey0 = Infinity, ex1 = -Infinity, ey1 = -Infinity;
+    for (const [x, y] of pts) { if (x < ex0) ex0 = x; if (x > ex1) ex1 = x; if (y < ey0) ey0 = y; if (y > ey1) ey1 = y; }
+    const far = (s) => { if (!s.p || s.p.length < 2 || s.t === 'passage' || s.t === 'note') return false; let b = SBOX.get(s); if (!b) { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const q of s.p) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; } b = { x0, y0, x1, y1 }; SBOX.set(s, b); } const m = r + (s.s || 0); return b.x1 + m < ex0 || b.x0 - m > ex1 || b.y1 + (m * W) / H < ey0 || b.y0 - (m * W) / H > ey1; };
     for (const [x, y] of pts) {
       let hit = false; const out = [];
       for (const s of items) {
+        if (far(s)) { out.push(s); continue; }
         if (s.t === 'img' || s.t === 'tb' || s.t === 'shape' || s.t === 'bg' || s.lock || !itemHit(s, x, y, r, W, H)) { out.push(s); continue; }
         hit = true;
         const reach = r + (s.s || 0);
         if (whole || !s.p || s.p.length < 2) { const b = itemBounds(s); if (b) grow(b.x0 - 0.004, b.y0 - 0.004, b.x1 + 0.004, b.y1 + 0.004); else grow(0, 0, 1, 1); continue; }
         grow(x - reach - 0.004, y - (reach * W) / H - 0.004, x + reach + 0.004, y + (reach * W) / H + 0.004);
-        for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * 0.35, W, H)) out.push({ ...s, p: part });
+        // (cut back by half the line's width beyond the eraser: the round end of what is left would
+        // otherwise reach back over the hole — a highlighter, a wide line, looked barely rubbed out,
+        // then gave way in jumps)
+        for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * (globalThis.__eraseCap ?? 0.5), W, H)) out.push({ ...s, p: part });
       }
       if (hit) { items = out; changed = true; }
     }
@@ -616,6 +625,7 @@ export class InkLayer {
 }
 
 // Remove the part of a stroke inside a circle; returns the pieces that remain.
+const SBOX = new WeakMap();
 function cutStroke(pts, x, y, r, W, H) {
   // add points along long segments so a quick stroke can be cut in its middle
   const dense = [pts[0]];

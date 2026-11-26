@@ -2387,15 +2387,15 @@ function scrollMomentum(v) {
   SC.speed = Math.abs(v);
   const step = () => {
     const now2 = performance.now(), dt = Math.min(40, now2 - last); last = now2;
-    const y0 = Z.y; Z.y += v * dt; SC.dir = v < 0 ? 1 : -1; applyZoom();
+    const y0 = Z.y; Z.y += v * dt; SC.dir = v < 0 ? 1 : -1; SC.v = v; applyZoom();
     v *= Math.pow(0.998, dt);   // (slows as on the iPhone: about a seventh of its speed left after a second)
     SC.speed = Math.abs(v);
-    if (Math.abs(v) < 0.015 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; SC.speed = 0; scrollSync(true); scrollSettle(); scheduleSharpen(); return; }
+    if (Math.abs(v) < 0.015 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; SC.speed = 0; SC.v = 0; scrollSync(true); scrollSettle(); scheduleSharpen(); return; }
     SC.mom = requestAnimationFrame(step);
   };
   SC.mom = requestAnimationFrame(step);
 }
-function scrollStop() { cancelAnimationFrame(SC.mom); SC.mom = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; SC.speed = 0; }
+function scrollStop() { if (SC.mom) SC.carry = { v: SC.v || 0, t: performance.now() }; cancelAnimationFrame(SC.mom); SC.mom = 0; SC.v = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; SC.speed = 0; }
 // pulled past an end and let go: back to the end, gently
 function scrollSpringBack() {
   cancelAnimationFrame(SC.anim);
@@ -3307,7 +3307,7 @@ async function sharpen() {
 // page), it is made sharp again. (Writing looked blurred after the Pencil lifted on the iPad.)
 setInterval(() => {
   // (only while a line is being drawn or the page pinched: a touch left over must not stop this)
-  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && /^(ink|erase|smart|lasso|tape|pinch)$/.test(GS.kind)) || $('#score').hidden) return;
+  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && /^(ink|erase|smart|lasso|tape|pinch)$/.test(GS.kind) && !GS.still) || $('#score').hidden) return;
   // (zoomed in and still, the sharp layer is always there: whatever took it away, it comes back)
   if (!SHARP.on && !GS && sharpCan() && performance.now() - (Z.movedAt || 0) > 400) { sharpenInk(); return; }
   // (nothing moved since the markings were last made sharp: they are as sharp as they can be; very
@@ -3385,7 +3385,7 @@ function sharpBase() {
   return !!(V.doc && Z.s > 1.05 && !TURN() && !V.half && !stage.querySelector('.half-clip') && !$('#score').hidden && V.pages.some((p) => p.layer && p.ink));
 }
 // (may it be drawn now: and not while two fingers move the page)
-function sharpCan() { return sharpBase() && !(GS && /^(pinch|nav)$/.test(GS.kind)); }
+function sharpCan() { return sharpBase() && !(GS && /^(pinch|nav)$/.test(GS.kind) && !GS.still); }
 // The page moving under it (two fingers, a drag, a zoom): the layer moves with the page, as one
 // picture, so the writing never jumps between sharp and soft while it moves. Drawn again, sharp, once
 // the page is still. Only if the page has moved beyond what the layer holds does the page's own
@@ -6015,7 +6015,11 @@ function moveInk(e) {
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
   const list = evs.length ? evs : [e];
   if (GS.kind === 'erase') {
-    (GS.erasePts = GS.erasePts || []).push(...list.map((ev) => relPos(GS.entry, ev, GS.rect)));
+    // (the eraser's path filled in between the points the Pencil gave: a quick rub never skips over a line)
+    { const q = GS.erasePts = GS.erasePts || [], er = eraserR(), WH = GS.rect ? GS.rect.height / Math.max(1, GS.rect.width) : 1;
+      for (const ev of list) { const pt = relPos(GS.entry, ev, GS.rect), lp = GS.eraseLast;
+        if (lp) { const dist = Math.hypot(pt[0] - lp[0], (pt[1] - lp[1]) * WH), n = Math.min(40, Math.floor(dist / Math.max(1e-4, er * 0.5))); for (let k = 1; k < n; k++) q.push([lp[0] + ((pt[0] - lp[0]) * k) / n, lp[1] + ((pt[1] - lp[1]) * k) / n]); }
+        q.push(pt); GS.eraseLast = pt; } }
     showEraserDot(e, GS.entry);
     if (!GS.eraseRaf) { const g = GS; g.eraseRaf = requestAnimationFrame(() => { g.eraseRaf = 0; const pts = g.erasePts || []; g.erasePts = []; if (pts.length && g.entry.layer.eraseMany(pts, eraserR(), INK.eraser.whole)) g.changed = true; }); }
     return;
@@ -6661,6 +6665,30 @@ function pasteAt(entry, at) {
   INK.tool = 'select'; syncInkBar(); lastEntry = entry;
   makeSelection(entry, moved.map((_, i) => before.length + i));
 }
+// The hand comes down a moment before the Pencil: whatever it began — the page moved, zoomed, slid
+// towards the next — was the hand, not a finger. The Pencil coming down puts the page back where it
+// was and the hand's touch counts no more. (Before, a page zoomed in moved, or slid, under the hand.)
+function palmUndo() {
+  if (!GS || (globalThis.__palmUndo ?? 1) === 0) return;
+  const g = GS, young = now() - (g.t0 || 0) < 1500;
+  if (!young || !(g.kind === 'nav' || g.kind === 'pinch')) return;
+  // (only a finger's: a mouse moving the page is no hand)
+  if (g.kind === 'nav' && (PT.get(g.id) || {}).type !== 'touch') return;
+  if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; }
+  clearTimeout(g.holdT);
+  if (g.kind === 'nav') { Z.x = g.zx; Z.y = g.zy; }
+  else if (g.base) { Z.s = g.base.s; Z.x = g.base.x; Z.y = g.base.y; }
+  SC.rubber = false;
+  applyZoom();
+  GS = null;
+}
+// Fingers still on the glass but no longer moving the page: the page is made sharp there and then,
+// as when they lift (before, it stayed soft until the fingers let go). Moving again, it goes on from it.
+function heldStill(g) {
+  if ((globalThis.__heldSharp ?? 1) === 0) return;
+  g.still = false; clearTimeout(g.stillT);
+  g.stillT = setTimeout(() => { if (GS !== g || Z.s <= 1.05) return; g.still = true; sharpen(); clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 30); }, globalThis.__heldMs ?? 170);
+}
 function startPinch() {
   const t = touches(); if (t.length < 2) return;
   const [a, b] = t;
@@ -6677,7 +6705,7 @@ stage.addEventListener('pointerdown', (e) => {
   try { stage.setPointerCapture(e.pointerId); } catch {}
   if (e.pointerType === 'pen' || e.pointerType === 'mouse') {
     if (GS && GS.type === 'touch' && (GS.kind === 'ink' || GS.kind === 'smart' || GS.kind === 'erase')) endInk(true);
-    if (e.pointerType === 'pen') { penDown = true; for (const p of PT.values()) if (p.type === 'touch') p.palm = true; }
+    if (e.pointerType === 'pen') { penDown = true; for (const p of PT.values()) if (p.type === 'touch') p.palm = true; palmUndo(); }
     // the Apple Pencil on a page opens the markings tools and starts writing straight away
     if (e.pointerType === 'pen' && !V.inking && !V.perform && S.penOpens !== false && entryAt(e.clientX, e.clientY)) {
       // the first touch only opens the markings (nothing is written by it); the next touch writes
@@ -6730,7 +6758,7 @@ window.addEventListener('pointermove', (e) => {
     const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
     GS.lastDx = cx - GS.cx0; GS.lastDy = cy - GS.cy0; GS.lastDs = d / GS.d0;
     // (one update a frame, however many finger moves come in: smooth, never behind)
-    GS.want = { d, cx, cy };
+    GS.want = { d, cx, cy }; heldStill(GS);
     if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; pinchApply(g); }); }
     return;
   }
@@ -6747,10 +6775,10 @@ window.addEventListener('pointermove', (e) => {
       { const ce = e.getCoalescedEvents ? e.getCoalescedEvents() : []; const evs = ce && ce.length ? ce : [e];
         for (const q of evs) GS.vs.push([q.timeStamp || e.timeStamp || now(), q.clientY]); while (GS.vs.length > 24) GS.vs.shift(); }
       if (GS.vs.length > 1) { const d = GS.vs[GS.vs.length - 1][1] - GS.vs[GS.vs.length - 2][1]; if (Math.abs(d) > 0.5) SC.dir = d < 0 ? 1 : -1; }
-      if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); }); }
+      if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); if (Z.s > 1.05) heldStill(g); }); }
       return;
     }
-    if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
+    if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); heldStill(GS); }
     // (a notebook at its usual size: the page goes with the finger, sideways, and the next one
     // comes in after it when you let go — at the first and last page it gives only a little)
     else if (GS.moved && nbSlides() && (GS.slide || (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2))) {
@@ -6819,7 +6847,11 @@ function pointerEnd(e) {
       }
       SC.rubber = false;
       if (Z.y > SC.hi + 0.5 || Z.y < SC.lo - 0.5) { scrollSpringBack(); return; }
-      scrollMomentum(clamp(v, -7, 7));
+      // (flicked again the same way while the pages still fly: faster still, as on the iPhone — each
+      // flick no longer starts again from nothing, and a few quick flicks carry through many pages)
+      const cr = SC.carry; SC.carry = null;
+      if ((globalThis.__flickAdd ?? 1) && cr && performance.now() - cr.t < 600 && dt < 350 && Math.sign(cr.v) === Math.sign(v) && Math.abs(v) > 0.3) v += cr.v * 0.85;
+      scrollMomentum(clamp(v, -(globalThis.__flickMax ?? 14), globalThis.__flickMax ?? 14));
       return;
     }
     if (g.slide) {
