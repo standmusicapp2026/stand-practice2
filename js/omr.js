@@ -3363,6 +3363,31 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
       && Math.abs(a.bottom - a.top - hm) < hm * 0.08 && a.x1 - a.x0 > wm * 0.3);
     if (add.length) staves = [...staves, ...add].sort((a, b2) => a.top - b2.top);
   }
+  // (a staff taken a line off: a row of ledger lines — notes on the first ledger line one after the
+  // other — read as its top or bottom line, the real line on the other side left out. A staff line runs
+  // the whole way; a row of ledger lines is broken between the notes. An outer line inked only here
+  // and there, with a whole line one space beyond the other side: the staff is moved over a line)
+  if ((globalThis.__ledgerTop ?? 1) && staves.length) {
+    staves = staves.map((s) => {
+      if (!s.samples || s.samples.length < 2) return s;
+      const G = (s.bottom - s.top) / 4, x0 = Math.round(s.x0 + G), x1 = Math.round(s.x1 - G);
+      if (x1 - x0 < G * 10) return s;
+      // (measured with the lighter threshold: a photo's lines fade, a staff's line here and there)
+      const G2 = B.gray, tl = G2 ? Math.round(B.th + (250 - B.th) * 0.5) : 0, inkAt = (i) => (G2 ? G2[i] < tl : B[i]);
+      const cov = (off, k) => { let n = 0, tot = 0; for (let x = x0; x <= x1; x += 2) { const y = Math.round(s.L[k][x] + off); tot++; let any = 0; for (let d = -1; d <= 1; d++) { const yy = y + d; if (yy >= 0 && yy < h && inkAt(yy * w + x)) any = 1; } n += any; } return tot ? n / tot : 0; };
+      const c = [0, 1, 2, 3, 4].map((k) => cov(0, k)), inner = Math.min(c[1], c[2], c[3]);
+      if (globalThis.__ledgerDbg) console.log('SHDBG LT ' + JSON.stringify({ top: Math.round(s.top), G: +G.toFixed(1), c: c.map((v) => +v.toFixed(2)), up: +cov(-G, 0).toFixed(2), dn: +cov(G, 4).toFixed(2) }));
+      if (inner < 0.85) return s;
+      for (const [weak, dir] of [[0, 1], [4, -1]]) {
+        const other = dir > 0 ? cov(G, 4) : cov(-G, 0);
+        if (c[weak] < 0.6 && c[weak] < inner - 0.25 && other >= Math.max(0.8, inner - 0.1)) {
+          const j = makeStaff(s.samples.map((q) => ({ ...q, ys: q.ys.map((y) => y + dir * G) })), B, w, h, T, sub);
+          if (Math.abs(j.sp - s.sp) < s.sp * 0.1 && !staves.some((o) => o !== s && o.top < j.bottom + G * 0.5 && o.bottom > j.top - G * 0.5)) return j;
+        }
+      }
+      return s;
+    });
+  }
   if (!staves.length) return { ...empty, angle };
   // Only where the staves are, and which go together (the iPhone's Play cutting a page into its
   // lines): no notes read, many times quicker. The staves and systems are those of the full reading.
