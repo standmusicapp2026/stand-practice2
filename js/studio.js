@@ -1894,6 +1894,13 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   // moved to those keys; a part that only seemed to fit elsewhere, among others playing, by 0.09 at most)
   // (a far key that is a near one an octave away — a singer a semitone lower, heard an octave down
   // among the piano's notes — is that near key when it fits about as well)
+  // Two keys that fit about as well in time (often a key and the one a fifth from it, whose
+  // notes sit in each other's partials): take the one whose notes are heard clearly more often.
+  if ((globalThis.__costTie ?? 1) && best && (globalThis.__judgeTime ?? 1)) {
+    let bc = null; for (const r of byShift.values()) if (!bc || r.cost + shPen(r.shift) < bc.cost + shPen(bc.shift)) bc = r;
+    if (globalThis.__salDbg && bc) globalThis.__salDbg.push(['tie', best.shift, bc.shift, +(best.agree - bc.agree).toFixed(4), +(best.cost - bc.cost).toFixed(4)]);
+    if (bc && bc !== best && best.agree - bc.agree < (globalThis.__tieA ?? 0.03) && best.cost + shPen(best.shift) - bc.cost - shPen(bc.shift) > (globalThis.__tieC ?? 0.06)) best = bc;
+  }
   const KM = globalThis.__keyMargin ?? 0.12;
   if (KM > 0 && best && Math.abs(best.shift) >= (globalThis.__keyMarginMin ?? 5)) {
     const oct = (globalThis.__keyOct ?? 1) ? [best.shift - 12, best.shift + 12].find((q) => q !== 0 && Math.abs(q) < (globalThis.__keyMarginMin ?? 5) && byShift.has(q)) : undefined;
