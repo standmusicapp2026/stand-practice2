@@ -322,19 +322,21 @@ export function readMarks(read, ctx) {
       if (!B) continue;
       const xa = Math.round(A.cx + sp * 0.45), xb = Math.round(B.cx - sp * 0.45);
       if (xb - xa < sp * 0.5) continue;
-      for (const below of [true, false]) {
-        const ys = [];
+      // (the arc's place in each column, under or over the notes; along a staff line the line itself is
+      // taken as the arc where it is thicker, unless told to look past it)
+      const scan = (below, past, maxK) => {
+        const ys = []; let nOn = 0;
         for (let x = xa; x <= xb; x++) {
           let found = null;
-          for (let k = Math.round(sp * 0.1); k <= Math.round(sp * 1.9); k++) {
+          for (let k = Math.round(sp * 0.1); k <= Math.round(maxK); k++) {
             const y = Math.round(A.cy + (below ? k : -k)); if (y < 0 || y >= h) break;
             // where the arc runs along a staff line, the line was taken away with it: there the
             // line is simply thicker than a line
             let onLine = false;
             if (!C[y * w + x] && ctx.B[y * w + x]) {
               let a2 = y, z2 = y; while (a2 > 0 && ctx.B[(a2 - 1) * w + x]) a2--; while (z2 < h - 1 && ctx.B[(z2 + 1) * w + x]) z2++;
-              const len = z2 - a2 + 1; if (len > ctx.T + Math.max(1, sp * 0.06) && len <= ctx.T + sp * 0.45) { onLine = true; }
-              if (onLine) { found = (a2 + z2) / 2; break; }
+              const len = z2 - a2 + 1; if (!past && len > ctx.T + Math.max(1, sp * 0.06) && len <= ctx.T + sp * 0.45) { onLine = true; }
+              if (onLine) { found = (a2 + z2) / 2; nOn++; break; }
               k += len; continue;
             }
             if (C[y * w + x]) {
@@ -346,14 +348,36 @@ export function readMarks(read, ctx) {
           }
           if (found !== null) ys.push([x, found]);
         }
+        return { ys, nOn };
+      };
+      const bowOf = (ys, below) => { const yEnd = (ys[0][1] + ys[ys.length - 1][1]) / 2; const mid = ys.filter(([x]) => Math.abs(x - (xa + xb) / 2) < (xb - xa) * 0.2).map(([, y]) => y); if (!mid.length) return null; const yMid = mid.reduce((a, b) => a + b, 0) / mid.length; return below ? yMid - yEnd : yEnd - yMid; };
+      for (const below of [true, false]) {
+        const { ys, nOn } = scan(below, false, sp * 1.9);
         if (ys.length < (xb - xa + 1) * 0.45) continue;
-        const yEnd = (ys[0][1] + ys[ys.length - 1][1]) / 2;
-        const mid = ys.filter(([x]) => Math.abs(x - (xa + xb) / 2) < (xb - xa) * 0.2).map(([, y]) => y);
-        if (!mid.length) continue;
-        const yMid = mid.reduce((a, b) => a + b, 0) / mid.length;
-        const bow = below ? yMid - yEnd : yEnd - yMid;
+        let bow = bowOf(ys, below); if (bow === null) continue;
         if (underSlur(A, B, below) || restBetween(A, B)) continue;
-        if (bow >= sp * 0.1 || (xb - xa < sp * 1.6 && bow >= 0)) { A.tieTo = B.id; break; }
+        // (a staff line drawn a little thick, flat all along under the two notes, is no tie: a tie bends
+        // and only runs along a line for a short way)
+        // (notes inside the staff only: off it, on ledger lines, the old reading stands)
+        if ((globalThis.__tieLine ?? 1) && A.p >= 0 && A.p <= 8 && xb - xa >= sp * 1.8 && nOn >= ys.length * 0.6) {
+          const inner = ys.slice(Math.ceil(ys.length * 0.1), Math.floor(ys.length * 0.9)).map(([, y]) => y);
+          if (inner.length && Math.max(...inner) - Math.min(...inner) <= Math.max(2, sp * 0.1)) {
+            // (the line's own thickness a few spaces away, either side: as thick there, it is the line)
+            const yl = Math.round(inner[inner.length >> 1]);
+            const thick = (x) => { if (x < 0 || x >= w || !ctx.B[yl * w + x]) return -1; let a2 = yl, z2 = yl; while (a2 > 0 && ctx.B[(a2 - 1) * w + x]) a2--; while (z2 < h - 1 && ctx.B[(z2 + 1) * w + x]) z2++; return z2 - a2 + 1; };
+            const midT = thick(Math.round((xa + xb) / 2));
+            const out = [-6, -4, -3, 3, 4, 6].map((k) => thick(Math.round((k < 0 ? xa : xb) + k * sp))).filter((t) => t > 0 && t <= ctx.T + sp * 0.45);
+            if (out.length >= 2 && out.filter((t) => t >= midT - 1).length >= out.length * 0.5) {
+              // (a tie bowing deeper, past that line: looked for there; a curve, not the line again)
+              const r2 = scan(below, true, sp * 2.8);
+              const bow2 = r2.ys.length >= (xb - xa + 1) * 0.45 ? bowOf(r2.ys, below) : null;
+              if (globalThis.__tieDbg) globalThis.__tieDbg.push({ TL: [Math.round(A.cx), Math.round(A.cy)], span: xb - xa, midT, out, n2: r2.ys.length, bow2: bow2 && +(bow2 / sp).toFixed(2) });
+              if (!(bow2 !== null && bow2 >= sp * 0.3)) continue;
+              bow = bow2;
+            }
+          }
+        }
+        if (bow >= sp * 0.1 || (xb - xa < sp * 1.6 && bow >= 0)) { if (globalThis.__tieDbg) globalThis.__tieDbg.push({ A: [Math.round(A.cx), Math.round(A.cy)], B: [Math.round(B.cx), Math.round(B.cy)], below, bow: +(bow / sp).toFixed(2), n: ys.length, span: xb - xa + 1, sp: +sp.toFixed(1), ys: ys.map((q) => Math.round(q[1] - A.cy)) }); A.tieTo = B.id; break; }
       }
     }
     // ---- short slurs from one note to the next (a small arc under or over the two heads, on the
