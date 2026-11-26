@@ -359,7 +359,7 @@ export function readMarks(read, ctx) {
         // (a staff line drawn a little thick, flat all along under the two notes, is no tie: a tie bends
         // and only runs along a line for a short way)
         // (notes inside the staff only: off it, on ledger lines, the old reading stands)
-        if ((globalThis.__tieLine ?? 1) && A.p >= 0 && A.p <= 8 && xb - xa >= sp * 1.8 && nOn >= ys.length * 0.6) {
+        if ((globalThis.__tieLine ?? 1) && A.p >= 0 && A.p <= 8 && xb - xa >= sp * 1.4 && nOn >= ys.length * 0.6) {
           const inner = ys.slice(Math.ceil(ys.length * 0.1), Math.floor(ys.length * 0.9)).map(([, y]) => y);
           if (inner.length && Math.max(...inner) - Math.min(...inner) <= Math.max(2, sp * 0.1)) {
             // (the line's own thickness a few spaces away, either side: as thick there, it is the line)
@@ -371,7 +371,7 @@ export function readMarks(read, ctx) {
               // (a tie bowing deeper, past that line: looked for there; a curve, not the line again)
               const r2 = scan(below, true, sp * 2.8);
               const bow2 = r2.ys.length >= (xb - xa + 1) * 0.45 ? bowOf(r2.ys, below) : null;
-              if (globalThis.__tieDbg) globalThis.__tieDbg.push({ TL: [Math.round(A.cx), Math.round(A.cy)], span: xb - xa, midT, out, n2: r2.ys.length, bow2: bow2 && +(bow2 / sp).toFixed(2) });
+              if (globalThis.__tieDbg) globalThis.__tieDbg.push({ TL: [Math.round(A.cx), Math.round(A.cy)], p: A.p, below, Bc: Math.round(B.cx), up: [A.stem ? A.stem.up : null, B.stem ? B.stem.up : null], bg: [A.bg ?? null, B.bg ?? null], ys: ys.map((q) => Math.round(q[1] - A.cy)).join(','), span: xb - xa, midT, out, n2: r2.ys.length, bow2: bow2 && +(bow2 / sp).toFixed(2) });
               if (!(bow2 !== null && bow2 >= sp * 0.3)) continue;
               bow = bow2;
             }
