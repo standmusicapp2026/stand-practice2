@@ -31,7 +31,8 @@ import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview, addReviewPages } from './review.js';
 import * as P from './pomodoro.js';
 import { placeWords } from './textplace.js';
-import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks, localComposers, imslpComposers, pinnedRest } from './imslp.js';
+import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks, localComposers, imslpComposers, pinnedRest, fold } from './imslp.js';
+import { searchMutopia, mutopiaUrl } from './mutopia.js';
 import { initCompose, openComposition, openMusicFile } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { findMarks, resolveMarks, metroFor, noteOfMark } from './tempo.js';
@@ -1528,6 +1529,39 @@ function renderExamples() {
     box.append(b);
   }
 }
+// Free scores that open at once (the Mutopia Project): found on the iPad itself, shown only when Stand
+// has checked that their PDF is there (an empty answer: none shown, rather than one that fails)
+const FREE = { rid: 0, wait: new Map() };
+function freeChecked(urls) {
+  if (globalThis.__freeCheck) return globalThis.__freeCheck(urls);
+  if (!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media)) return Promise.resolve(null);
+  const rid = ++FREE.rid;
+  return new Promise((res) => { const t = setTimeout(() => { FREE.wait.delete(rid); res(null); }, 9000); FREE.wait.set(rid, (ok) => { clearTimeout(t); res(ok); }); NATIVE.standMedia.postMessage({ op: 'check', rid, urls }); });
+}
+async function showFree(q, token) {
+  const box = $('#findFree'), ul = $('#freeList');
+  let hits = []; try { hits = await searchMutopia(q, 8); } catch {}
+  if (token !== searchToken) return;
+  if (!hits.length) { box.hidden = true; ul.textContent = ''; return; }
+  const ok = await freeChecked(hits.map(mutopiaUrl));
+  if (token !== searchToken) return;
+  // (in a browser, where nothing can be checked, they are not offered: only what surely opens)
+  const good = ok ? hits.filter((e) => ok[mutopiaUrl(e)]) : [];
+  ul.textContent = ''; box.hidden = !good.length;
+  for (const e of good.slice(0, 5)) {
+    const li = el('li'), b = el('button');
+    const main = el('div', 'w-main'); main.append(el('div', 'w-title', e.t + (e.o && !fold(e.t).includes(fold(e.o)) ? ', ' + e.o : '')), el('div', 'w-comp', e.cn || ''));
+    if (e.i) main.append(el('div', 'w-inst', e.i));
+    b.append(main, el('span', 'free-go', 'Open'));
+    b.addEventListener('click', () => openFree(e));
+    li.append(b); ul.append(li);
+  }
+}
+function openFree(e) {
+  const meta = { title: e.t + (e.o && !fold(e.t).includes(fold(e.o)) ? ', ' + e.o : ''), composer: e.cn || '' };
+  if (NATIVE && NATIVE.standOpen) { NATIVE.standOpen.postMessage({ url: mutopiaUrl(e), title: meta.title, composer: meta.composer }); return; }
+  window.open(mutopiaUrl(e), '_blank');
+}
 let searchToken = 0;
 async function runSearch(typing) {
   const q = $('#findInput').value.trim();
@@ -1537,6 +1571,7 @@ async function runSearch(typing) {
   $('#workView').hidden = true; $('#findList').hidden = false; $('#findIntro').hidden = true;
   const st = $('#findStatus'); st.hidden = false; st.textContent = 'Searching…';
   $('#workList').textContent = '';
+  showFree(q, token);
   try {
     if (!typing) suggestHide();
     const res = await searchWorks(q, (early) => { if (token === searchToken) { st.textContent = 'Results'; renderWorkList(early.results, 30); } }, FS.pin);
@@ -11550,6 +11585,7 @@ window.standMediaEvent = (m) => {
   else if (m.op === 'musicFailed') musicFailed(m);
   else if (m.op === 'status') mediaStatus(m);
   else if (m.op === 'found') ytFound(m);
+  else if (m.op === 'checked') { const f = FREE.wait.get(m.rid); if (f) { FREE.wait.delete(m.rid); f(m.ok || {}); } }
 };
 // In a browser: the same player in a frame that floats over the page. It is moved by any of its dark
 // edge (the top bar, the margin, the bar of buttons between the buttons) and sized by its corner. It

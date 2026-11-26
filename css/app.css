@@ -212,6 +212,14 @@ html:not([lang="en"]) .btn svg { flex: none; }
 .work-list .w-title { font-weight: 600; font-size: 16px; }
 .work-list .w-comp { color: var(--muted); font-size: 13px; }
 .work-list .chev { color: var(--muted); transform: rotate(180deg); width: 18px; height: 18px; }
+/* free scores that open straight away (Mutopia), above the library's results */
+.free-block { margin-top: 14px; }
+.free-head { display: flex; align-items: baseline; gap: 10px; padding: 0 4px; }
+.free-head b { font-size: 15px; }
+.free-head span { color: var(--muted); font-size: 13px; }
+.free-list { margin-top: 8px; }
+.free-list .w-inst { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.free-list .free-go { flex: none; font-size: 13px; font-weight: 600; color: var(--accent-text); padding: 6px 12px; border-radius: 999px; background: var(--accent-soft, rgba(0,0,0,.06)); }
 .work-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin: 6px 0 16px; }
 .work-head h2 { font: 600 28px/1.15 var(--font-serif); margin: 0; text-wrap: balance; }
 .work-head p { margin: 4px 0 0; }

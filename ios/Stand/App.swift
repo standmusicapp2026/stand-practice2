@@ -410,6 +410,24 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 mp.event = { [weak self] m in self?.send("standMediaEvent", m) }
                 mp.play(storeID: body["id"] as? String ?? "", title: body["title"] as? String ?? "")
             case "musicCmd": music?.command(body)
+            case "check":
+                // Find a score: which of these free scores are really there, as PDFs (asked for their
+                // heading only), so only those that open are shown
+                let rid = body["rid"] as? Int ?? 0
+                let urls = (body["urls"] as? [String] ?? []).prefix(24)
+                final class Box { var ok = [String: Bool](); let lock = NSLock() }
+                let box = Box(); let group = DispatchGroup()
+                for s in urls {
+                    guard let u = URL(string: s), u.scheme == "https" else { continue }
+                    var r = URLRequest(url: u, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8); r.httpMethod = "HEAD"
+                    group.enter()
+                    URLSession.shared.dataTask(with: r) { _, resp, _ in
+                        let h = resp as? HTTPURLResponse
+                        let good = (h?.statusCode ?? 0) == 200 && ((h?.mimeType ?? "").lowercased().contains("pdf") || u.pathExtension.lowercased() == "pdf" && !(h?.mimeType ?? "").lowercased().contains("html"))
+                        box.lock.lock(); box.ok[s] = good; box.lock.unlock(); group.leave()
+                    }.resume()
+                }
+                group.notify(queue: .main) { [weak self] in self?.send("standMediaEvent", ["op": "checked", "rid": rid, "ok": box.ok]) }
             case "openApp":
                 // Spotify, Apple Music: their own app, at what was chosen (the first that opens; then the web)
                 let urls = (body["urls"] as? [String] ?? []).compactMap { URL(string: $0) }
