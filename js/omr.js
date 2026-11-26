@@ -418,6 +418,21 @@ function makeStaff(samples, b, w, h, T, gaps = false) {
       return { ...q, ys: q.ys.map((y, k) => (Math.abs(res[k]) > TOL ? a + k * G : y)) };
     });
   }
+  // (a piece of staff read a line off — a ledger line or a beam above taken for its top line, or its
+  // two lower lines pulled onto beams — disagrees with the pieces either side of it on two lines or
+  // more: left out, so the staff does not bend towards it; a page that curves does so gently, and its
+  // neighbours agree)
+  if ((globalThis.__sampOut ?? 1) && samples.length >= 5) {
+    const keep = samples.filter((q, i) => {
+      const nb = []; for (let j = Math.max(0, i - 3); j <= Math.min(samples.length - 1, i + 3); j++) if (j !== i) nb.push(samples[j]);
+      if (nb.length < 3) return true;
+      const G = (q.ys[4] - q.ys[0]) / 4;
+      let bad = 0;
+      for (let k = 0; k < 5; k++) { const v = nb.map((r) => r.ys[k]).sort((a, c) => a - c); const m = v[v.length >> 1]; if (Math.abs(q.ys[k] - m) > Math.max(2, G * 0.35)) bad++; }
+      return bad < 2;
+    });
+    if (keep.length >= Math.max(3, samples.length * 0.6)) samples = keep;
+  }
   // each line's height at every x: straight between samples, level beyond them
   const L = [0, 1, 2, 3, 4].map(() => new Float32Array(w));
   const xs = samples.map((q) => q.xc);
