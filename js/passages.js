@@ -39,6 +39,10 @@ export function allPassages() { return Object.keys(store).map((scoreId) => ({ sc
 // how much a passage matters in a practice session: 0 skip, 1 low, 2 medium, 3 high
 export function setPriority(scoreId, id, prio) { const p = store[scoreId] && store[scoreId][id]; if (p) { p.prio = prio; save(); } }
 export function priorityOf(p) { return p.prio === undefined ? 2 : p.prio; }
+// (the session's own: a tempo played cleanly, logged from the bar of the session; a note for next time)
+export function passageOf(scoreId, id) { return (store[scoreId] && store[scoreId][id]) || null; }
+export function logTempo(scoreId, id, bpm) { const p = passageOf(scoreId, id); if (!p || !(bpm >= 20 && bpm <= 300)) return null; p.log.push({ d: dayKey(), bpm: Math.round(bpm), t: Date.now() }); save(); return p; }
+export function setPassageNote(scoreId, id, note) { const p = passageOf(scoreId, id); if (!p) return; p.note = String(note || '').trim().slice(0, 200) || undefined; save(); }
 
 // Per day: the first and the best tempo logged that day.
 export function dayRows(p) {

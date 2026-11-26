@@ -258,6 +258,9 @@ final class StandMediaFloat: UIView, WKNavigationDelegate, WKUIDelegate, UIGestu
         if tuckedSide != 0 && (cmd == "toggle" || cmd == "play") { untuck() }
         js("window.mediaCmd && window.mediaCmd(\(json(c)))")
     }
+    // (the video's own page stopped while Stand was away: a frozen picture would stay over the score
+    // with nothing to work it — it closes, and the score is free)
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { close() }
     @objc private func leaving() { if kind == "youtube", superview != nil { command(["cmd": "pause"]) } }
     func close() {
         js("window.mediaStop ? window.mediaStop() : (document.body.textContent = '')")

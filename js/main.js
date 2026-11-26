@@ -20,18 +20,19 @@ import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
-import { ask, choose } from './dialog.js';
+import { ask, choose, askText } from './dialog.js';
 import { forScorePdfs } from './forscore.js';
 import { partMap, makeDuo, barsOf, clefEnd, lineUnits, columns } from './duo.js';
 import { DuoFollower, shiftOfName } from './duofollow.js';
-import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
-import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
+import { InkLayer, inkHooks, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, setPassagesShown, isHiddenItem, flushInk, dropInk, preloadMasks, inkActive, liveInk } from './ink.js';
+import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress, passageOf, logTempo, setPassageNote } from './passages.js';
 import { exportPicture, exportPdf, imagesToPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview, addReviewPages } from './review.js';
 import * as P from './pomodoro.js';
 import { placeWords } from './textplace.js';
-import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks, localComposers, imslpComposers, pinnedRest } from './imslp.js';
+import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers, parseQuery, composerWorks, warmUp, prefetchWorks, localComposers, imslpComposers, pinnedRest, fold } from './imslp.js';
+import { searchMutopia, mutopiaUrl } from './mutopia.js';
 import { initCompose, openComposition, openMusicFile } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { findMarks, resolveMarks, metroFor, noteOfMark } from './tempo.js';
@@ -92,7 +93,7 @@ const S = {
   instrument: 'other', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
-async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {});
+async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); setPassagesShown(S.passShow !== false);
   // (Stand's own choices for the pages, not those of the score last open)
   // (a score never set opens the standard way: two pages side by side when the iPad is sideways,
   // one when upright. Before, the way the first score happened to be shown when this came in was
@@ -257,7 +258,7 @@ function showPanel(name, tab) {
   if (name === 'app') { $('#pairNew').querySelector('span').textContent = PHONE ? 'Link an iPad' : 'Link an iPhone'; drawLinked($('#pairCard')); }
   if (name === 'scales') renderScaleStrip();
   if (name === 'pages') { PG.sel.clear(); PG.selecting = false; PG.staged = null; for (const [o, t] of PG.thumbs) if (PG.edited.has(o)) t.stale = true; PG.edited.clear(); renderPagesPanel(); }
-  if (name === 'passages') renderPassages();
+  if (name === 'passages') { renderPassages(); $('#passShow').checked = S.passShow !== false; }
   if (name === 'study') renderStudy();
   if (name === 'record') {
     syncLink(); if (host.state === 'linked') showRemotePreview();
@@ -531,7 +532,8 @@ const folderOf = (id) => FOLD.list.find((f) => f.id === id);
 // draw) is made again, quietly, one at a time.
 const thumbChecked = new Set();
 let thumbFixing = Promise.resolve();
-const canRemakeThumb = (s) => !!s.fileId && s.kind !== 'comp' && s.kind !== 'paper' && !s.preview;
+// (a notebook's cover too: lost, it is drawn again from its cover and name)
+const canRemakeThumb = (s) => !!s.fileId && s.kind !== 'comp' && !s.preview;
 const thumbOfURL = new Map();   // score id -> which cover its picture was made from
 const thumbSig = (s) => (s.thumb ? s.thumb.size + ':' + (s.thumb.type || '') : '') + ':' + (s.thumbAt || 0);
 function thumbURL(s) {
@@ -546,7 +548,7 @@ function thumbURL(s) {
     // once kept the iPad busy for seconds just after it opened)
     THCK.q.push(() => new Promise((res) => {
       const im = new Image();
-      im.onload = () => { try { if (looksBlack(im)) fixThumb(s); } catch {} res(); };
+      im.onload = () => { try { if (s.kind !== 'paper' && looksBlack(im)) fixThumb(s); } catch {} res(); };
       im.onerror = () => { fixThumb(s); res(); };
       im.src = u;
     }));
@@ -564,10 +566,10 @@ async function runThumbChecks() {
   }
   THCK.on = false;
 }
-const loadsWell = (blob) => new Promise((res) => {
+const loadsWell = (blob, dark) => new Promise((res) => {
   if (!blob) { res(false); return; }
   const u = URL.createObjectURL(blob), im = new Image();
-  im.onload = () => { const ok = !looksBlack(im); URL.revokeObjectURL(u); res(ok); };
+  im.onload = () => { const ok = dark || !looksBlack(im); URL.revokeObjectURL(u); res(ok); };
   im.onerror = () => { URL.revokeObjectURL(u); res(false); };
   im.src = u;
 });
@@ -576,12 +578,12 @@ function fixThumb(s) {
     // (never while a score is open: its pages come first)
     for (let i = 0; i < 120 && !$('#score').hidden; i++) await new Promise((r) => setTimeout(r, 1000));
     const fresh = await db.get('scores', s.id).catch(() => null); if (!fresh) return;
-    let thumb = (await loadsWell(fresh.thumb)) ? fresh.thumb : null;
+    let thumb = (await loadsWell(fresh.thumb, fresh.kind === 'paper')) ? fresh.thumb : null;
     if (!thumb) {
       const file = await db.get('files', fresh.fileId).catch(() => null);
-      if (!file || (file.kind !== 'pdf' && file.kind !== 'images')) return;
+      if (!file || (file.kind !== 'pdf' && file.kind !== 'images' && file.kind !== 'paper')) return;
       let base = null;
-      try { base = await openDocument(file, fresh.sizes); thumb = await makeThumb(mapDoc(base, fresh.pageMap, fresh.cuts, fresh.glue)); }
+      try { base = await openDocument(file, fresh.sizes); thumb = await makeThumb(mapDoc(base, fresh.pageMap, fresh.cuts, fresh.glue), { dark: file.kind === 'paper' }); }
       catch (e) { console.warn('cover', e); }
       finally { try { base && base.destroy(); } catch {} }
       if (!thumb) return;
@@ -789,6 +791,10 @@ function partFromName(name, title) {
 // A file name like "Bach - Cello Suite No.1" or "Cello_Suite_No.1_(Bach,_Johann_Sebastian)": the
 // composer part comes out, the rest is the title.
 function titleFromName(name, composer) {
+  // (a name a camera, scanner or program gave the file — IMG_2041, file 003, Scan 3 — says nothing: the
+  // score is called what it is until it is renamed)
+  // (a scanner's name, "Scan 10", is kept: it tells scans apart)
+  { const nb = niceTitle(String(name || '')); if (!nb || /^(img|image|dsc|dscn|pxl|photo|foto|file|ficheiro|archivo|document|documento|untitled|download|\d+)[\s_\-.()]*\d*[\s_\-.()]*\d*$/i.test(nb)) return (composer ? composer + ' – ' : '') + tr('Untitled score'); }
   // (a number the file was put in order by, "06_Clarinet…", is not part of the name: "5 Pieces" is)
   name = String(name || '').replace(/^\d{1,2}[_-]+(?=\p{L})/u, '');
   let t = niceTitle(name).replace(/\s*\((?:[^()]*,[^()]*)\)\s*$/, '').replace(/\s+(score|parts?|part|solo part|complete|full score)$/i, '');
@@ -899,6 +905,30 @@ async function addPdf(data, name, meta, opt = {}) {
   await db.put('files', file); await db.put('scores', score);
   return score;
 }
+// Photos or pictures brought in (from Photos, Files, another app): they open as they are, as a PDF
+// would — no scanning, cropping or cleaning. (The scanner's pages still go through the review.)
+// Each picture is turned upright as the camera held it, and made no bigger than the screen needs.
+async function photoPage(b) {
+  try {
+    const bm = await createImageBitmap(b, { imageOrientation: 'from-image' });
+    const k = Math.min(1, 3200 / Math.max(bm.width, bm.height));
+    if (k >= 1 && /jpe?g|png/i.test(b.type || '')) { bm.close && bm.close(); return b; }
+    const c = document.createElement('canvas'); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+    c.getContext('2d').drawImage(bm, 0, 0, c.width, c.height); bm.close && bm.close();
+    const out = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9)); c.width = c.height = 0;
+    return out || b;
+  } catch { return b; }
+}
+async function addPhotosDirect(blobs, name) {
+  toast(blobs.length > 1 ? `Adding ${blobs.length} pictures…` : 'Adding the picture…', 60000);
+  try {
+    const pages = []; for (const b of blobs) pages.push(await photoPage(b));
+    const sc = await addImages(pages, name, { nameTitle: true });
+    await refreshLibrary(); setHomeTab('mine');
+    toast('Added: ' + label(sc), 3000);
+    openScore(sc.id);
+  } catch (e) { console.error(e); toast('Those pictures could not be added.', 3500); }
+}
 async function addImages(blobs, name, opt = {}) {
   const file = { id: uid(), kind: 'images', data: blobs };
   const doc = await openDocument(file);
@@ -907,7 +937,7 @@ async function addImages(blobs, name, opt = {}) {
   let info = { title: '', composer: '' };
   try { info = await readScoreInfo(doc, name, await loadComposers(), { ocr: readTopOfPage }); } catch (e) { console.warn(e); }
   const nm = opt.nameTitle ? await nameMeta(name) : null;
-  const score = { id: uid(), fileId: file.id, title: (nm && nm.title) || info.title || niceTitle(name), composer: (nm && nm.composer) || info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
+  const score = { id: uid(), fileId: file.id, title: (nm && nm.title) || info.title || titleFromName(name, (nm && nm.composer) || info.composer || ''), composer: (nm && nm.composer) || info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
   if (opt.from) score.importedFrom = opt.from;
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
@@ -1002,7 +1032,7 @@ $('#importInput').addEventListener('change', async (e) => {
   { const sc = fs.filter((x) => /\.(4sc|4ss)$/i.test(x.name)); if (sc.length) await bringItems(sc.map((f) => ({ rel: f.name, size: f.size, mt: f.lastModified || 0, read: async () => f })), 'forScore'); }
   if (pdfs.length) await importPdfs(pdfs.map((f) => ({ name: f.name, data: () => f.arrayBuffer() })));
   if (other.length) setTimeout(() => toast(`${other.length === 1 ? other[0].name + ' is' : other.length + ' files are'} not a PDF or a picture, so ${other.length === 1 ? 'it was' : 'they were'} left out.`, 4000), pdfs.length ? 3500 : 0);
-  if (imgs.length) openReview(imgs, imgs[0].name);
+  if (imgs.length) addPhotosDirect(imgs, imgs[0].name);
 });
 // =====================================================================
 // Bring your scores from another app (forScore, MobileSheets, piaScore, Newzik, a folder of PDFs)
@@ -1340,7 +1370,8 @@ async function phoneAdd(blobs, names, scanned) {
   toast(pics.length > 1 || pdfs.length > 1 ? 'Adding your scores…' : 'Adding your score…', 60000);
   let last = null;
   // (pictures go through the review first, as on the iPad: straightened, cleaned and cropped)
-  if (pics.length && !scanned?.reviewed) {
+  // (only pages from the scanner go through the review; photos and pictures come in as they are)
+  if (pics.length && scanned === true) {
     for (const [b, n] of pdfs) last = await window.__phs.addOwn(await b.arrayBuffer(), n || 'Score');
     $('#toast').hidden = true;
     openReview(pics.map((b) => (b.type ? b : new Blob([b], { type: 'image/jpeg' }))), scanned === true ? 'Scan.jpg' : (names[blobs.indexOf(pics[0])] || 'Photos.jpg'));
@@ -1422,7 +1453,7 @@ window.standIncoming = async (msg) => {
     const pdfIdx = blobs.map((_, i) => i).filter(isPdfAt), imgIdx = blobs.map((_, i) => i).filter((i) => !isPdfAt(i));
     let res = null;
     if (pdfIdx.length) res = await importPdfs(pdfIdx.map((i) => ({ name: names[i], data: () => blobs[i].arrayBuffer(), meta: msg.meta && msg.meta.title && pdfIdx.length === 1 ? msg.meta : null })));
-    if (imgIdx.length) { setHomeTab('mine'); openReview(imgIdx.map((i) => (blobs[i].type ? blobs[i] : new Blob([blobs[i]], { type: 'image/jpeg' }))), names[imgIdx[0]] || 'Scan.jpg'); return; }
+    if (imgIdx.length) { setHomeTab('mine'); addPhotosDirect(imgIdx.map((i) => (blobs[i].type ? blobs[i] : new Blob([blobs[i]], { type: 'image/jpeg' }))), names[imgIdx[0]] || 'Photos.jpg'); return; }
     // one PDF opens straight away (a preview with Keep and Remove)
     if (res && res.added === 1 && pdfIdx.length === 1 && res.last) {
       if (PREVIEW.at && Date.now() - PREVIEW.at < 10 * 60000) { PREVIEW.at = 0; res.last.preview = true; await db.put('scores', res.last); await refreshLibrary(); toast('A look at ' + label(res.last) + '. Keep it to add it to your stand.', 3500); }
@@ -1499,6 +1530,39 @@ function renderExamples() {
     box.append(b);
   }
 }
+// Free scores that open at once (the Mutopia Project): found on the iPad itself, shown only when Stand
+// has checked that their PDF is there (an empty answer: none shown, rather than one that fails)
+const FREE = { rid: 0, wait: new Map() };
+function freeChecked(urls) {
+  if (globalThis.__freeCheck) return globalThis.__freeCheck(urls);
+  if (!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media)) return Promise.resolve(null);
+  const rid = ++FREE.rid;
+  return new Promise((res) => { const t = setTimeout(() => { FREE.wait.delete(rid); res(null); }, 9000); FREE.wait.set(rid, (ok) => { clearTimeout(t); res(ok); }); NATIVE.standMedia.postMessage({ op: 'check', rid, urls }); });
+}
+async function showFree(q, token) {
+  const box = $('#findFree'), ul = $('#freeList');
+  let hits = []; try { hits = await searchMutopia(q, 8); } catch {}
+  if (token !== searchToken) return;
+  if (!hits.length) { box.hidden = true; ul.textContent = ''; return; }
+  const ok = await freeChecked(hits.map(mutopiaUrl));
+  if (token !== searchToken) return;
+  // (in a browser, where nothing can be checked, they are not offered: only what surely opens)
+  const good = ok ? hits.filter((e) => ok[mutopiaUrl(e)]) : [];
+  ul.textContent = ''; box.hidden = !good.length;
+  for (const e of good.slice(0, 5)) {
+    const li = el('li'), b = el('button');
+    const main = el('div', 'w-main'); main.append(el('div', 'w-title', e.t + (e.o && !fold(e.t).includes(fold(e.o)) ? ', ' + e.o : '')), el('div', 'w-comp', e.cn || ''));
+    if (e.i) main.append(el('div', 'w-inst', e.i));
+    b.append(main, el('span', 'free-go', 'Open'));
+    b.addEventListener('click', () => openFree(e));
+    li.append(b); ul.append(li);
+  }
+}
+function openFree(e) {
+  const meta = { title: e.t + (e.o && !fold(e.t).includes(fold(e.o)) ? ', ' + e.o : ''), composer: e.cn || '' };
+  if (NATIVE && NATIVE.standOpen) { NATIVE.standOpen.postMessage({ url: mutopiaUrl(e), title: meta.title, composer: meta.composer }); return; }
+  window.open(mutopiaUrl(e), '_blank');
+}
 let searchToken = 0;
 async function runSearch(typing) {
   const q = $('#findInput').value.trim();
@@ -1508,6 +1572,7 @@ async function runSearch(typing) {
   $('#workView').hidden = true; $('#findList').hidden = false; $('#findIntro').hidden = true;
   const st = $('#findStatus'); st.hidden = false; st.textContent = 'Searching…';
   $('#workList').textContent = '';
+  showFree(q, token);
   try {
     if (!typing) suggestHide();
     const res = await searchWorks(q, (early) => { if (token === searchToken) { st.textContent = 'Results'; renderWorkList(early.results, 30); } }, FS.pin);
@@ -2387,15 +2452,15 @@ function scrollMomentum(v) {
   SC.speed = Math.abs(v);
   const step = () => {
     const now2 = performance.now(), dt = Math.min(40, now2 - last); last = now2;
-    const y0 = Z.y; Z.y += v * dt; SC.dir = v < 0 ? 1 : -1; applyZoom();
+    const y0 = Z.y; Z.y += v * dt; SC.dir = v < 0 ? 1 : -1; SC.v = v; applyZoom();
     v *= Math.pow(0.998, dt);   // (slows as on the iPhone: about a seventh of its speed left after a second)
     SC.speed = Math.abs(v);
-    if (Math.abs(v) < 0.015 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; SC.speed = 0; scrollSync(true); scrollSettle(); scheduleSharpen(); return; }
+    if (Math.abs(v) < 0.015 || Math.abs(Z.y - y0) < 0.01) { SC.mom = 0; SC.speed = 0; SC.v = 0; scrollSync(true); scrollSettle(); scheduleSharpen(); return; }
     SC.mom = requestAnimationFrame(step);
   };
   SC.mom = requestAnimationFrame(step);
 }
-function scrollStop() { cancelAnimationFrame(SC.mom); SC.mom = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; SC.speed = 0; }
+function scrollStop() { if (SC.mom) SC.carry = { v: SC.v || 0, t: performance.now() }; cancelAnimationFrame(SC.mom); SC.mom = 0; SC.v = 0; cancelAnimationFrame(SC.anim); SC.anim = 0; SC.speed = 0; }
 // pulled past an end and let go: back to the end, gently
 function scrollSpringBack() {
   cancelAnimationFrame(SC.anim);
@@ -3307,7 +3372,7 @@ async function sharpen() {
 // page), it is made sharp again. (Writing looked blurred after the Pencil lifted on the iPad.)
 setInterval(() => {
   // (only while a line is being drawn or the page pinched: a touch left over must not stop this)
-  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && /^(ink|erase|smart|lasso|tape|pinch)$/.test(GS.kind)) || $('#score').hidden) return;
+  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && /^(ink|erase|smart|lasso|tape|pinch)$/.test(GS.kind) && !GS.still) || $('#score').hidden) return;
   // (zoomed in and still, the sharp layer is always there: whatever took it away, it comes back)
   if (!SHARP.on && !GS && sharpCan() && performance.now() - (Z.movedAt || 0) > 400) { sharpenInk(); return; }
   // (nothing moved since the markings were last made sharp: they are as sharp as they can be; very
@@ -3385,7 +3450,7 @@ function sharpBase() {
   return !!(V.doc && Z.s > 1.05 && !TURN() && !V.half && !stage.querySelector('.half-clip') && !$('#score').hidden && V.pages.some((p) => p.layer && p.ink));
 }
 // (may it be drawn now: and not while two fingers move the page)
-function sharpCan() { return sharpBase() && !(GS && /^(pinch|nav)$/.test(GS.kind)); }
+function sharpCan() { return sharpBase() && !(GS && /^(pinch|nav)$/.test(GS.kind) && !GS.still); }
 // The page moving under it (two fingers, a drag, a zoom): the layer moves with the page, as one
 // picture, so the writing never jumps between sharp and soft while it moves. Drawn again, sharp, once
 // the page is still. Only if the page has moved beyond what the layer holds does the page's own
@@ -3895,6 +3960,12 @@ function setLyHidden(id, hide) {
   for (const p of V.pages) if (p.layer && p.layer.ready) p.layer.redraw();
   PG.thumbs.forEach((t) => { t.stale = true; });
 }
+// Passages › Show the boxes: off, the music is clear of them (the passages and their practice stay)
+$('#passShow')?.addEventListener('change', (e) => {
+  S.passShow = e.target.checked; saveSettings(); setPassagesShown(S.passShow);
+  for (const p of V.pages) if (p.layer && p.layer.ready) p.layer.redraw();
+  PG.thumbs.forEach((t) => { t.stale = true; });
+});
 function useLayer(id) {
   if (id && lyHidden(id)) setLyHidden(id, false);    // writing in a layer shows it
   LY.active = id || ''; setActiveLayer(LY.active); syncLayerUi();
@@ -4661,6 +4732,116 @@ function progCol(T, x, y, w, kf = 1, ky = 1) {
   return { items: out, y };
 }
 const LAYOUTS = [
+  // ---- teaching
+  { k: 'assign', cat: 'teach', label: 'This week’s practice', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('spaced', 0.07, 0.045, 'For my student', { w: 0.5, al: 'left', c: '#567c8d', fs: 0.017 }),
+      T('title', 0.07, 0.07, 'This week’s practice', { w: 0.7, c: '#1f2430', fs: 0.05 }),
+      T('note', 0.62, 0.075, 'name …', { w: 0.31, al: 'right', fs: 0.026, c: '#567c8d' })];
+    const rows = [['Warm-up', 'Open strings, long bows, 4 counts each', '5'], ['Scale', 'G major, 2 octaves, slurred in pairs', '5'], ['Study', 'No. 3: bars 1–12, slowly, then a little faster', '10'], ['Piece', 'The middle section: the shift in bar 21 five times right', '10']];
+    rows.forEach(([h, what, min], i) => {
+      const y = 0.17 + i * 0.12;
+      out.push(rbox(0.07, y, 0.86, 0.1, i % 2 ? '#f6f7fb' : '#eef4f0'), T('heading', 0.1, y + 0.016, h, { w: 0.3, fs: 0.022, c: '#2f4156' }),
+        T('body', 0.1, y + 0.052, what, { w: 0.62, fs: 0.017, c: '#4a5563' }), T('note', 0.74, y + 0.025, min + ' min', { w: 0.16, al: 'right', fs: 0.026, c: '#567c8d' }));
+    });
+    out.push(T('heading', 0.07, 0.67, 'Each day you practise, colour a circle', { w: 0.86, fs: 0.02, c: '#2f4156' }));
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach((d, i) => {
+      const x = 0.1 + i * 0.12;
+      out.push({ t: 'shape', k: 'round', x: x + 0.03, y: 0.755, w: 0.07, h: 0.07 / 1.414, f: '#ffffff', lc: '#b9cbd3', lw: 0.0015, a: 1, rot: 0 }, T('body', x, 0.8, d, { w: 0.06, al: 'center', fs: 0.016, c: '#6b7480' }));
+    });
+    out.push(T('sticky', 0.07, 0.86, 'A question for next lesson:', { w: 0.42, fs: 0.02 }), T('note', 0.55, 0.9, 'next lesson: …', { w: 0.38, al: 'right', fs: 0.024, c: '#567c8d' }));
+    return out;
+  } },
+  { k: 'report', cat: 'teach', label: 'Progress report', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 },
+      T('spaced', 0.1, 0.05, 'Progress report', { w: 0.8, c: LC.gold, fs: 0.018 }),
+      T('elegant', 0.1, 0.08, 'Student’s Name', { w: 0.8, c: LC.ink, fs: 0.05 }),
+      T('body', 0.1, 0.15, 'Cello · Autumn term', { w: 0.8, al: 'center', i: 1, fs: 0.02, c: LC.soft }), rule(0.3, 0.2, 0.4, LC.gold2)];
+    const skills = ['Sound and bowing', 'Intonation', 'Rhythm and pulse', 'Reading music', 'Technique (shifting, vibrato)', 'Musicality', 'Practice at home'];
+    out.push(T('heading', 0.62, 0.235, 'Getting there  ·  Good  ·  Excellent', { w: 0.3, al: 'right', fs: 0.013, c: LC.soft, ff: 'avenir' }));
+    skills.forEach((sk, i) => {
+      const y = 0.27 + i * 0.065;
+      out.push(T('body', 0.1, y, sk, { w: 0.5, fs: 0.02, c: LC.ink }), rule(0.1, y + 0.048, 0.8, LC.rule, 0.001));
+      for (let d = 0; d < 3; d++) out.push({ t: 'shape', k: 'round', x: 0.68 + d * 0.085, y: y + 0.018, w: 0.03, h: 0.03 / 1.414, f: '#ffffff', lc: LC.gold2, lw: 0.0013, a: 1, rot: 0 });
+    });
+    out.push(T('heading', 0.1, 0.75, 'Comments', { w: 0.8, fs: 0.022, c: LC.ink, ff: 'baskerville' }),
+      ...Array.from({ length: 4 }, (_, i) => rule(0.1, 0.81 + i * 0.035, 0.8, LC.rule, 0.001)),
+      T('note', 0.1, 0.95, 'Teacher …', { w: 0.8, al: 'right', fs: 0.022, c: LC.gold }));
+    return out;
+  } },
+  { k: 'lessonplan', cat: 'teach', label: 'Lesson plan', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.07, 0.04, 'Lesson plan', { w: 0.5, c: '#1f2430' }), T('note', 0.55, 0.06, 'student · date', { w: 0.38, al: 'right', fs: 0.024, c: '#567c8d' }),
+      rbox(0.07, 0.12, 0.86, 0.075, '#fdf6e3'), T('heading', 0.1, 0.133, 'Today’s one goal', { w: 0.3, fs: 0.019, c: '#8a6a3a' }), T('body', 0.1, 0.163, 'By the end, the student can …', { w: 0.8, fs: 0.017, i: 1, c: '#6b6f7a' })];
+    [['0′', 'Welcome · how was the week?', '5'], ['5′', 'Warm-up and technique', '10'], ['15′', 'Study', '10'], ['25′', 'Repertoire: the passage that needs it most', '20'], ['45′', 'Play through · praise one thing', '10'], ['55′', 'Assign the week: write it down together', '5']].forEach(([t, h, min], i) => {
+      const y = 0.23 + i * 0.1;
+      out.push(T('note', 0.07, y + 0.012, t, { w: 0.08, fs: 0.024, c: '#9aa3ad' }), rbox(0.16, y, 0.77, 0.085, i % 2 ? '#f6f7fb' : '#eef4f0'),
+        T('heading', 0.19, y + 0.016, h, { w: 0.58, fs: 0.019, c: '#2f4156' }), T('note', 0.78, y + 0.02, min + ' min', { w: 0.12, al: 'right', fs: 0.022, c: '#567c8d' }));
+    });
+    out.push(T('heading', 0.07, 0.85, 'After the lesson', { w: 0.4, fs: 0.02, c: '#2f4156' }), ...Array.from({ length: 2 }, (_, i) => rule(0.07, 0.9 + i * 0.035, 0.86, '#e3e8ee', 0.001)));
+    return out;
+  } },
+  { k: 'stars', cat: 'teach', label: 'Star chart', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fffaf0', pat: '', a: 1 },
+      T('poster', 0.08, 0.05, 'My practice stars', { w: 0.84, c: '#d9822b', fs: 0.06 }),
+      T('body', 0.1, 0.14, 'A star for every day you play. Ten stars in a row: a prize!', { w: 0.8, al: 'center', fs: 0.02, c: '#7a5a3a' })];
+    ['Week 1', 'Week 2', 'Week 3', 'Week 4'].forEach((w, r) => {
+      const y = 0.22 + r * 0.17;
+      out.push(rbox(0.07, y, 0.86, 0.14, ['#fde9c9', '#e3f1e0', '#e2ecf8', '#f6e1ea'][r]), T('heading', 0.1, y + 0.05, w, { w: 0.14, fs: 0.022, c: '#5a4632' }));
+      for (let d = 0; d < 7; d++) out.push({ t: 'stamp', k: 'txt', x: 0.3 + d * 0.09, y: y + 0.07, s: 0.03, txt: '☆', c: '#d9822b', a: 0.9 });
+    });
+    out.push(T('sticky', 0.55, 0.9, 'My prize: …', { w: 0.36, fs: 0.022 }));
+    return out;
+  } },
+  // ---- ensembles and gigs
+  { k: 'setlist', cat: 'ensemble', label: 'Set list', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#111318', pat: '', a: 1 },
+      T('spaced', 0.08, 0.05, 'Set list', { w: 0.84, c: '#c9a96a', fs: 0.02 }),
+      T('poster', 0.08, 0.08, 'Friday at the Jazz Club', { w: 0.84, c: '#f3ead8', fs: 0.05 })];
+    ['Opening tune', 'Second song', 'A ballad', 'Something fast', 'Solo spot', 'The crowd favourite', 'Last one', 'Encore'].forEach((t, i) => {
+      const y = 0.19 + i * 0.085;
+      out.push(T('note', 0.08, y, String(i + 1).padStart(2, '0'), { w: 0.08, fs: 0.03, c: '#c9a96a' }), T('heading', 0.18, y + 0.005, t, { w: 0.5, fs: 0.026, c: '#f3ead8', ff: 'avenir' }),
+        T('body', 0.7, y + 0.01, 'key …  ·  4′', { w: 0.22, al: 'right', fs: 0.017, c: '#9aa0aa' }), rule(0.08, y + 0.066, 0.84, '#2b2f38', 0.001));
+    });
+    return out;
+  } },
+  { k: 'gig', cat: 'ensemble', label: 'Gig sheet', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.07, 0.04, 'Gig sheet', { w: 0.5, c: '#1f2430' }), T('note', 0.55, 0.06, 'date …', { w: 0.38, al: 'right', fs: 0.026, c: '#567c8d' })];
+    const boxes = [[0.07, 0.13, 'Where', 'Venue, address, how to get in, parking'], [0.51, 0.13, 'When', 'Arrive · sound check · doors · we play · finish'], [0.07, 0.33, 'Wear', 'All black · shoes for a long stand'], [0.51, 0.33, 'Bring', 'Stand, light, spare strings, rosin, music, water'], [0.07, 0.53, 'Who', 'Contact on the day, phone'], [0.51, 0.53, 'Money', 'Fee, how it is paid']];
+    for (const [x, y, h, sub] of boxes) out.push(rbox(x, y, 0.42, 0.17, x < 0.5 ? '#eef4f0' : '#f6f7fb'), T('heading', x + 0.03, y + 0.02, h, { w: 0.36, fs: 0.022, c: '#2f4156' }), T('body', x + 0.03, y + 0.06, sub, { w: 0.36, fs: 0.016, i: 1, c: '#6b7480' }));
+    out.push(T('heading', 0.07, 0.74, 'Music to play', { w: 0.86, fs: 0.022, c: '#2f4156' }), T('checklist', 0.07, 0.785, 'First piece\nSecond piece\nThird piece\nEncore', { w: 0.86, fs: 0.019, lh: 1.7, c: '#2f4156' }));
+    return out;
+  } },
+  { k: 'seating', cat: 'ensemble', label: 'Seating plan', land: true, make: () => {
+    const T = tbP(true), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.06, 0.05, 'Seating plan', { w: 0.5, c: '#1f2430' }), T('note', 0.55, 0.07, 'concert …', { w: 0.39, al: 'right', fs: 0.026, c: '#567c8d' })];
+    // (chairs in rows round the conductor: three arcs, each a little wider)
+    [[7, 0.26, '#eef4f0'], [9, 0.42, '#f6f7fb'], [11, 0.58, '#eef4f0']].forEach(([n, R, f]) => {
+      for (let i = 0; i < n; i++) { const a = Math.PI * (0.08 + 0.84 * (i / (n - 1))), x = 0.5 - Math.cos(a) * R * 0.72, y = 0.84 - Math.sin(a) * R * 1.05; out.push({ t: 'shape', k: 'round', x, y, w: 0.05, h: 0.05 * 1.414, f, lc: '#b9cbd3', lw: 0.0012, a: 1, rot: 0 }); }
+    });
+    out.push(rbox(0.44, 0.86, 0.12, 0.08, '#fdf6e3'), T('heading', 0.44, 0.88, 'Conductor', { w: 0.12, al: 'center', fs: 0.016, c: '#8a6a3a' }));
+    out.push(T('body', 0.06, 0.9, 'Write each name on a chair.', { w: 0.34, fs: 0.017, i: 1, c: '#6b7480' }));
+    return out;
+  } },
+  // ---- practice, more
+  { k: 'ladder', cat: 'practice', label: 'Tempo ladder', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.07, 0.04, 'Tempo ladder', { w: 0.6, c: '#1f2430' }), T('body', 0.07, 0.11, 'One passage, a few clicks faster each step. Tick a step after three clean times in a row.', { w: 0.86, fs: 0.018, c: '#6b7480' })];
+    out.push(T('note', 0.07, 0.17, 'Passage: bars … to …', { w: 0.86, fs: 0.026, c: '#567c8d' }));
+    for (let i = 0; i < 10; i++) {
+      const y = 0.83 - i * 0.065, x = 0.1 + i * 0.06;
+      out.push(rbox(x, y, 0.3, 0.05, i % 2 ? '#f6f7fb' : '#eef4f0'), T('heading', x + 0.02, y + 0.012, '♩ = ' + (60 + i * 8), { w: 0.18, fs: 0.018, c: '#2f4156' }));
+      for (let d = 0; d < 3; d++) out.push({ t: 'shape', k: 'round', x: x + 0.22 + d * 0.025, y: y + 0.025, w: 0.018, h: 0.018 / 1.414, f: '#ffffff', lc: '#b9cbd3', lw: 0.0012, a: 1, rot: 0 });
+    }
+    return out;
+  } },
+  { k: 'goals', cat: 'practice', label: 'Goals for the term', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }, T('spaced', 0.1, 0.05, 'This term', { w: 0.8, c: LC.gold, fs: 0.018 }), T('elegant', 0.1, 0.08, 'Three goals', { w: 0.8, c: LC.ink, fs: 0.05 }), rule(0.3, 0.16, 0.4, LC.gold2)];
+    ['A piece to play by heart', 'A skill to master', 'A concert or exam to prepare'].forEach((g, i) => {
+      const y = 0.2 + i * 0.25;
+      out.push(T('note', 0.1, y, String(i + 1), { w: 0.06, fs: 0.05, c: LC.gold2 }), T('heading', 0.18, y + 0.01, g, { w: 0.72, fs: 0.024, c: LC.ink, ff: 'baskerville' }),
+        T('checklist', 0.18, y + 0.06, 'First step …\nHalfway …\nDone when …', { w: 0.72, fs: 0.018, lh: 1.75, c: LC.soft }));
+    });
+    return out;
+  } },
   // ---- concerts
   { k: 'programme', cat: 'concert', label: 'Programme', make: () => {
     const T = tbP(false);
@@ -5235,7 +5416,7 @@ const LAYOUTS = [
   ] },
 ];
 function tb(style, x, y, txt, extra = {}) { return measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }); }
-const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['social', 'For sharing']];
+const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['teach', 'Teaching'], ['ensemble', 'Ensembles and gigs'], ['social', 'For sharing']];
 // Every layout in other colours: the same design, its paper, ink and accent moved together to another
 // family (or turned to dark paper). nh/ns: the hue and strength the neutral colours (paper, ink,
 // rules) take; ah/as: the hue and strength of the accents; inv: light ink on dark paper.
@@ -6015,7 +6196,11 @@ function moveInk(e) {
   const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
   const list = evs.length ? evs : [e];
   if (GS.kind === 'erase') {
-    (GS.erasePts = GS.erasePts || []).push(...list.map((ev) => relPos(GS.entry, ev, GS.rect)));
+    // (the eraser's path filled in between the points the Pencil gave: a quick rub never skips over a line)
+    { const q = GS.erasePts = GS.erasePts || [], er = eraserR(), WH = GS.rect ? GS.rect.height / Math.max(1, GS.rect.width) : 1;
+      for (const ev of list) { const pt = relPos(GS.entry, ev, GS.rect), lp = GS.eraseLast;
+        if (lp) { const dist = Math.hypot(pt[0] - lp[0], (pt[1] - lp[1]) * WH), n = Math.min(40, Math.floor(dist / Math.max(1e-4, er * 0.5))); for (let k = 1; k < n; k++) q.push([lp[0] + ((pt[0] - lp[0]) * k) / n, lp[1] + ((pt[1] - lp[1]) * k) / n]); }
+        q.push(pt); GS.eraseLast = pt; } }
     showEraserDot(e, GS.entry);
     if (!GS.eraseRaf) { const g = GS; g.eraseRaf = requestAnimationFrame(() => { g.eraseRaf = 0; const pts = g.erasePts || []; g.erasePts = []; if (pts.length && g.entry.layer.eraseMany(pts, eraserR(), INK.eraser.whole)) g.changed = true; }); }
     return;
@@ -6661,6 +6846,30 @@ function pasteAt(entry, at) {
   INK.tool = 'select'; syncInkBar(); lastEntry = entry;
   makeSelection(entry, moved.map((_, i) => before.length + i));
 }
+// The hand comes down a moment before the Pencil: whatever it began — the page moved, zoomed, slid
+// towards the next — was the hand, not a finger. The Pencil coming down puts the page back where it
+// was and the hand's touch counts no more. (Before, a page zoomed in moved, or slid, under the hand.)
+function palmUndo() {
+  if (!GS || (globalThis.__palmUndo ?? 1) === 0) return;
+  const g = GS, young = now() - (g.t0 || 0) < 1500;
+  if (!young || !(g.kind === 'nav' || g.kind === 'pinch')) return;
+  // (only a finger's: a mouse moving the page is no hand)
+  if (g.kind === 'nav' && (PT.get(g.id) || {}).type !== 'touch') return;
+  if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; }
+  clearTimeout(g.holdT);
+  if (g.kind === 'nav') { Z.x = g.zx; Z.y = g.zy; }
+  else if (g.base) { Z.s = g.base.s; Z.x = g.base.x; Z.y = g.base.y; }
+  SC.rubber = false;
+  applyZoom();
+  GS = null;
+}
+// Fingers still on the glass but no longer moving the page: the page is made sharp there and then,
+// as when they lift (before, it stayed soft until the fingers let go). Moving again, it goes on from it.
+function heldStill(g) {
+  if ((globalThis.__heldSharp ?? 1) === 0) return;
+  g.still = false; clearTimeout(g.stillT);
+  g.stillT = setTimeout(() => { if (GS !== g || Z.s <= 1.05) return; g.still = true; sharpen(); clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 30); }, globalThis.__heldMs ?? 170);
+}
 function startPinch() {
   const t = touches(); if (t.length < 2) return;
   const [a, b] = t;
@@ -6677,7 +6886,7 @@ stage.addEventListener('pointerdown', (e) => {
   try { stage.setPointerCapture(e.pointerId); } catch {}
   if (e.pointerType === 'pen' || e.pointerType === 'mouse') {
     if (GS && GS.type === 'touch' && (GS.kind === 'ink' || GS.kind === 'smart' || GS.kind === 'erase')) endInk(true);
-    if (e.pointerType === 'pen') { penDown = true; for (const p of PT.values()) if (p.type === 'touch') p.palm = true; }
+    if (e.pointerType === 'pen') { penDown = true; for (const p of PT.values()) if (p.type === 'touch') p.palm = true; palmUndo(); }
     // the Apple Pencil on a page opens the markings tools and starts writing straight away
     if (e.pointerType === 'pen' && !V.inking && !V.perform && S.penOpens !== false && entryAt(e.clientX, e.clientY)) {
       // the first touch only opens the markings (nothing is written by it); the next touch writes
@@ -6730,7 +6939,7 @@ window.addEventListener('pointermove', (e) => {
     const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
     GS.lastDx = cx - GS.cx0; GS.lastDy = cy - GS.cy0; GS.lastDs = d / GS.d0;
     // (one update a frame, however many finger moves come in: smooth, never behind)
-    GS.want = { d, cx, cy };
+    GS.want = { d, cx, cy }; heldStill(GS);
     if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; pinchApply(g); }); }
     return;
   }
@@ -6747,10 +6956,10 @@ window.addEventListener('pointermove', (e) => {
       { const ce = e.getCoalescedEvents ? e.getCoalescedEvents() : []; const evs = ce && ce.length ? ce : [e];
         for (const q of evs) GS.vs.push([q.timeStamp || e.timeStamp || now(), q.clientY]); while (GS.vs.length > 24) GS.vs.shift(); }
       if (GS.vs.length > 1) { const d = GS.vs[GS.vs.length - 1][1] - GS.vs[GS.vs.length - 2][1]; if (Math.abs(d) > 0.5) SC.dir = d < 0 ? 1 : -1; }
-      if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); }); }
+      if (!GS.raf) { const g = GS; g.raf = requestAnimationFrame(() => { g.raf = 0; if (GS !== g || !g.want) return; if (Z.s > 1.001) Z.x = g.zx + g.want.dx; Z.y = g.zy + g.want.dy; SC.rubber = true; applyZoom(); if (Z.s > 1.05) heldStill(g); }); }
       return;
     }
-    if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
+    if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); heldStill(GS); }
     // (a notebook at its usual size: the page goes with the finger, sideways, and the next one
     // comes in after it when you let go — at the first and last page it gives only a little)
     else if (GS.moved && nbSlides() && (GS.slide || (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2))) {
@@ -6819,7 +7028,11 @@ function pointerEnd(e) {
       }
       SC.rubber = false;
       if (Z.y > SC.hi + 0.5 || Z.y < SC.lo - 0.5) { scrollSpringBack(); return; }
-      scrollMomentum(clamp(v, -7, 7));
+      // (flicked again the same way while the pages still fly: faster still, as on the iPhone — each
+      // flick no longer starts again from nothing, and a few quick flicks carry through many pages)
+      const cr = SC.carry; SC.carry = null;
+      if ((globalThis.__flickAdd ?? 1) && cr && performance.now() - cr.t < 600 && dt < 350 && Math.sign(cr.v) === Math.sign(v) && Math.abs(v) > 0.3) v += cr.v * 0.85;
+      scrollMomentum(clamp(v, -(globalThis.__flickMax ?? 14), globalThis.__flickMax ?? 14));
       return;
     }
     if (g.slide) {
@@ -7170,7 +7383,8 @@ function renderPagesPanel() {
     const b = el('button', 'pthumb gone');
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     b.append(frame, el('span', 'num', 'Put back'));
-    b.addEventListener('click', () => { const at = map.findIndex((x) => x > o); const next = map.slice(); next.splice(at < 0 ? next.length : at, 0, o); PG.staged = next; renderPagesPanel(); });
+    // (put back at once, as a page deleted goes at once: no Save to remember)
+    b.addEventListener('click', () => { const at = map.findIndex((x) => x > o); const next = map.slice(); next.splice(at < 0 ? next.length : at, 0, o); PG.staged = next; renderPagesPanel(); savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast('Page put back.', 1600); }); });
     tg.append(b);
   }
   syncPageDelete(map);
@@ -7254,6 +7468,8 @@ const pageDragEnd = (e) => {
   if (to === d.from) return;
   const next = d.map.slice(); next.splice(d.from, 1); next.splice(clamp(to, 0, next.length), 0, d.o);
   PG.staged = next; renderPagesPanel();
+  // (kept at once: the new order is the score's straight away)
+  savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); });
 };
 window.addEventListener('pointerup', pageDragEnd); window.addEventListener('pointercancel', pageDragEnd);
 document.addEventListener('pointerdown', (e) => { if (PGH.menu && !e.target.closest('.pg-menu') && !e.target.closest('.pcell.held')) pageHoldClose(); }, true);
@@ -7310,7 +7526,11 @@ $('#pgDelete').addEventListener('click', () => {
   setTimeout(() => savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); }), from.size ? 800 : 0);
 });
 // keep the changes: the score or notebook is laid out once, with the panel closed
-async function savePageChanges(quiet) {
+// (one after another: a delete, a page put back and the panel closed, all within a moment, each
+// waits for the one before — two at once laid the score out twice over and pages went astray)
+let pgSaveQ = Promise.resolve();
+function savePageChanges(quiet) { const r = pgSaveQ.then(() => savePageChanges1(quiet)).catch((err) => console.warn('pages', err)); pgSaveQ = r; return r; }
+async function savePageChanges1(quiet) {
   const next = PG.staged; PG.staged = null;
   if (!next) return;
   const cur = V.score.pageMap || [...Array(V.base.pages).keys()];
@@ -7322,7 +7542,7 @@ async function savePageChanges(quiet) {
 }
 $('#pgSaveBtn').addEventListener('click', () => { hidePanel(); });
 $('#pgCancel').addEventListener('click', () => { PG.staged = null; PG.sel.clear(); renderPagesPanel(); });
-$('#pgRestoreAll').addEventListener('click', () => { PG.staged = [...Array(V.base.pages).keys()]; renderPagesPanel(); });
+$('#pgRestoreAll').addEventListener('click', () => { PG.staged = [...Array(V.base.pages).keys()]; renderPagesPanel(); savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast('Every page is back.', 1600); }); });
 $('#pagesBtn').addEventListener('click', () => showPanel('pages'));
 // ---------- crop and cut pages ----------
 $('#pgCrop').addEventListener('click', async () => {
@@ -7432,6 +7652,8 @@ async function doExportPicture(i) {
   } catch (e) { console.error(e); toast('The picture could not be made: ' + (e.message || e)); }
 }
 // a notebook's own bar
+// Designs: every layout, colour and type, straight from the notebook's bar
+$('#nbLayoutsBtn').addEventListener('click', () => { if (!V.inking) setInking(true); openLayGallery(); });
 $('#nbPhotoBtn').addEventListener('click', () => { if (!V.inking) setInking(true); $('#insFile').click(); });
 $('#nbAddBtn').addEventListener('click', () => {
   // which paper for the new page: the same, or any other
@@ -9061,6 +9283,7 @@ function fillKeySelects() {
   $('#keySel').value = S.key; $('#sysSel').value = S.system;
 }
 function updateTunerSetup() {
+  { const c = $('#refChipVal'); if (c) c.textContent = String(S.ref); }
   tuner.ref = S.ref; tuner.key = S.key; tuner.system = S.system; tuner.long = S.instrument === 'bass';
   drone.ref = S.ref; drone.refresh();
   scale.ref = S.ref;
@@ -9085,6 +9308,8 @@ function updateTunerSetup() {
   }
 }
 holdRepeat($('#refUp'), () => { S.ref = clamp(S.ref + 1, 400, 466); updateTunerSetup(); saveSettings(); });
+// (the iPhone on its side: the reference A as one chip — each tap the next usual one: 440, 441, 442, 443, 415)
+$('#refChip').addEventListener('click', () => { const seq = [440, 441, 442, 443, 415]; const i = seq.indexOf(S.ref); S.ref = seq[(i + 1) % seq.length]; updateTunerSetup(); saveSettings(); });
 holdRepeat($('#refDown'), () => { S.ref = clamp(S.ref - 1, 400, 466); updateTunerSetup(); saveSettings(); });
 $('#sysSel').addEventListener('change', (e) => { S.system = e.target.value; saveSettings(); updateTunerSetup(); });
 $('#keySel').addEventListener('change', (e) => { S.key = +e.target.value; saveSettings(); updateTunerSetup(); });
@@ -11370,6 +11595,23 @@ $('#mpKeep').addEventListener('click', () => {
   db.put('scores', V.score); keepSync();
   if (!$('#panel-listen').hidden) renderListen();
 });
+// A YouTube video divided into chapters — a piece's movements: they become its moments, named, the
+// first time it plays here (only when it has none of its own yet; asked for once per video)
+const YTCH = { asked: new Set(), rid: 0, wait: new Map() };
+function ytChapters() {
+  const key = MP.key; if (!key || !key.startsWith('yt:') || YTCH.asked.has(key) || !MOM.all) return;
+  YTCH.asked.add(key);
+  if (MOM.all['ch:' + key] || (MOM.all[key] || []).length) return;
+  if (!(NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media)) return;
+  const rid = ++YTCH.rid;
+  YTCH.wait.set(rid, (items) => {
+    MOM.all['ch:' + key] = 1;
+    const list = (items || []).filter((m) => m && m.t >= 0 && m.name).map((m) => ({ t: +m.t, name: String(m.name).slice(0, 40) }));
+    if (list.length >= 2 && !(MOM.all[key] || []).length) { MOM.all[key] = list; toast(tr('The video’s movements are kept as its moments: tap one to go there.'), 3600); }
+    momentsSave(); if (MP.key === key) momentsSync();
+  });
+  NATIVE.standMedia.postMessage({ op: 'chapters', rid, id: key.slice(3) });
+}
 function mediaStatus(s) {
   if (!s || (s.kind !== 'youtube' && s.kind !== 'music')) return;
   if (!MP.on) mediaPillShow(true);
@@ -11378,7 +11620,7 @@ function mediaStatus(s) {
   MP.t = s.t || 0; MP.key = s.id ? (s.kind === 'music' ? 'am:' : 'yt:') + s.id : '';
   MP.d = s.d || 0; MP.playing = !!s.playing; MP.speed = s.speed || 1; MP.at = performance.now();
   mpLine();
-  momentsSync(); keepSync();
+  momentsSync(); keepSync(); ytChapters();
   const p = $('#mediaPill');
   // (Apple Music plays at its own speed: no speed button for it)
   p.classList.toggle('music', s.kind === 'music');
@@ -11482,6 +11724,8 @@ window.standMediaEvent = (m) => {
   else if (m.op === 'musicFailed') musicFailed(m);
   else if (m.op === 'status') mediaStatus(m);
   else if (m.op === 'found') ytFound(m);
+  else if (m.op === 'chapters') { const f = YTCH.wait.get(m.rid); if (f) { YTCH.wait.delete(m.rid); f(m.items || []); } }
+  else if (m.op === 'checked') { const f = FREE.wait.get(m.rid); if (f) { FREE.wait.delete(m.rid); f(m.ok || {}); } }
 };
 // In a browser: the same player in a frame that floats over the page. It is moved by any of its dark
 // edge (the top bar, the margin, the bar of buttons between the buttons) and sized by its corner. It
@@ -11927,6 +12171,9 @@ $('#goalSel').addEventListener('change', (e) => { S.goal = +e.target.value; save
 // App settings: appearance, page turning by winking, backup
 // =====================================================================
 const NATIVE = window.webkit && window.webkit.messageHandlers ? window.webkit.messageHandlers : null;
+// (the page just opened — at launch, or again after iOS stopped it: a video still floating from before
+// is nobody's now; it goes, so it never stands alone over the screen)
+try { if (NATIVE && NATIVE.standMedia && window.standCaps && window.standCaps.media) NATIVE.standMedia.postMessage({ op: 'close' }); } catch {}
 const CAPS = window.standCaps || {};
 function applyAppearance() {
   const root = document.documentElement;
@@ -12615,6 +12862,7 @@ async function runGo(idx, atEnd = false) {
   RUN.busy = true;
   try {
     const sameScore = V.score && V.score.id === it.sid && !$('#score').hidden;
+    if (RUN.kind === 'study' && RUN.idx !== idx) runTimeTo(RUN.items[RUN.idx]);
     RUN.idx = idx;
     if (!sameScore) {
       const sc = scores.find((s) => s.id === it.sid) || await db.get('scores', it.sid).catch(() => null);
@@ -12694,15 +12942,61 @@ function prewarmRun(it) {
 function startRun(kind, name, items) {
   if (!items.length) return;
   RUN.on = true; RUN.kind = kind; RUN.name = name; RUN.items = items; RUN.idx = 0; RUN.busy = false;
+  // (a practice session: when it began, what was done in it; the note left last time, shown first)
+  if (kind === 'study') { RUN.t0 = Date.now(); RUN.done = new Map(); RUN.atT = Date.now(); if (S.studyNote) setTimeout(() => toast(tr('From your last session') + ': ' + S.studyNote, 6000), 900); }
   hidePanel();
   runGo(0);
 }
 function endRun() {
   dropRunPre();
+  const was = RUN.kind === 'study' && RUN.on ? { t0: RUN.t0, done: RUN.done, items: RUN.items } : null;
+  if (was) runTimeTo(runItem());
   RUN.on = false; RUN.items = []; RUN.idx = 0;
   $('#runPill').hidden = true;
   if (V.doc && !$('#score').hidden) layout();
+  if (was && Date.now() - was.t0 > 60000) studyEndShow(was);
 }
+// ---- the practice session's own tools, on its bar: the passage's tempo (the metronome at it), a
+// tempo played cleanly logged (and the next a little faster), a note for next time
+const runPass = (it) => (it && it.pid ? passageOf(it.sid, it.pid) : null);
+function runTimeTo(it) { if (!RUN.done || !it) return; const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 }; r.ms += Date.now() - (RUN.atT || Date.now()); RUN.done.set(k, r); RUN.atT = Date.now(); }
+function runToolsShow(it) {
+  const box = $('#runTools'), nt = $('#runNote');
+  const p = RUN.kind === 'study' ? runPass(it) : null;
+  box.hidden = !p; nt.hidden = !(p && p.note);
+  if (!p) return;
+  const last = p.log.length ? p.log[p.log.length - 1].bpm : p.start || 60;
+  RUN.bpm = metro.running ? metro.bpm : last;
+  $('#runBpm').textContent = String(RUN.bpm);
+  $('#runGoal').textContent = p.target ? '→ ' + p.target : '';
+  $('#runTempo').classList.toggle('on', !!metro.running);
+  if (p.note) nt.textContent = tr('Your note') + ': ' + p.note;
+}
+function runSetBpm(v) { RUN.bpm = clamp(Math.round(v), 20, 300); $('#runBpm').textContent = String(RUN.bpm); if (metro.running) setBpm(RUN.bpm); }
+$('#runTempo').addEventListener('click', () => { if (metro.running) stopMetro(); else { setBpm(RUN.bpm || 60); startMetro(); } setTimeout(() => $('#runTempo').classList.toggle('on', !!metro.running), 60); });
+$('#runSlower').addEventListener('click', () => runSetBpm((RUN.bpm || 60) - 4));
+$('#runFaster').addEventListener('click', () => runSetBpm((RUN.bpm || 60) + 4));
+$('#runClean').addEventListener('click', () => {
+  const it = runItem(); const p = logTempo(it && it.sid, it && it.pid, RUN.bpm || 60); if (!p) return;
+  const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 }; r.best = Math.max(r.best, RUN.bpm); RUN.done.set(k, r);
+  if (p.target && RUN.bpm >= p.target) toast(tr('Target tempo reached. Well done!'), 2600);
+  else { toast(`${RUN.bpm} bpm ` + tr('kept. Next: a little faster.'), 2200); runSetBpm(Math.min(p.target || 300, RUN.bpm + 4)); }
+});
+$('#runNoteBtn').addEventListener('click', async () => {
+  const it = runItem(), p = runPass(it); if (!p) return;
+  const v = await askText(tr('A note for this passage, shown next time'), p.note || '');
+  if (v === null) return; setPassageNote(it.sid, it.pid, v); runToolsShow(it);
+});
+// the session done: how long, what was played, and one note for next time
+function studyEndShow(was) {
+  const min = Math.max(1, Math.round((Date.now() - was.t0) / 60000));
+  $('#seSum').textContent = `${min} min · ${was.done.size} ${was.done.size === 1 ? tr('passage') : tr('passages')}`;
+  const ul = $('#seList'); ul.textContent = '';
+  for (const r of was.done.values()) { const li = el('li'); li.append(el('span', '', r.name), el('span', 'num', Math.max(1, Math.round(r.ms / 60000)) + ' min' + (r.best ? ' · ' + r.best + ' bpm' : ''))); ul.append(li); }
+  $('#seNote').value = ''; $('#studyEnd').hidden = false;
+}
+$('#seSkip').addEventListener('click', () => { $('#studyEnd').hidden = true; });
+$('#seSave').addEventListener('click', () => { S.studyNote = $('#seNote').value.trim().slice(0, 240) || undefined; saveSettings(); $('#studyEnd').hidden = true; if (S.studyNote) toast(tr('Kept. It shows when your next session starts.'), 2400); });
 const PRIO_LABEL = ['Skip', 'Low', 'Medium', 'High'];
 function runShow(newScore) {
   const it = runItem(); if (!it) { $('#runPill').hidden = true; return; }
@@ -12711,6 +13005,7 @@ function runShow(newScore) {
   const n = RUN.items.length;
   $('#runPill').hidden = false;
   $('#runPill').dataset.kind = RUN.kind;
+  runToolsShow(it);
   if (RUN.kind === 'study') {
     $('#runTitle').textContent = `${it.name}`;
     $('#runSub').textContent = `Passage ${RUN.idx + 1} of ${n} · ${PRIO_LABEL[it.prio] || ''} · ${title}`;

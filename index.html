@@ -300,6 +300,7 @@
         </div>
         <p class="find-status" id="findStatus" hidden></p>
         <div class="buy" id="findBuy" hidden></div>
+        <div class="free-block" id="findFree" hidden><div class="free-head"><b>Opens at once</b><span>Free scores from the Mutopia Project</span></div><ul class="work-list free-list" id="freeList"></ul></div>
         <ul class="work-list" id="workList"></ul>
       </div>
 
@@ -352,6 +353,7 @@
       <button class="tb-btn" data-panel="reps"><svg><use href="#i-reps"/></svg><span>Reps</span></button>
       <button class="tb-btn rec" id="recBtn"><span class="rec-dot"></span><span id="recBtnLabel">Record</span></button>
       <button class="tb-btn" id="performBtn"><svg><use href="#i-perform"/></svg><span>Perform</span></button>
+      <button class="tb-btn nbbar" id="nbLayoutsBtn" aria-label="Designs" title="Designs"><svg><use href="#i-palette"/></svg><span>Designs</span></button>
       <button class="tb-btn nbbar" id="nbPhotoBtn" aria-label="Photo" title="Photo"><svg><use href="#i-image"/></svg><span>Photo</span></button>
       <button class="tb-btn nbbar" id="nbAddBtn" aria-label="Add page" title="Add page"><svg><use href="#i-plus"/></svg><span>Add page</span></button>
       <button class="tb-btn nbbar" id="nbPagesBtn" aria-label="Pages" title="Pages"><svg><use href="#i-pages"/></svg><span>Pages</span></button>
@@ -705,6 +707,7 @@
     <canvas class="trace" id="traceCanvas" height="90" aria-label="Pitch over the last seconds"></canvas>
     <div class="tendency"><div class="tend-labels"><span>low</span><span>tendency</span><span>high</span></div><div class="tend-track"><span class="tend-mid"></span><i id="tendMark"></i></div><p id="tendText" aria-live="off">Play a few notes to see your tendency.</p></div>
     <div class="strings" id="stringRow"></div>
+    <button class="ref-chip" id="refChip" aria-label="Reference A: tap to change"><span>A</span><b id="refChipVal">442</b><small>Hz</small></button>
     <div class="row-even">
       <button class="btn primary" id="tunerToggle"><svg><use href="#i-mic"/></svg><span>Start tuner</span></button>
       <button class="btn" id="tunerFloat"><svg><use href="#i-fork"/></svg><span>Small tuner on screen</span></button>
@@ -998,6 +1001,7 @@
   <div class="panel-head"><h2>Passages</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
     <button class="btn wide" id="passSession" data-panel="study"><svg><use href="#i-play"/></svg><span>Practice session…</span></button>
+    <label class="check-row pass-show"><span><b>Boxes on the music</b><small>Off: the music is clear. Your passages stay here.</small></span><label class="switch"><input type="checkbox" id="passShow" checked><span></span></label></label>
     <section class="pass-missed-box" id="passMissed"></section>
     <ul class="pass-list" id="passList"></ul>
     <p class="hint center" id="passEmpty">Passages are parts of this piece you want to track, such as a shift or a fast technical run. Choose the Select tool in Markings, draw around the passage, then tap Passage.</p>
@@ -1063,6 +1067,24 @@
   <div class="run-txt"><strong id="runTitle"></strong><span id="runSub"></span></div>
   <button class="icon-btn small" id="runNext" aria-label="Next"><svg style="transform:scaleX(-1)"><use href="#i-back"/></svg></button>
   <button class="icon-btn small" id="runEnd" aria-label="End"><svg><use href="#i-close"/></svg></button>
+  <div class="run-tools" id="runTools" hidden>
+    <button class="run-tempo" id="runTempo" aria-label="Metronome at this passage's tempo"><span class="rt-note">♩</span><b id="runBpm">60</b><small id="runGoal"></small></button>
+    <button class="run-step" id="runSlower" aria-label="4 slower">−4</button>
+    <button class="run-step" id="runFaster" aria-label="4 faster">+4</button>
+    <button class="btn small primary run-clean" id="runClean">Clean at this tempo</button>
+    <button class="icon-btn small" id="runNoteBtn" aria-label="A note for next time"><svg><use href="#i-pen"/></svg></button>
+  </div>
+  <div class="run-note" id="runNote" hidden></div>
+</div>
+<div class="study-end" id="studyEnd" hidden role="dialog" aria-label="Session done">
+  <div class="se-card">
+    <h3>Well practised</h3>
+    <p class="se-sum" id="seSum"></p>
+    <ul class="se-list" id="seList"></ul>
+    <label class="se-lab" for="seNote">A note for your next session</label>
+    <textarea id="seNote" rows="2" placeholder="What to start with, what to remember…"></textarea>
+    <div class="se-btns"><button class="btn ghost" id="seSkip">Close</button><button class="btn primary" id="seSave">Keep the note</button></div>
+  </div>
 </div>
 
 <aside class="panel wide" id="panel-goal" hidden aria-label="Practice">

@@ -71,6 +71,39 @@ enum StandYouTubeFind {
         return out
     }
 
+    // A video's chapters (the movements of a piece, often), as YouTube shows them under the
+    // video: each one's name and where it starts, in seconds. None when the video has none.
+    static func chapters(_ id: String, done: @escaping ([[String: Any]]) -> Void) {
+        guard id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil,
+              let url = URL(string: "https://www.youtube.com/watch?v=\(id)&hl=en") else { done([]); return }
+        var r = URLRequest(url: url, timeoutInterval: 12)
+        r.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        r.setValue("en", forHTTPHeaderField: "Accept-Language")
+        r.setValue("SOCS=CAI; CONSENT=PENDING+987", forHTTPHeaderField: "Cookie")
+        r.httpShouldHandleCookies = false
+        URLSession.shared.dataTask(with: r) { data, _, _ in
+            var out: [[String: Any]] = []
+            if let html = data.flatMap({ String(data: $0, encoding: .utf8) }) {
+                let marks = ["var ytInitialData = ", "window[\"ytInitialData\"] = ", "ytInitialData = "]
+                if let m = marks.lazy.compactMap({ html.range(of: $0) }).first {
+                    let rest = html[m.upperBound...]
+                    if let end = rest.range(of: ";</script>"), let d = String(rest[..<end.lowerBound]).data(using: .utf8),
+                       let root = try? JSONSerialization.jsonObject(with: d) {
+                        var seen = Set<Int>()
+                        collect(root) { d in
+                            guard let c = d["chapterRenderer"] as? [String: Any] else { return }
+                            let ms = (c["timeRangeStartMillis"] as? NSNumber)?.intValue ?? -1
+                            let name = text(c["title"])
+                            if ms >= 0, !name.isEmpty, !seen.contains(ms) { seen.insert(ms); out.append(["t": Double(ms) / 1000, "name": name]) }
+                        }
+                        out.sort { ($0["t"] as? Double ?? 0) < ($1["t"] as? Double ?? 0) }
+                    }
+                }
+            }
+            DispatchQueue.main.async { done(out) }
+        }.resume()
+    }
+
     // the videos, in the order the page shows them
     private static func walk(_ x: Any, _ f: ([String: Any], Bool) -> Void) {
         if let d = x as? [String: Any] {
