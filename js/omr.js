@@ -2472,6 +2472,12 @@ function readStaff(s, ctx, header) {
       if (GD && c.h > sp * 0.2 && band(cy)) GD.push({ x: Math.round(cx), y: Math.round(cy), w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2) });
       // (as wide as a grace head can be: a little under the page's own heads, whatever their size)
       const gMax = (globalThis.__graceWide ?? 1) && headW ? Math.max(sp * 0.95, Math.min(sp * 1.12, headW * 0.78)) : sp * 0.95;
+      // (a slur's thin end still on the head's side: the columns of little ink at either edge shaved off)
+      if ((globalThis.__graceShave ?? 1) && c.w > gMax && c.w <= sp * 1.45 && c.h >= sp * 0.3 && c.h <= sp * 1.2) {
+        const cnt = (x) => { let n = 0; for (let y = c.y0; y <= c.y1; y++) n += Os.img[y * w + x] ? 1 : 0; return n; }, lim = Math.max(2, c.h * 0.35);
+        let x0 = c.x0, x1 = c.x1; while (x0 < x1 && cnt(x0) < lim) x0++; while (x1 > x0 && cnt(x1) < lim) x1--;
+        if (x1 - x0 + 1 < c.w) { let y0 = Infinity, y1 = -1; for (let y = c.y0; y <= c.y1; y++) for (let x = x0; x <= x1; x++) if (Os.img[y * w + x]) { if (y < y0) y0 = y; if (y > y1) y1 = y; } if (y1 >= 0) c = { ...c, x0, x1, y0, y1, w: x1 - x0 + 1, h: y1 - y0 + 1, shaved: true }; }
+      }
       if (c.h < sp * 0.3 || c.h > sp * 1.2 || c.w < sp * 0.5 || c.w > gMax || c.x0 < startX || c.x1 > s.x1) continue;
       // the middle of the head: its widest row (a flag or a ledger line may hang on)
       let cyH = cy;

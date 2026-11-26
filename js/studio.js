@@ -1914,6 +1914,26 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     for (const r of all) if (r.shift === bk.shift && (!best || r.cost < best.cost)) best = r;
   }
   if (!best) return null;
+  // (the pace bends through the piece — a slow opening, then quick: the recording's clock bent by the
+  // pace the following found, a few bars at a time, so the page goes at one pace through it; followed
+  // again so, and kept only when it fits the playing clearly better)
+  if ((globalThis.__norm2 ?? 1) && !(anch && anch.length) && best.sn && nb >= 6) {
+    const T1 = best.T, d = []; for (let k = 0; k < nb; k++) d.push(Math.max(0.05, T1[k + 1] - T1[k]));
+    const md = d.slice().sort((a, b) => a - b)[nb >> 1], HW = globalThis.__normW ?? 2, AL = globalThis.__normA ?? 1;
+    const H = [0]; for (let k = 0; k < nb; k++) { let ls = 0, c = 0; for (let q = Math.max(0, k - HW); q <= Math.min(nb - 1, k + HW); q++) { ls += Math.log(d[q]); c++; } H.push(H[k] + d[k] * Math.pow(md / Math.exp(ls / c), AL)); }
+    const sc0 = (H[1] - H[0]) / d[0], scN = (H[nb] - H[nb - 1]) / d[nb - 1];
+    const fwd = (t) => { if (t <= T1[0]) return (t - T1[0]) * sc0; if (t >= T1[nb]) return H[nb] + (t - T1[nb]) * scN; let lo = 0, hi = nb - 1; while (lo < hi) { const m2 = (lo + hi + 1) >> 1; if (T1[m2] <= t) lo = m2; else hi = m2 - 1; } return H[lo] + ((t - T1[lo]) / d[lo]) * (H[lo + 1] - H[lo]); };
+    const back = (u) => { if (u <= 0) return T1[0] + u / sc0; if (u >= H[nb]) return T1[nb] + (u - H[nb]) / scN; let lo = 0, hi = nb - 1; while (lo < hi) { const m2 = (lo + hi + 1) >> 1; if (H[m2] <= u) lo = m2; else hi = m2 - 1; } return T1[lo] + ((u - H[lo]) / Math.max(1e-9, H[lo + 1] - H[lo])) * d[lo]; };
+    const OFF = 1 - fwd(fr[0].t), fr2 = fr.map((f) => ({ ...f, t: fwd(f.t) + OFF }));
+    const pm = H[nb] / nb; let b2 = null;
+    for (const f of (globalThis.__normF || [0.85, 1, 1.18])) {
+      const r = pacedSalience(best.sn, nb, fr2, pm * f, onw); if (!r) continue;
+      const T2 = r.T.map((u) => back(u - OFF)), ag = agreeOf(T2, best.sn, nb, fr) - shPen(best.shift) * 1.5;
+      if (globalThis.__salDbg) globalThis.__salDbg.push(['norm2', +f.toFixed(2), +ag.toFixed(4), +(best.agree ?? 0).toFixed(4)]);
+      if (!b2 || ag > b2.agree) b2 = { ...r, T: T2, at: Float64Array.from(r.at, (v) => (v >= 0 ? back(v - OFF) : -1)), agree: ag };
+    }
+    if (b2 && (!(globalThis.__judgeTime ?? 1) || b2.agree > (best.agree ?? -1e9) + (globalThis.__normM ?? 0.05))) best = { ...best, T: b2.T, at: b2.at, sc: b2.sc, heard: b2.heard, agree: b2.agree };
+  }
   const T = best.T.slice();
   // (a pickup: the first bar begins where its notes were heard)
   if (best.sn && best.sn.pick && best.at && best.at[best.sn.pick] >= 0 && best.at[best.sn.pick] < T[1]) T[0] = best.at[best.sn.pick];
