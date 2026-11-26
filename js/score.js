@@ -534,7 +534,7 @@ export async function makeThumb(doc, { dark = false } = {}) {
 
 // ---------- reading title and composer ----------
 const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const JUNK = /(©|copyright|imslp|public domain|edition|verlag|publish|printed|all rights|\bpage\b|^\d+$|www\.|http|plate|stich|lith)/i;
+const JUNK = /(©|copyright|imslp|mutopia|lilypond|public domain|edition|verlag|publish|printed|all rights|\bpage\b|^\d+$|www\.|http|plate|stich|lith)/i;
 // lines that are never the title: tempo marks, an instrument on its own, editors and arrangers
 const TEMPO = /^\(?\s*(tempo|allegr\w*|andant\w*|adagi\w*|moderato|presto|prestissimo|largo|larghetto|lento|vivace|vivo|grave|maestoso|sostenuto|cantabile|con moto|tranquillo|animato|risoluto|scherzando|rubato|a tempo)\b[^]{0,40}$/i;
 const NOT_TITLE = /^(((solo\s+)?(violoncello|cello|violino|violin|viola|contrabass\w*|double bass|kontrabass|flute|flauto|fl[oö]te|oboe|clarinet\w*|klarinette|fagott\w*|bassoon|horn|corno|trumpet|tromba|trombone|piano|pianoforte|klavier|organ|orgel|soprano|alto|tenor|bass|basso|voice|guitar|gitarre|harp|arpa)(\s+(i{1,3}|\d|solo|principale|and piano|e pianoforte|und klavier|et piano))?\s*\.?)|(edited|edition|ed\.|herausgegeben|hrsg|revised|revidiert|arr\.?|arranged|arrangement|bearbeitet|bearb\.|transcri\w+|fingered|fingering|fingersatz|doigt\w*)\b.*)$/i;
@@ -568,7 +568,12 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
       const page = await doc.pdf.getPage(1);
       const vp = page.getViewport({ scale: 1 });
       const tc = await page.getTextContent();
-      const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({
+      // (the music's own signs come through as text from their font — control characters, private
+      // letters, a dynamic like "mf" set as big as a heading: they are no words, and were taken for the
+      // biggest words on the page, the title)
+      const DYN = /^(p{1,4}|pf|m[pf]|f{1,4}|s?fz?p?|sfp|fp|rf|rfz|sff|z|cresc\.?|dim\.?|decresc\.?)$/i;
+      const items = tc.items.map((it) => ({ ...it, str: String(it.str || '').replace(/[\u0000-\u001f\u007f-\u009f\ue000-\uf8ff\ufffd]/g, '') }))
+        .filter((it) => it.str.trim() && /[\p{L}\p{N}]/u.test(it.str) && !DYN.test(it.str.trim())).map((it) => ({
         s: it.str, x: it.transform[4], y: vp.height - it.transform[5], size: Math.hypot(it.transform[2], it.transform[3]) || it.height || 10,
       }));
       items.sort((a, b) => a.y - b.y || a.x - b.x);
@@ -595,7 +600,8 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
   }
   if (lines.length || meta) {
     try {
-      let topLines = lines.filter((l) => l.y < l.H * 0.42 && !JUNK.test(l.text) && !NOT_TITLE.test(l.text) && !MOVEMENT_NO.test(l.text.trim()) && /\p{L}{2}/u.test(l.text) && l.text.length < 90);
+      // (a title has a word in it: "8 pf", "14", a dynamic beside a bar number, never)
+      let topLines = lines.filter((l) => l.y < l.H * 0.42 && /\p{L}{3}/u.test(l.text) && !JUNK.test(l.text) && !NOT_TITLE.test(l.text) && !MOVEMENT_NO.test(l.text.trim()) && /\p{L}{2}/u.test(l.text) && l.text.length < 90);
       // a tempo mark is not the title, unless it is clearly the biggest words on the page ("Allegro appassionato")
       // (and only when it is set larger than the words of the music itself: a tempo alone at the top
       // of a later page or of a part, "Allegro con brio", is the movement, not the piece)
@@ -618,7 +624,10 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
           // "Sonata" alone: the line under it says which ("No. 2 in G minor, Op. 5")
           const nearBelow = (l) => l !== big && l.y > big.y && l.y - big.y < big.size * 3 && l.size >= big.size * 0.45 && l.text.length < 60 && !nameOnly(l);
           const next = topLines.find((l) => nearBelow(l) && (GENERIC.test(big.text.trim()) || /(op\.?\s*\d|no\.?\s*\d|nr\.?\s*\d|bwv|hob|k\.\s*\d|kv|d\.\s*\d|in [a-h](\s|$|-|♭|♯)|in [a-h] (major|minor|dur|moll)|en [a-z]+ (majeur|mineur)|for |pour |für |per )/i.test(l.text)));
-          if (next) out.title += (GENERIC.test(big.text.trim()) && !/^[,(]/.test(next.text) ? ' ' : ', ') + titleCase(next.text);
+          // (the composer's name on that line — "M. Clementi, Opus 36 No. 1" — is the composer, not the title)
+          let nx = next ? next.text : '';
+          if (nx) { const c2 = findComposer(nx, composers); if (c2) { const last = c2.n.split(' ').pop(), f2 = nx.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(), at = f2.lastIndexOf(last.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()); if (at >= 0) nx = tidy(nx.slice(at + last.length).replace(/^\s*\(.*?\)/, '')); } }
+          if (next && nx && /\p{L}|\d/u.test(nx)) out.title += (GENERIC.test(big.text.trim()) && !/^[,(]/.test(nx) ? ' ' : ', ') + titleCase(nx);
           // a word above it that belongs to the title ("Six Suites" / "for Cello Solo" are fine; "Sonata" over "No. 1" too)
           const above = topLines.find((l) => l !== big && l.y < big.y && big.y - l.y < big.size * 2 && l.size >= big.size * 0.7 && GENERIC.test(l.text.trim()));
           if (above && !out.title.toLowerCase().includes(above.text.toLowerCase())) out.title = titleCase(above.text) + ' ' + out.title;
@@ -626,10 +635,22 @@ export async function readScoreInfo(doc, fileName, composers, opts = {}) {
       }
       const pdfTitle = meta && meta.info && meta.info.Title;
       // (not a name a scanner or a program gave it: "SKM_C300i22020317080", "Scan_0001", "IMG_2041")
-      const machine = (t) => /^[\w.-]+$/.test(t.trim()) && (/\d{5,}/.test(t) || /^(skm|km|img|scan|doc|ccf|mx|bizhub|xerox|canon|epson|hp|brother|ricoh)[_\-\d]/i.test(t.trim()));
+      const machine = (t) => /^mutopia-\d/i.test(t.trim()) || (/^[\w.-]+$/.test(t.trim()) && (/\d{5,}/.test(t) || /^(skm|km|img|scan|doc|ccf|mx|bizhub|xerox|canon|epson|hp|brother|ricoh)[_\-\d]/i.test(t.trim())));
       if (!out.title && pdfTitle && !/untitled|microsoft|\.pdf|\.mus|sibelius|finale/i.test(pdfTitle) && !machine(pdfTitle)) out.title = tidy(pdfTitle);
       const allTop = lines.filter((l) => l.y < l.H * 0.5).map((l) => l.text).join('  ');
-      const c = findComposer(allTop, composers) || findComposer((meta && meta.info && meta.info.Author) || '', composers);
+      // (the composer stands on the right, above the music: a known name there comes first — a word of
+      // the title that is also a name, "Rieselnder Bach" (a brook), is not the composer)
+      const rightTop = lines.filter((l) => l.y < l.H * 0.42 && l.x > l.W * 0.45);
+      const cRight = findComposer(rightTop.map((l) => l.text).join('  '), composers);
+      let c = cRight || findComposer(allTop, composers) || findComposer((meta && meta.info && meta.info.Author) || '', composers);
+      if (c && !cRight && (globalThis.__composerRight ?? 1)) {
+        const k0 = c.k.find((k) => (' ' + fold(allTop) + ' ').includes(' ' + k + ' '));
+        // (the name found only inside a line of the title or subtitle, never with its own first names)
+        const has = (t, w) => (' ' + fold(t) + ' ').includes(' ' + w + ' ');
+        const inTitle = k0 && lines.some((l) => l.y < l.H * 0.42 && !rightTop.includes(l) && has(l.text, k0) && !c.g.some((g) => has(l.text, g)));
+        const nm = rightTop.map((l) => tidy(l.text.replace(/\(.*?\)|\d{4}\s*[-–]\s*\d{0,4}|^(music by|composed by|komponiert von|von|by|de|par|di)\s+/gi, ''))).find((t) => looksLikeName(t) && !NOT_TITLE.test(t) && !TEMPO.test(t));
+        if (inTitle && nm) { c = null; out.composer = titleCase(nm); }
+      }
       if (c) out.composer = c.n;
       else {
         // "Music by …", "Words and Music by …", "Composed by …" (not "Arranged by …")

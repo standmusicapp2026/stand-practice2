@@ -790,6 +790,9 @@ function partFromName(name, title) {
 // A file name like "Bach - Cello Suite No.1" or "Cello_Suite_No.1_(Bach,_Johann_Sebastian)": the
 // composer part comes out, the rest is the title.
 function titleFromName(name, composer) {
+  // (a name a camera, scanner or program gave the file — IMG_2041, file 003, Scan 3 — says nothing: the
+  // score is called what it is until it is renamed)
+  { const nb = niceTitle(String(name || '')); if (!nb || JUNK_NAME.test(nb)) return (composer ? composer + ' – ' : '') + tr('Untitled score'); }
   // (a number the file was put in order by, "06_Clarinet…", is not part of the name: "5 Pieces" is)
   name = String(name || '').replace(/^\d{1,2}[_-]+(?=\p{L})/u, '');
   let t = niceTitle(name).replace(/\s*\((?:[^()]*,[^()]*)\)\s*$/, '').replace(/\s+(score|parts?|part|solo part|complete|full score)$/i, '');
@@ -932,7 +935,7 @@ async function addImages(blobs, name, opt = {}) {
   let info = { title: '', composer: '' };
   try { info = await readScoreInfo(doc, name, await loadComposers(), { ocr: readTopOfPage }); } catch (e) { console.warn(e); }
   const nm = opt.nameTitle ? await nameMeta(name) : null;
-  const score = { id: uid(), fileId: file.id, title: (nm && nm.title) || info.title || niceTitle(name), composer: (nm && nm.composer) || info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
+  const score = { id: uid(), fileId: file.id, title: (nm && nm.title) || info.title || titleFromName(name, (nm && nm.composer) || info.composer || ''), composer: (nm && nm.composer) || info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: ('folder' in opt ? opt.folder : FOLD.current) || undefined };
   if (opt.from) score.importedFrom = opt.from;
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
