@@ -531,7 +531,8 @@ const folderOf = (id) => FOLD.list.find((f) => f.id === id);
 // draw) is made again, quietly, one at a time.
 const thumbChecked = new Set();
 let thumbFixing = Promise.resolve();
-const canRemakeThumb = (s) => !!s.fileId && s.kind !== 'comp' && s.kind !== 'paper' && !s.preview;
+// (a notebook's cover too: lost, it is drawn again from its cover and name)
+const canRemakeThumb = (s) => !!s.fileId && s.kind !== 'comp' && !s.preview;
 const thumbOfURL = new Map();   // score id -> which cover its picture was made from
 const thumbSig = (s) => (s.thumb ? s.thumb.size + ':' + (s.thumb.type || '') : '') + ':' + (s.thumbAt || 0);
 function thumbURL(s) {
@@ -546,7 +547,7 @@ function thumbURL(s) {
     // once kept the iPad busy for seconds just after it opened)
     THCK.q.push(() => new Promise((res) => {
       const im = new Image();
-      im.onload = () => { try { if (looksBlack(im)) fixThumb(s); } catch {} res(); };
+      im.onload = () => { try { if (s.kind !== 'paper' && looksBlack(im)) fixThumb(s); } catch {} res(); };
       im.onerror = () => { fixThumb(s); res(); };
       im.src = u;
     }));
@@ -564,10 +565,10 @@ async function runThumbChecks() {
   }
   THCK.on = false;
 }
-const loadsWell = (blob) => new Promise((res) => {
+const loadsWell = (blob, dark) => new Promise((res) => {
   if (!blob) { res(false); return; }
   const u = URL.createObjectURL(blob), im = new Image();
-  im.onload = () => { const ok = !looksBlack(im); URL.revokeObjectURL(u); res(ok); };
+  im.onload = () => { const ok = dark || !looksBlack(im); URL.revokeObjectURL(u); res(ok); };
   im.onerror = () => { URL.revokeObjectURL(u); res(false); };
   im.src = u;
 });
@@ -576,12 +577,12 @@ function fixThumb(s) {
     // (never while a score is open: its pages come first)
     for (let i = 0; i < 120 && !$('#score').hidden; i++) await new Promise((r) => setTimeout(r, 1000));
     const fresh = await db.get('scores', s.id).catch(() => null); if (!fresh) return;
-    let thumb = (await loadsWell(fresh.thumb)) ? fresh.thumb : null;
+    let thumb = (await loadsWell(fresh.thumb, fresh.kind === 'paper')) ? fresh.thumb : null;
     if (!thumb) {
       const file = await db.get('files', fresh.fileId).catch(() => null);
-      if (!file || (file.kind !== 'pdf' && file.kind !== 'images')) return;
+      if (!file || (file.kind !== 'pdf' && file.kind !== 'images' && file.kind !== 'paper')) return;
       let base = null;
-      try { base = await openDocument(file, fresh.sizes); thumb = await makeThumb(mapDoc(base, fresh.pageMap, fresh.cuts, fresh.glue)); }
+      try { base = await openDocument(file, fresh.sizes); thumb = await makeThumb(mapDoc(base, fresh.pageMap, fresh.cuts, fresh.glue), { dark: file.kind === 'paper' }); }
       catch (e) { console.warn('cover', e); }
       finally { try { base && base.destroy(); } catch {} }
       if (!thumb) return;

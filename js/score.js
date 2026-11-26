@@ -519,6 +519,16 @@ export async function makeThumb(doc, { dark = false } = {}) {
     c.width = c.height = 0;
     return b;
   }
+  // (a first page left white — the back of a cover, an empty sheet: the first page with something on
+  // it is the picture, so the library shows the music, never a blank card)
+  if (!dark && doc.pages > 1) for (let k = 1; k < Math.min(doc.pages, 4); k++) {
+    const [qw, qh] = doc.sizes[k] || [pw, ph], c = document.createElement('canvas');
+    try { await doc.render(k, c, w, Math.round((w * qh) / qw)); } catch { c.width = c.height = 0; continue; }
+    if (looksBlank(c) || looksBlack(c)) { c.width = c.height = 0; continue; }
+    const b = await new Promise((res) => c.toBlob((x) => res(x), 'image/jpeg', 0.82));
+    c.width = c.height = 0;
+    return b;
+  }
   return null;
 }
 
