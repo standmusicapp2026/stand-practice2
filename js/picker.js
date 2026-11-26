@@ -38,24 +38,58 @@ async function showLibrary() {
   $('#pkLib').hidden = false; $('#pkStage').hidden = true; $('#pkBar').hidden = true; $('#pkDone').hidden = true;
   $('#pkSub').textContent = 'Choose a score';
   const box = $('#pkLib'); box.textContent = '';
-  const list = (await db.all('scores')).filter((s) => s.kind !== 'comp').sort((a, b) => (b.opened || b.added) - (a.opened || a.added));
-  // a photo or a PDF from Files works too
-  const fb = el('button', 'card pk-file');
-  const ft = el('div', 'thumb pk-file-tile'); ft.innerHTML = '<svg><use href="#i-image"/></svg>';
-  fb.append(ft, el('div', 'ttl', tr('Photo or file')), el('div', 'cmp', 'An image or a PDF'));
-  const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*,application/pdf,.pdf'; inp.hidden = true;
-  inp.addEventListener('change', () => { const f = inp.files[0]; if (f) openFile(f); });
-  fb.addEventListener('click', () => inp.click());
-  box.append(fb, inp);
-  if (!list.length) box.append(el('p', 'hint', 'Your library is empty. Import a score first, or choose a photo.'));
-  for (const s of list) {
-    const b = el('button', 'card');
-    const th = el('div', 'thumb');
-    if (s.thumb) { const u = URL.createObjectURL(s.thumb); PK.thumbs.push(u); th.style.backgroundImage = `url(${u})`; }
-    b.append(th, el('div', 'ttl', s.title), el('div', 'cmp', s.composer || ''));
-    b.addEventListener('click', () => openLibraryScore(s.id, s.lastPage || 0));
-    box.append(b);
-  }
+  const list = (await db.all('scores')).filter((s) => s.kind !== 'comp' && !s.preview).sort((a, b) => (b.opened || b.added) - (a.opened || a.added));
+  const folders = ((await getSetting('folders', [])) || []).filter((f) => list.some((s) => s.folder === f.id)).sort((a, b) => a.name.localeCompare(b.name));
+  // The top: a search, the library's folders, and what makes a good copy — then the scores
+  const head = el('div', 'pk-head');
+  const sr = el('label', 'search pk-search'); sr.innerHTML = '<svg><use href="#i-search"/></svg>';
+  const q = el('input'); q.type = 'search'; q.placeholder = tr('Search your scores'); q.autocomplete = 'off'; sr.append(q);
+  const chips = el('div', 'pk-folders');
+  const tip = el('div', 'pk-tip');
+  tip.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 11v5.5M12 7.6v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const tt = el('div'); tt.append(el('b', '', tr('The clearer the page, the better the result')), el('span', '', tr('A PDF from the publisher or IMSLP reads best. A photo: flat, straight on, in good light and in focus.')));
+  tip.append(tt);
+  head.append(sr, chips, tip);
+  const grid = el('div', 'pk-cards');
+  box.append(head, grid);
+  let inFolder = '';
+  const fold = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const draw = () => {
+    chips.textContent = '';
+    if (folders.length) {
+      const all = el('button', 'pk-chip' + (inFolder ? '' : ' on'), tr('All scores')); all.type = 'button';
+      all.addEventListener('click', () => { inFolder = ''; draw(); }); chips.append(all);
+      for (const f of folders) {
+        const b = el('button', 'pk-chip' + (inFolder === f.id ? ' on' : '')); b.type = 'button';
+        b.innerHTML = '<svg><use href="#i-folder"/></svg>'; b.append(document.createTextNode(f.name));
+        b.addEventListener('click', () => { inFolder = inFolder === f.id ? '' : f.id; draw(); }); chips.append(b);
+      }
+    }
+    chips.hidden = !folders.length;
+    grid.textContent = '';
+    // a photo or a PDF from Files works too
+    const fb = el('button', 'card pk-file');
+    const ft = el('div', 'thumb pk-file-tile'); ft.innerHTML = '<svg><use href="#i-image"/></svg>';
+    fb.append(ft, el('div', 'ttl', tr('Photo or file')), el('div', 'cmp', 'An image or a PDF'));
+    const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*,application/pdf,.pdf'; inp.hidden = true;
+    inp.addEventListener('change', () => { const f = inp.files[0]; if (f) openFile(f); });
+    fb.addEventListener('click', () => inp.click());
+    grid.append(fb, inp);
+    const words = fold(q.value).split(/\s+/).filter(Boolean);
+    const shown = list.filter((s) => (!inFolder || s.folder === inFolder) && words.every((w) => fold(s.title + ' ' + (s.composer || '')).includes(w)));
+    if (!list.length) grid.append(el('p', 'hint', 'Your library is empty. Import a score first, or choose a photo.'));
+    else if (!shown.length) grid.append(el('p', 'hint pk-none', tr('No score of yours has those words.')));
+    for (const s of shown) {
+      const b = el('button', 'card');
+      const th = el('div', 'thumb');
+      if (s.thumb) { const u = URL.createObjectURL(s.thumb); PK.thumbs.push(u); th.style.backgroundImage = `url(${u})`; th.classList.add('has-pic'); }
+      b.append(th, el('div', 'ttl', s.title), el('div', 'cmp', s.composer || ''));
+      b.addEventListener('click', () => openLibraryScore(s.id, s.lastPage || 0));
+      grid.append(b);
+    }
+  };
+  q.addEventListener('input', draw);
+  draw();
 }
 async function openLibraryScore(id, page) {
   const score = await db.get('scores', id);
