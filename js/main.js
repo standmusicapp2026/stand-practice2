@@ -7202,7 +7202,8 @@ function renderPagesPanel() {
     const b = el('button', 'pthumb gone');
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     b.append(frame, el('span', 'num', 'Put back'));
-    b.addEventListener('click', () => { const at = map.findIndex((x) => x > o); const next = map.slice(); next.splice(at < 0 ? next.length : at, 0, o); PG.staged = next; renderPagesPanel(); });
+    // (put back at once, as a page deleted goes at once: no Save to remember)
+    b.addEventListener('click', () => { const at = map.findIndex((x) => x > o); const next = map.slice(); next.splice(at < 0 ? next.length : at, 0, o); PG.staged = next; renderPagesPanel(); savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast('Page put back.', 1600); }); });
     tg.append(b);
   }
   syncPageDelete(map);
@@ -7286,6 +7287,8 @@ const pageDragEnd = (e) => {
   if (to === d.from) return;
   const next = d.map.slice(); next.splice(d.from, 1); next.splice(clamp(to, 0, next.length), 0, d.o);
   PG.staged = next; renderPagesPanel();
+  // (kept at once: the new order is the score's straight away)
+  savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); });
 };
 window.addEventListener('pointerup', pageDragEnd); window.addEventListener('pointercancel', pageDragEnd);
 document.addEventListener('pointerdown', (e) => { if (PGH.menu && !e.target.closest('.pg-menu') && !e.target.closest('.pcell.held')) pageHoldClose(); }, true);
@@ -7342,7 +7345,11 @@ $('#pgDelete').addEventListener('click', () => {
   setTimeout(() => savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); }), from.size ? 800 : 0);
 });
 // keep the changes: the score or notebook is laid out once, with the panel closed
-async function savePageChanges(quiet) {
+// (one after another: a delete, a page put back and the panel closed, all within a moment, each
+// waits for the one before — two at once laid the score out twice over and pages went astray)
+let pgSaveQ = Promise.resolve();
+function savePageChanges(quiet) { const r = pgSaveQ.then(() => savePageChanges1(quiet)).catch((err) => console.warn('pages', err)); pgSaveQ = r; return r; }
+async function savePageChanges1(quiet) {
   const next = PG.staged; PG.staged = null;
   if (!next) return;
   const cur = V.score.pageMap || [...Array(V.base.pages).keys()];
@@ -7354,7 +7361,7 @@ async function savePageChanges(quiet) {
 }
 $('#pgSaveBtn').addEventListener('click', () => { hidePanel(); });
 $('#pgCancel').addEventListener('click', () => { PG.staged = null; PG.sel.clear(); renderPagesPanel(); });
-$('#pgRestoreAll').addEventListener('click', () => { PG.staged = [...Array(V.base.pages).keys()]; renderPagesPanel(); });
+$('#pgRestoreAll').addEventListener('click', () => { PG.staged = [...Array(V.base.pages).keys()]; renderPagesPanel(); savePageChanges(true).then(() => { if (openPanel === 'pages') renderPagesPanel(); toast('Every page is back.', 1600); }); });
 $('#pagesBtn').addEventListener('click', () => showPanel('pages'));
 // ---------- crop and cut pages ----------
 $('#pgCrop').addEventListener('click', async () => {
