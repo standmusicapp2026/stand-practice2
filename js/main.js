@@ -4168,7 +4168,7 @@ function makeSelection(entry, idx) {
     if (icon && SEL_ICONS[icon]) { b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${SEL_ICONS[icon]}</svg>`; b.append(el('span', '', label)); } else b.textContent = label;
     b.setAttribute('aria-label', label);
     b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); });
-    b.addEventListener('pointerup', (e) => { e.stopPropagation(); fn(b); });
+    b.addEventListener('pointerup', (e) => { e.stopPropagation(); dropNextClick(); fn(b); });
     return b;
   };
   const multi = idx.length > 1;
@@ -4185,7 +4185,7 @@ function makeSelection(entry, idx) {
       pic.id ? mk('Replace', () => { placeFor = { entry, i: idx[0] }; $('#insPlace').click(); }, '', 'replace') : mk('Add photo', () => { placeFor = { entry, i: idx[0] }; $('#insPlace').click(); }, 'accent', 'replace'),
       ...(pic.mask === 'word' || pic.mask === 'bloom' ? [mk('Word', () => { openPicPop('style'); setTimeout(() => { const w = $('#picWord'); if (w) { w.focus(); w.select(); } }, 60); }, '', 'text')] : []),
       ...(pic.id ? [mk(Sel.crop ? 'Done' : 'Crop', () => setCrop(!Sel.crop), Sel.crop ? 'accent' : '', 'crop')] : []),
-      mk('Adjust', () => openPicPop('adjust'), '', 'adjust'), mk('Style', () => openPicPop('style'), '', 'style'),
+      mk('Adjust', () => openPicPop('adjust'), '', 'adjust'), mk('Style', () => openPicPop('style'), '', 'style'), mk('Effects', () => openPicPop('effects'), '', 'effects'),
       ...common(),
     );
     // cropping is a mode of its own, as in Canva: only Zoom and Done on the bar
@@ -4492,6 +4492,13 @@ const SEL_ICONS = {
   fliph: `<g ${SVG_S}><path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L4 17h5z"/><path d="M15 7l5 10h-5z" fill="currentColor"/></g>`,
   flipv: `<g ${SVG_S}><path d="M3 12h18" stroke-dasharray="2 2"/><path d="M7 9L17 4v5z"/><path d="M7 15l10 5v-5z" fill="currentColor"/></g>`,
 };
+// The bar acts as the finger lifts; the click the browser sends just after would land on whatever
+// has opened under the finger (a panel's tab, a colour): that one click is let go of.
+function dropNextClick() {
+  const off = (e) => { e.stopPropagation(); e.preventDefault(); window.removeEventListener('click', off, true); };
+  window.addEventListener('click', off, true);
+  setTimeout(() => window.removeEventListener('click', off, true), 450);
+}
 // Crop: the photo's frame stays and the photo moves and zooms inside it (drag it; corners trim the
 // frame). Double-tapping a photo does the same, as in Canva and Keynote.
 function setCrop(on) {
@@ -4711,7 +4718,8 @@ function openShapePop() {
       g.append(b);
     }
   };
-  row('#spFill', 'f', PALETTE.slice(0, 20), true); row('#spGrad2', 'g2', ['#ffffff', '#ffd6e0', '#fff1c1', '#d6e8ff', '#e9ddff', '#ff9f1c', '#2ec4ff', '#c86bfa', '#16181d'], false); row('#spLine', 'lc', PALETTE.slice(0, 20), true);
+  const doc = pageColours(Sel.entry);
+  row('#spFill', 'f', [...doc, ...PALETTE.slice(0, 20).filter((c) => !doc.includes(c.toLowerCase()))], true); row('#spGrad2', 'g2', ['#ffffff', '#ffd6e0', '#fff1c1', '#d6e8ff', '#e9ddff', '#ff9f1c', '#2ec4ff', '#c86bfa', '#16181d'], false); row('#spLine', 'lc', [...doc, ...PALETTE.slice(0, 20).filter((c) => !doc.includes(c.toLowerCase()))], true);
   fillPalSets(s0.f, (c) => { shapeEdit((s) => ({ ...s, f: c, metal: undefined })); openShapePop(); }, $('#spPals'));
   const mt = $('#spMetal'); mt.textContent = '';
   for (const [k, label] of [['', 'Colour'], ['gold', 'Gold'], ['rose', 'Rose gold'], ['silver', 'Silver'], ['copper', 'Copper']]) {
@@ -4719,7 +4727,7 @@ function openShapePop() {
     b.addEventListener('click', () => { shapeEdit((s) => ({ ...s, metal: k || undefined })); openShapePop(); });
     mt.append(b);
   }
-  $('#spGrad').checked = !!s0.g; $('#spShadow').checked = !!s0.sh; $('#spArrow').checked = !!s0.ah; $('#spArrowRow').hidden = s0.k !== 'line';
+  $('#spGrad').checked = !!s0.g; $$('#spShadow button').forEach((b) => b.classList.toggle('on', b.dataset.v === (s0.sh ? (s0.shd === 'hard' ? 'hard' : 'soft') : ''))); $('#spRoundRow').hidden = !(s0.k === 'rect' || s0.k === 'round'); $('#spRound').value = Math.round((s0.rr ?? (s0.k === 'round' ? 0.44 : 0)) * 100); $('#spArrow').checked = !!s0.ah; $('#spArrowRow').hidden = s0.k !== 'line';
   $('#spLw').value = Math.round((s0.lw || 0) * 1000); $('#spAlpha').value = Math.round((s0.a ?? 1) * 100);
 }
 const SPX = { before: null, t: 0 };
@@ -4732,7 +4740,9 @@ function shapeEdit(fn) {
   clearTimeout(SPX.t); SPX.t = setTimeout(() => { if (SPX.before) { pushUndo(entry.layer.key, SPX.before, entry.layer.items.slice()); SPX.before = null; } }, 700);
 }
 $('#spGrad').addEventListener('change', (e) => shapeEdit((s) => ({ ...s, g: e.target.checked ? 1 : 0, g2: s.g2 || '#ffffff' })));
-$('#spShadow').addEventListener('change', (e) => shapeEdit((s) => ({ ...s, sh: e.target.checked ? 1 : 0 })));
+// shadow: none, soft (as before) or hard (a solid offset one); corners rounded on a square or box
+$$('#spShadow button').forEach((b) => b.addEventListener('click', () => { const v = b.dataset.v; shapeEdit((s) => { const { shd, ...r } = s; return { ...r, sh: v ? 1 : 0, ...(v === 'hard' ? { shd: 'hard' } : {}) }; }); openShapePop(); }));
+$('#spRound').addEventListener('input', (e) => shapeEdit((s) => ({ ...s, rr: +e.target.value / 100 })));
 $('#spArrow').addEventListener('change', (e) => shapeEdit((s) => ({ ...s, ah: e.target.checked ? 1 : 0 })));
 $('#spLw').addEventListener('input', (e) => shapeEdit((s) => ({ ...s, lw: +e.target.value / 1000, lc: s.lc || penColor() })));
 $('#spAlpha').addEventListener('input', (e) => shapeEdit((s) => ({ ...s, a: +e.target.value / 100 })));
@@ -7063,7 +7073,8 @@ function openPicPop(tab) {
   const s = selPic(); if (!s) return;
   const p = $('#picPop'); closeInkPops(); p.hidden = false;
   $$('#picTabs button').forEach((b) => b.classList.toggle('on', b.dataset.v === tab));
-  $('#picAdjust').hidden = tab !== 'adjust'; $('#picStyle').hidden = tab !== 'style';
+  $('#picAdjust').hidden = tab !== 'adjust'; $('#picStyle').hidden = tab !== 'style'; $('#picFx').hidden = tab !== 'effects';
+  syncPicFx(s);
   const f = s.f || LOOK_DEFAULT;
   $$('#picAdjust input[data-f]').forEach((i) => { i.value = Math.round((f[i.dataset.f] || 0) * 100); });
   $('#picBW').checked = !!f.bw; $('#picRound').value = Math.round((s.rr || 0) * 100); $('#picAlpha').value = Math.round((s.a ?? 1) * 100);
@@ -7081,6 +7092,33 @@ function syncPicWord(s) {
 }
 $('#picWord').addEventListener('input', (e) => picEdit((s) => ({ ...s, word: e.target.value })));
 // live while sliding; one undo step for the whole slide
+// Effects for a photo: shadow (none, soft, hard), an outline in its shape (any colour; the colours
+// already on the page come first) and its width, round corners and opacity
+function syncPicFx(s) {
+  const cur = s.shd || (s.fr === 'shadow' ? 'soft' : '');
+  $$('#picShadow button').forEach((b) => b.classList.toggle('on', b.dataset.v === cur));
+  const g = $('#picOl'); g.textContent = '';
+  const doc = pageColours(Sel.entry), cols = ['', ...doc, ...['#ffffff', '#16181d', '#e8907a', '#f3c54b', '#7cc47f', '#6a8fb5', '#b493e0', '#ff2d87'].filter((c) => !doc.includes(c))];
+  for (const c of cols.slice(0, 16)) {
+    const b = el('button', 'tp-col' + ((s.ol || '') === c ? ' on' : '')); b.style.setProperty('--c', c || 'transparent'); if (!c) b.classList.add('none');
+    b.setAttribute('aria-label', c ? 'Outline ' + c : 'No outline');
+    b.addEventListener('click', () => { picEdit((x) => (c ? { ...x, ol: c, olw: x.olw || 0.008 } : (({ ol, olw, ...r }) => r)(x))); syncPicFx(selPic()); });
+    g.append(b);
+  }
+  $('#picOlwRow').hidden = !s.ol; $('#picOlw').value = Math.round((s.olw || 0.008) * 1000);
+}
+$$('#picShadow button').forEach((b) => b.addEventListener('click', () => { const v = b.dataset.v; picEdit((s) => { const { shd, ...r } = s; return { ...r, fr: r.fr === 'shadow' ? '' : r.fr, ...(v ? { shd: v } : {}) }; }); syncPicFx(selPic()); $$('#picFrames button').forEach((x) => x.classList.toggle('on', x.dataset.v === (selPic().fr || ''))); }));
+$('#picOlw').addEventListener('input', (e) => picEdit((s) => ({ ...s, olw: +e.target.value / 1000 })));
+// The colours already used on the page (fills, outlines, words, backgrounds), newest first: the
+// "document colours" of a design app, so a page keeps to its own colours
+function pageColours(entry) {
+  const out = [];
+  if (entry && entry.layer) for (let i = entry.layer.items.length - 1; i >= 0 && out.length < 8; i--) {
+    const s = entry.layer.items[i];
+    for (const c of [s.f, s.lc, s.c, s.bg, s.ol, s.fc]) if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) && !out.includes(c.toLowerCase()) && out.length < 8) out.push(c.toLowerCase());
+  }
+  return out;
+}
 function picEdit(fn) {
   const entry = Sel.entry, s = selPic(); if (!s) return;
   if (!PICX.before) PICX.before = entry.layer.items.slice();
@@ -7114,7 +7152,8 @@ $('#picAlpha').addEventListener('input', (e) => picEdit((s) => ({ ...s, a: +e.ta
   }
 })();
 (function buildFrames() {
-  for (const [k, label] of FRAMES) {
+  // (the old Shadow frame is under Effects now, with Soft and Hard; photos that have it keep it)
+  for (const [k, label] of FRAMES.filter(([k]) => k !== 'shadow')) {
     const b = el('button', 'frame-btn', label); b.dataset.v = k;
     b.addEventListener('click', () => { picEdit((s) => ({ ...s, fr: k })); $$('#picFrames button').forEach((x) => x.classList.toggle('on', x === b)); });
     $('#picFrames').append(b);

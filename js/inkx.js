@@ -494,12 +494,19 @@ function drawPhotoPlace(ctx, s, w, h, m) {
   if (showWord) { ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(word, ix + ic + fs * 0.5, fs * 0.04); }
 }
 export const FRAMES = [['', 'None'], ['shadow', 'Shadow'], ['white', 'White border'], ['polaroid', 'Instant photo'], ['tape', 'Tape']];
+// A shadow under a photo or a shape (s.shd, optional): 'soft' (the old "Shadow" frame, the same to the
+// pixel) or 'hard' (a solid offset shadow with no blur, as in Canva's "Offset"). m: the thing's size.
+function setShadow(ctx, kind, m) {
+  if (kind === 'hard') { ctx.shadowColor = 'rgba(22,24,29,.88)'; ctx.shadowBlur = 0; ctx.shadowOffsetX = m * 0.028; ctx.shadowOffsetY = m * 0.034; }
+  else { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = m * 0.05; ctx.shadowOffsetY = m * 0.02; }
+}
 export function drawPicture(ctx, s, W, H) {
   const p = picture(s.id);
   const cx = s.x * W, cy = s.y * H, w = s.w * W, h = s.h * H;
   ctx.translate(cx, cy); if (s.rot) ctx.rotate(s.rot);
   ctx.globalAlpha = s.a ?? 1;
   const fr = s.fr || '', m = Math.min(w, h);
+  const shd = s.shd || (fr === 'shadow' ? 'soft' : '');
   // frame behind the picture
   if (fr === 'white' || fr === 'polaroid') {
     const pad = m * 0.045, bottom = fr === 'polaroid' ? m * 0.2 : pad;
@@ -509,11 +516,11 @@ export function drawPicture(ctx, s, W, H) {
   const rr = (s.rr || 0) * m / 2;
   ctx.save();
   if (s.fx || s.fy) ctx.scale(s.fx ? -1 : 1, s.fy ? -1 : 1);
-  if (fr === 'shadow') { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = m * 0.05; ctx.shadowOffsetY = m * 0.02; }
+  if (shd) setShadow(ctx, shd, m);
   // the photo shows through the letters of a word (and stripes under it)
   if (s.mask === 'word' || s.mask === 'bloom') {
     if (s.fx || s.fy) ctx.scale(s.fx ? -1 : 1, s.fy ? -1 : 1);   // the letters never mirror
-    if (fr === 'shadow') { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = m * 0.05; ctx.shadowOffsetY = m * 0.02; }
+    if (shd) setShadow(ctx, shd, m);
     const T = ctx.getTransform(), k = Math.min(3, Math.hypot(T.a, T.b) || 1);
     ctx.drawImage(wordCanvas(s, p.ready ? p : null, w, h, k), -w / 2, -h / 2, w, h);
     ctx.restore();
@@ -523,12 +530,12 @@ export function drawPicture(ctx, s, W, H) {
   if (s.mask) shapePath(ctx, s.mask, w, h);
   else { ctx.beginPath(); if (rr > 0.5) ctx.roundRect(-w / 2, -h / 2, w, h, rr); else ctx.rect(-w / 2, -h / 2, w, h); }
   if (p.ready) {
-    if (fr === 'shadow') { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
+    if (shd) { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
     ctx.clip();
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(lookCanvas(s, p), -w / 2, -h / 2, w, h);
   } else if (!s.id) {
-    if (fr === 'shadow') { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
+    if (shd) { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
     drawPhotoPlace(ctx, s, w, h, m);
   } else {
     ctx.fillStyle = 'rgba(140,150,170,.16)'; ctx.fill();
@@ -917,8 +924,10 @@ export function drawShape(ctx, s, W, H) {
     return;
   }
   if (s.k && s.k.startsWith('e:')) { drawElement(ctx, s.k.slice(2), w, h, fillStyleOf(ctx, s, w, h) || s.lc || '#16181d', s.lw ? s.lw * W : 0, s.lc && s.lw ? s.lc : '', s.sh); return; }
-  shapePath(ctx, s.k, w, h);
-  if (s.sh) { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = Math.min(w, h) * 0.08; ctx.shadowOffsetY = Math.min(w, h) * 0.03; }
+  // (a square or rounded box can have its corners rounded by s.rr, 0 to 1, as in a design app)
+  if (s.rr && (s.k === 'rect' || s.k === 'round')) { ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, (s.rr * Math.min(w, h)) / 2); } else shapePath(ctx, s.k, w, h);
+  if (s.sh && s.shd === 'hard') setShadow(ctx, 'hard', Math.min(w, h));
+  else if (s.sh) { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = Math.min(w, h) * 0.08; ctx.shadowOffsetY = Math.min(w, h) * 0.03; }
   if (s.f && s.k !== 'line') { ctx.fillStyle = fillStyleOf(ctx, s, w, h); ctx.fill(); }
   ctx.shadowColor = 'transparent';
   if (s.lc && (s.lw || s.k === 'line')) { ctx.strokeStyle = s.lc; ctx.lineWidth = Math.max(1, (s.lw || 0.004) * W); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke(); }
