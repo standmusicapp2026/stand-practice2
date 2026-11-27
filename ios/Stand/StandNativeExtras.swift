@@ -360,6 +360,35 @@ final class StandNativeExtras: NSObject {
         if pairing?.peer == peer { pairing = nil }
         session?.cancelConnectPeer(peer)
     }
+    // An old link left over: the other device was closed or restarted, but iOS here still counts it as
+    // connected for a while (up to a minute), and turned away the new link it asked for. That left
+    // the two not finding each other when one was opened after the other. Now: when such a device asks
+    // again (or is seen anew), it is asked "are you there?"; with no answer in 2 s the old link is let
+    // go, and the new one is taken.
+    private var lastHeard = [MCPeerID: Date]()
+    private var ghostCheck = Set<MCPeerID>()
+    private func checkGhost(_ peer: MCPeerID) {
+        // (only a Stand that answers "are you there?": an older one never would)
+        guard let s = session, s.connectedPeers.contains(peer), !ghostCheck.contains(peer), seen[peer]?["g"] == "1" else { return }
+        ghostCheck.insert(peer)
+        let asked = Date()
+        do { try s.send(Data([UInt8(ascii: "P")]), toPeers: [peer], with: .reliable) } catch { }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self else { return }
+            self.ghostCheck.remove(peer)
+            guard let s2 = self.session, s2 === s, s2.connectedPeers.contains(peer) else { return }
+            if let h = self.lastHeard[peer], h >= asked { return }   // (it answered: a real link)
+            StandLog.write("link: an old link to \(peer.displayName) was left over, let go")
+            self.verified.remove(peer); self.myNonce.removeValue(forKey: peer)
+            s2.cancelConnectPeer(peer)
+            self.reportPeers()
+            // and asked again at once, if it is in sight
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self = self, self.looking, let br = self.browser, let info = self.seen[peer], let s3 = self.session, !s3.connectedPeers.contains(peer) else { return }
+                self.invited.removeValue(forKey: peer); self.found(br, peer, info)
+            }
+        }
+    }
     private func setPairMode(_ on: Bool) {
         pairTimer?.invalidate(); pairTimer = nil
         pairMode = on
@@ -551,7 +580,7 @@ final class StandNativeExtras: NSObject {
     private var lookAgain: DispatchWorkItem?
     private func newLooking() {
         guard let id = peerID, session != nil, advertiser == nil, browser == nil else { return }
-        let adv = MCNearbyServiceAdvertiser(peer: id, discoveryInfo: ["app": "stand", "t": token, "d": deviceId, "k": kind], serviceType: serviceType)
+        let adv = MCNearbyServiceAdvertiser(peer: id, discoveryInfo: ["app": "stand", "t": token, "d": deviceId, "k": kind, "g": "1"], serviceType: serviceType)
         adv.delegate = self
         advertiser = adv
         let br = MCNearbyServiceBrowser(peer: id, serviceType: serviceType)
@@ -625,7 +654,7 @@ extension StandNativeExtras: MCSessionDelegate {
         if state == .notConnected {
             DispatchQueue.main.async {
                 self.invited.removeValue(forKey: peerID)
-                self.verified.remove(peerID); self.myNonce.removeValue(forKey: peerID)
+                self.verified.remove(peerID); self.myNonce.removeValue(forKey: peerID); self.lastHeard.removeValue(forKey: peerID)
                 if self.pairing?.peer == peerID { self.pairing = nil; self.js("window.standPairEvent && window.standPairEvent('lost', {})") }
                 self.reportPeers()
             }
@@ -638,6 +667,13 @@ extension StandNativeExtras: MCSessionDelegate {
     }
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         guard let kind = data.first else { return }
+        DispatchQueue.main.async { self.lastHeard[peerID] = Date() }
+        if kind == UInt8(ascii: "P") {
+            // "are you there?": answered at once (an old link left over from before is found out this way)
+            do { try session.send(Data([UInt8(ascii: "Q")]), toPeers: [peerID], with: .reliable) } catch { }
+            return
+        }
+        if kind == UInt8(ascii: "Q") { return }
         if kind == UInt8(ascii: "A") {
             guard let m = (try? JSONSerialization.jsonObject(with: data.dropFirst())) as? [String: Any] else { return }
             DispatchQueue.main.async { guard self.session === session else { return }; self.handleAuth(peerID, m) }
@@ -731,6 +767,7 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
             // device was not yet linking, must not stop it from asking a moment later)
             if ok && s != nil && !already { self.lastInvitation = Date() }
             invitationHandler(ok && s != nil && !already, s)
+            if ok && already { self.checkGhost(peerID) }
         }
     }
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
@@ -760,7 +797,8 @@ extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
         if token > theirs {
             // (2 s: long enough for the other one's own invitation to arrive first, short enough not to be felt)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                guard let self = self, self.looking, browser === self.browser, let s2 = self.session, s2 === s, !s2.connectedPeers.contains(peerID) else { return }
+                guard let self = self, self.looking, browser === self.browser, let s2 = self.session, s2 === s else { return }
+                if s2.connectedPeers.contains(peerID) { self.checkGhost(peerID); return }
                 if Date().timeIntervalSince(self.lastInvitation) < 4 { return }
                 if let at = self.invited[peerID], Date().timeIntervalSince(at) < 22 { return }
                 self.invited[peerID] = Date()
@@ -771,7 +809,7 @@ extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
         DispatchQueue.main.async {
             guard self.looking, browser === self.browser, s === self.session else { return }
             if let at = self.invited[peerID], Date().timeIntervalSince(at) < 22 { return }
-            guard !s.connectedPeers.contains(peerID) else { return }
+            guard !s.connectedPeers.contains(peerID) else { self.checkGhost(peerID); return }
             self.invited[peerID] = Date()
             browser.invitePeer(peerID, to: s, withContext: ("stand2|" + self.deviceId).data(using: .utf8), timeout: 20)
         }

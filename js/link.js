@@ -654,12 +654,14 @@ export class CameraPhone {
       this.box.open();
       this._unw = directWatch((n) => {
         if (!n && this.direct && this.state === 'linked') { this.direct = false; this._lost(); }
-        else if (n && this.searching) this._hello();
+        else if (n && this.state !== 'linked' && this.state !== 'off') this._hello();
       });
     }
     clearInterval(this._helloT);
     this._hello();
-    this._helloT = setInterval(() => { if (!this.searching || this.state === 'linked') { clearInterval(this._helloT); return; } this._hello(); }, 1200);
+    // (on until linked: an iPad that opens its camera panel later finds this iPhone within a second;
+    // it used to stop once the search over the internet gave up, and the two then never met)
+    this._helloT = setInterval(() => { if (!this.box || this.state === 'linked' || this.state === 'off') { clearInterval(this._helloT); return; } this._hello(); }, 1200);
   }
   _hello() { if (this.box && directPeers() > 0) this.box.send('stand-dcam-host', 'D_HELLO', { name: 'iPhone' }); }
   _dmsg(m) {
