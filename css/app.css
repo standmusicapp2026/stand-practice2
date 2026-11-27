@@ -2765,3 +2765,9 @@ body:not(.phone) .dock .media-pill { min-width: 280px; }
 /* (a longer hint wraps on a narrow screen rather than running off it) */
 @media (max-width: 600px) { .ink-hint { white-space: normal; width: max-content; max-width: calc(100vw - 32px); text-align: center; } }
 .sel-box.cropping .sel-rot, .sel-box.cropping .sel-side { display: none; }
+/* painting what pops out: no handles, a brush to paint with */
+.sel-box.painting { border-style: dashed; cursor: crosshair; }
+.sel-box.painting .sel-handle, .sel-box.painting .sel-side, .sel-box.painting .sel-rot { display: none; }
+/* "the photo" as a choice among colours (inside the frame of a pop out) */
+.tp-col.photo { background: linear-gradient(135deg, #e8907a, #6a8fb5); }
+#picPopPaint { width: 100%; min-height: 44px; }

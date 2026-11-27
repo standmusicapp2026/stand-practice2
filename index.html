@@ -514,6 +514,14 @@
       <div class="ctl" id="picOlwRow"><div class="ctl-head"><span>Outline width</span></div><input type="range" id="picOlw" min="2" max="40" value="8"></div>
       <div class="ctl"><div class="ctl-head"><span>Round corners</span></div><input type="range" id="picRound" min="0" max="100" value="0"></div>
       <div class="ctl"><div class="ctl-head"><span>Opacity</span></div><input type="range" id="picAlpha" min="10" max="100" value="100"></div>
+      <div class="ctl-head"><span>Pop out</span></div>
+      <p class="hint">Part of the photo comes out of its frame, over the top: paint over that part (a head, the scroll of a cello).</p>
+      <div class="seg full" id="picPopOn"><button data-v="">Off</button><button data-v="on">On</button></div>
+      <div id="picPopRow" hidden>
+        <button class="btn primary" id="picPopPaint">Paint what pops out</button>
+        <div class="ctl"><div class="ctl-head"><span>Room above the frame</span></div><input type="range" id="picPopT" min="5" max="50" value="22"></div>
+        <div class="ctl-head"><span>Inside the frame</span></div><div class="tp-cols" id="picPopBg"></div>
+      </div>
     </div>
   </div>
   <div class="tb-bar" id="tbBar" hidden aria-label="Text box">

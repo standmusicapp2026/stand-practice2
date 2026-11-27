@@ -4086,7 +4086,7 @@ $('#inkRedo').addEventListener('click', redo);
 const Sel = { entry: null, idx: [], box: null, el: null };
 function clearSelection() {
   if (Sel.el && Sel.el.classList.contains('obj') && !tbEdit) { const tbb = $('#tbBar'); if (tbb && !tbb.hidden) { tbb.hidden = true; $('#inkbar').classList.remove('under'); $('#textPop').hidden = true; } }
-  if (Sel.crop) clearLive();   // (the faint whole photo shown while cropping)
+  if (Sel.crop || Sel.paint) clearLive();   // (the faint whole photo shown while cropping or painting)
   if (Sel.el) Sel.el.remove();
   if (Sel.bar) Sel.bar.remove();
   if ($('#posPop')) $('#posPop').hidden = true;   // (the Position panel is for what was chosen)
@@ -4149,8 +4149,10 @@ function makeSelection(entry, idx) {
   { const its = entry.layer.items, g = new Set(idx.map((i) => its[i] && its[i].grp).filter(Boolean));
     if (g.size) idx = [...new Set([...idx, ...its.map((s, i) => (s.grp && g.has(s.grp) ? i : -1)).filter((i) => i >= 0)])].sort((x, y) => x - y); }
   const keepCrop = Sel.keepCrop; Sel.keepCrop = false;
+  const keepPaint = Sel.keepPaint; Sel.keepPaint = null;
   // (a new selection always starts by resizing: cropping is for the picture it was turned on for)
   Sel.crop = !!keepCrop;
+  Sel.paint = keepPaint && idx.length === 1 && entry.layer.items[idx[0]].pop ? keepPaint : null;
   Sel.entry = entry; Sel.idx = idx; Sel.box = selectionBox(entry, idx);
   const one = idx.length === 1 ? entry.layer.items[idx[0]] : null;
   Sel.fr = one ? frameOf(one) : null;
@@ -4190,6 +4192,20 @@ function makeSelection(entry, idx) {
     );
     // cropping is a mode of its own, as in Canva: only Zoom and Done on the bar
     if (Sel.crop) [...bar.children].forEach((b) => { if (b.getAttribute('aria-label') !== 'Done') b.remove(); });
+    // painting what pops out: Paint, Erase, the brush's size, Done
+    if (Sel.paint) {
+      bar.textContent = '';
+      const P0 = Sel.paint;
+      const paintB = mk('Paint', () => { P0.erase = false; paintB.classList.add('on'); eraseB.classList.remove('on'); }, P0.erase ? '' : 'on', 'brush');
+      const eraseB = mk('Erase', () => { P0.erase = true; eraseB.classList.add('on'); paintB.classList.remove('on'); }, P0.erase ? 'on' : '', 'erase');
+      const z = el('label', 'sel-zoom'); z.append(el('span', '', 'Brush size'));
+      const rg = el('input'); rg.type = 'range'; rg.min = 2; rg.max = 25; rg.value = Math.round(P0.size * 100); rg.setAttribute('aria-label', 'Brush size');
+      for (const t of ['pointerdown', 'pointermove', 'pointerup']) rg.addEventListener(t, (e) => e.stopPropagation());
+      rg.addEventListener('input', () => { P0.size = +rg.value / 100; });
+      z.append(rg);
+      bar.append(paintB, eraseB, z, mk('Done', () => { makeSelection(Sel.entry, Sel.idx.slice()); openPicPop('effects'); }, 'accent', 'check'));
+      box.classList.add('painting');
+    }
   } else if (shp && shp.k === 'mus') {
     // engraved music: a scale opens its chooser again; nothing here would mirror or restyle the notes
     bar.append(...(shp.sc ? [mk('Edit scale', () => editScale(entry, idx[0]), 'accent', 'music')] : []),
@@ -4220,6 +4236,7 @@ function makeSelection(entry, idx) {
   $('#score').append(bar);
   Sel.el = box; Sel.bar = bar; placeSelection();
   Sel.tapT = performance.now();
+  if (Sel.paint && pic) popGhost(entry, pic, pageSize(entry.inner.getBoundingClientRect()));
   if (Sel.crop && pic) {
     // cropping: the whole photo shows faintly round its frame, and a slider zooms it (for the Pencil
     // or one finger; two fingers pinch)
@@ -4259,6 +4276,13 @@ function makeSelection(entry, idx) {
       return [f0.cx * PS[0] + lx * c - ly * sn, f0.cy * PS[1] + lx * sn + ly * c];
     };
     const opp = { nw: 'se', ne: 'sw', sw: 'ne', se: 'nw' };
+    if (Sel.paint && pic) {
+      const s0 = entry.layer.items[Sel.idx[0]], PS0 = PS;
+      drag = { mode: 'paint', r, PS: PS0, p0: pagePx(e, r), b0: { ...Sel.box }, f0: Sel.fr ? { ...Sel.fr } : null, items: [s0], ids: new Map([[e.pointerId, [e.clientX, e.clientY]]]),
+        stroke: { ...(Sel.paint.erase ? { e: 1 } : {}), r: +(Sel.paint.size * ((s0.cr || [0, 0, 1, 1])[2] - (s0.cr || [0, 0, 1, 1])[0]) / 2).toFixed(4), p: [photoPoint(s0, pagePx(e, r), PS0)] } };
+      drag.moved = true; drag.P = drag.p0; if (!raf) raf = requestAnimationFrame(frame);
+      return;
+    }
     drag = { mode: c ? (c === 'rot' ? 'rot' : c === 'e' || c === 'w' ? 'width' : Sel.crop ? 'crop' : 'scale') : Sel.crop ? 'pan' : 'move', c, r, PS, b0, p0: pagePx(e, r), items: Sel.idx.map((i) => entry.layer.items[i]), ids: new Map([[e.pointerId, [e.clientX, e.clientY]]]) };
     if (opp[c]) { drag.C = corner(c); drag.A = corner(opp[c]); }   // (the corners: the side handles need neither)
     drag.f0 = f0;
@@ -4305,6 +4329,13 @@ function makeSelection(entry, idx) {
       d.deg = Math.round(((rot * 180 / Math.PI) % 360 + 360) % 360);
       return [{ ...s0, rot: +rot.toFixed(4) }];
     }
+    if (d.mode === 'paint') {
+      // one more point of the stroke (only when it has gone a little way), then the photo as it
+      // would be with the stroke
+      const s0 = d.items[0], q = photoPoint(s0, P, PS), l = d.stroke.p[d.stroke.p.length - 1];
+      if (Math.hypot(q[0] - l[0], q[1] - l[1]) > 0.002) d.stroke.p.push(q);
+      return [{ ...s0, pop: { ...s0.pop, st: [...(s0.pop.st || []), { ...d.stroke, p: d.stroke.p.slice() }] } }];
+    }
     if (d.mode === 'pan') return [panPicture(d.items[0], P[0] - d.p0[0], P[1] - d.p0[1], PS)];
     if (d.mode === 'pz') return [zoomPicture(d.items[0], d.k)];
     if (d.mode === 'crop') return [cropPicture(d.items[0], d.c, P[0] - d.p0[0], P[1] - d.p0[1], PS)];
@@ -4349,6 +4380,7 @@ function makeSelection(entry, idx) {
       drawLiveItem(entry, fillFrame(entry.layer.items[into], drag.out[0], drag.PS), null, false);
       drawLiveItem(entry, { ...drag.out[0], a: 0.4 }, null, false);
     } else if (Sel.crop && pic) cropGhost(entry, drag.out[0], drag.PS, false);
+    else if (drag.mode === 'paint') popGhost(entry, drag.out[0], drag.PS);
     else for (const it of drag.out) { if (other) drawLiveItem(other, toOtherPage(entry, other, it), null, false); else drawLiveItem(entry, it, null, false); }
     if (Sel.el) Sel.el.style.visibility = other || into >= 0 ? 'hidden' : '';
     let bb = null; for (const it of drag.out) { const q = itemBounds(it); bb = bb ? { x0: Math.min(bb.x0, q.x0), y0: Math.min(bb.y0, q.y0), x1: Math.max(bb.x1, q.x1), y1: Math.max(bb.y1, q.y1) } : q; }
@@ -4422,6 +4454,7 @@ function makeSelection(entry, idx) {
     entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
     Sel.box = selectionBox(entry, Sel.idx); if (Sel.idx.length === 1) Sel.fr = frameOf(after[Sel.idx[0]]); placeSelection();
     if (Sel.crop && pic) cropGhost(entry, after[Sel.idx[0]], d.PS);
+    if (Sel.paint && pic) popGhost(entry, after[Sel.idx[0]], d.PS);
   };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
 }
@@ -4490,6 +4523,9 @@ const SEL_ICONS = {
   spacex: `<g ${SVG_S}><path d="M3 4v16M21 4v16"/><rect x="6.5" y="8" width="3.5" height="8" rx="1"/><rect x="14" y="8" width="3.5" height="8" rx="1"/></g>`,
   spacey: `<g ${SVG_S}><path d="M4 3h16M4 21h16"/><rect x="8" y="6.5" width="8" height="3.5" rx="1"/><rect x="8" y="14" width="8" height="3.5" rx="1"/></g>`,
   fliph: `<g ${SVG_S}><path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L4 17h5z"/><path d="M15 7l5 10h-5z" fill="currentColor"/></g>`,
+  brush: `<g ${SVG_S}><path d="M14.5 4.5l5 5L10 19H5v-5z"/><path d="M12.5 6.5l5 5"/></g>`,
+  erase: `<g ${SVG_S}><path d="M8 20h12M5.5 14.5l8.5-8.5 5 5-8.5 8.5H8.5z"/><path d="M9.5 10.5l5 5"/></g>`,
+  check: `<g ${SVG_S}><path d="M5 12.5l4.5 4.5L19 7.5"/></g>`,
   flipv: `<g ${SVG_S}><path d="M3 12h18" stroke-dasharray="2 2"/><path d="M7 9L17 4v5z"/><path d="M7 15l10 5v-5z" fill="currentColor"/></g>`,
 };
 // The bar acts as the finger lifts; the click the browser sends just after would land on whatever
@@ -4505,6 +4541,31 @@ function setCrop(on) {
   if (!Sel.entry) return;
   if (on) inkHint('Drag the photo to place it in its frame. Pinch or slide to zoom.', 3600);
   Sel.keepCrop = !!on; makeSelection(Sel.entry, Sel.idx.slice());
+}
+// Painting what pops out of the frame: the Pencil or a finger paints over the part of the photo that
+// should come out (it shows at full strength; the rest of the photo shows faintly round the frame);
+// Erase takes paint away. Each stroke is one undo step. Done goes back to the photo's bar.
+function startPopPaint() {
+  const s = selPic(); if (!s || !s.pop) return;
+  closeInkPops();
+  // (a change just made in the panel is its own undo step, before the first stroke)
+  clearTimeout(PICX.t); if (PICX.before) { pushUndo(Sel.entry.layer.key, PICX.before, Sel.entry.layer.items.slice()); PICX.before = null; }
+  Sel.keepPaint = Sel.paint || { erase: false, size: 0.1 };
+  makeSelection(Sel.entry, Sel.idx.slice());
+  inkHint('Paint over what should come out of the frame. Erase to take paint away.', 3600);
+}
+function popGhost(entry, s, PS) {
+  // the whole photo faintly in its box, then the photo with its pop out as it is
+  clearLive();
+  drawLiveItem(entry, { ...s, pop: undefined, mask: undefined, ol: undefined, shd: undefined, fr: '', rr: 0, a: 0.3 }, null, false);
+  drawLiveItem(entry, s, null, false);
+}
+// a point on the page (page pixels) in the photo's own terms: fractions of the whole photo
+function photoPoint(s, P, PS) {
+  const rot = s.rot || 0, dx = P[0] - s.x * PS[0], dy = P[1] - s.y * PS[1], co = Math.cos(-rot), si = Math.sin(-rot);
+  let lx = dx * co - dy * si, ly = dx * si + dy * co; if (s.fx) lx = -lx; if (s.fy) ly = -ly;
+  const cr = s.cr || [0, 0, 1, 1], bx = lx / (s.w * PS[0]) + 0.5, by = ly / (s.h * PS[1]) + 0.5;
+  return [+(cr[0] + bx * (cr[2] - cr[0])).toFixed(4), +(cr[1] + by * (cr[3] - cr[1])).toFixed(4)];
 }
 // The selection in units that move as one: a group is one unit, anything else on its own
 function selUnits() {
@@ -4796,6 +4857,8 @@ window.__ed = {
   select: (idx) => { const e = centreEntry(); INK.tool = 'select'; syncInkBar(); makeSelection(e, idx); },
   page: () => { const e = centreEntry(); const r = e.inner.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, PS: pageSize(r) }; },
   undo, redo, undoLen: () => V.undo.length,
+  // one thing drawn alone on white at W × H; the colours at some points (fractions of the page)
+  pixels: (it, W, H, pts) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); drawItem(g, it, W, H, false); return pts.map(([x, y]) => [...g.getImageData(Math.round(x * W), Math.round(y * H), 1, 1).data.slice(0, 3)]); },
 };
 window.__nbCount = () => V.pages.map((p) => (p.layer ? p.layer.items.filter((x) => x.t !== 'bg').map((x) => x.t).join('+') || '-' : '?')).join(' , ');
 // the page in the middle of the screen
@@ -7106,7 +7169,35 @@ function syncPicFx(s) {
     g.append(b);
   }
   $('#picOlwRow').hidden = !s.ol; $('#picOlw').value = Math.round((s.olw || 0.008) * 1000);
+  // pop out (not for a photo in a word, nor an empty place)
+  const canPop = !!s.id && s.mask !== 'word' && s.mask !== 'bloom';
+  $('#picPopOn').hidden = !canPop; $$('#picPopOn button').forEach((b) => b.classList.toggle('on', b.dataset.v === (s.pop ? 'on' : '')));
+  $('#picPopRow').hidden = !s.pop || !canPop;
+  if (s.pop) {
+    $('#picPopT').value = Math.round((s.pop.t ?? 0.22) * 100);
+    const bg = $('#picPopBg'); bg.textContent = '';
+    for (const c of ['', ...pageColours(Sel.entry).filter((x) => x !== '#ffffff'), '#ffffff', '#f3c54b', '#e8907a', '#6a8fb5', '#7cc47f', '#b493e0'].slice(0, 12)) {
+      const b = el('button', 'tp-col' + ((s.pop.bg || '') === c ? ' on' : '')); b.style.setProperty('--c', c || 'transparent');
+      if (!c) { b.classList.add('photo'); b.setAttribute('aria-label', 'The photo'); } else b.setAttribute('aria-label', 'Colour ' + c);
+      b.addEventListener('click', () => { picEdit((x) => ({ ...x, pop: { ...x.pop, bg: c || undefined } })); syncPicFx(selPic()); });
+      bg.append(b);
+    }
+  }
 }
+// Pop out: on, the photo gets room above its frame (a circle unless it has a shape) and the brush
+// opens at once, so what to do next is plain; off, the photo is as it was
+$$('#picPopOn button').forEach((b) => b.addEventListener('click', () => {
+  const on = !!b.dataset.v, s0 = selPic(); if (!s0 || on === !!s0.pop) return;
+  if (on) {
+    // (the frame is drawn lower in the same box: the photo keeps its place and size)
+    // (as round a circle as the photo allows: the room above is what the photo has beyond a square)
+    const PS = pageSize(Sel.entry.inner.getBoundingClientRect()), t = +clamp(1 - (s0.w * PS[0]) / (s0.h * PS[1]), 0.15, 0.45).toFixed(3);
+    picEdit((s) => ({ ...s, mask: s.mask || 'circle', pop: { t, st: [] } }));
+    startPopPaint();
+  } else { picEdit((s) => (({ pop, ...r }) => r)(s)); syncPicFx(selPic()); }
+}));
+$('#picPopPaint').addEventListener('click', () => startPopPaint());
+$('#picPopT').addEventListener('input', (e) => picEdit((s) => ({ ...s, pop: { ...s.pop, t: +e.target.value / 100 } })));
 $$('#picShadow button').forEach((b) => b.addEventListener('click', () => { const v = b.dataset.v; picEdit((s) => { const { shd, ...r } = s; return { ...r, fr: r.fr === 'shadow' ? '' : r.fr, ...(v ? { shd: v } : {}) }; }); syncPicFx(selPic()); $$('#picFrames button').forEach((x) => x.classList.toggle('on', x.dataset.v === (selPic().fr || ''))); }));
 $('#picOlw').addEventListener('input', (e) => picEdit((s) => ({ ...s, olw: +e.target.value / 1000 })));
 // The colours already used on the page (fills, outlines, words, backgrounds), newest first: the
