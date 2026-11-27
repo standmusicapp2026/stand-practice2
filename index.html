@@ -480,12 +480,14 @@
     <label class="check"><input type="checkbox" id="spGrad"> Gradient to</label><div class="tp-cols" id="spGrad2"></div>
     <div class="ctl-head"><span>Outline</span></div><div class="tp-cols" id="spLine"></div>
     <div class="ctl"><div class="ctl-head"><span>Outline width</span></div><input type="range" id="spLw" min="0" max="30" value="0"></div>
-    <label class="check"><input type="checkbox" id="spShadow"> Shadow</label>
+    <div class="ctl-head"><span>Shadow</span></div>
+    <div class="seg full" id="spShadow"><button data-v="">None</button><button data-v="soft">Soft</button><button data-v="hard">Hard</button></div>
+    <div class="ctl" id="spRoundRow"><div class="ctl-head"><span>Round corners</span></div><input type="range" id="spRound" min="0" max="100" value="0"></div>
     <label class="check" id="spArrowRow"><input type="checkbox" id="spArrow"> Arrow head</label>
     <div class="ctl"><div class="ctl-head"><span>Opacity</span></div><input type="range" id="spAlpha" min="10" max="100" value="100"></div>
   </div>
   <div class="ink-pop pic-pop" id="picPop" hidden>
-    <div class="seg full" id="picTabs"><button data-v="adjust" class="on">Adjust</button><button data-v="style">Style</button></div>
+    <div class="seg full" id="picTabs"><button data-v="adjust" class="on">Adjust</button><button data-v="style">Style</button><button data-v="effects">Effects</button></div>
     <div id="picAdjust">
       <div class="ctl"><div class="ctl-head"><span>Light</span></div><input type="range" data-f="b" min="-100" max="100" value="0"></div>
       <div class="ctl"><div class="ctl-head"><span>Contrast</span></div><input type="range" data-f="c" min="-100" max="100" value="0"></div>
@@ -504,8 +506,22 @@
         <input type="text" id="picWord" class="pic-word" maxlength="16" autocomplete="off" spellcheck="false">
         <div class="frame-row" id="picWordFonts"></div>
       </div>
+    </div>
+    <div id="picFx" hidden>
+      <div class="ctl-head"><span>Shadow</span></div>
+      <div class="seg full" id="picShadow"><button data-v="">None</button><button data-v="soft">Soft</button><button data-v="hard">Hard</button></div>
+      <div class="ctl-head"><span>Outline</span></div><div class="tp-cols" id="picOl"></div>
+      <div class="ctl" id="picOlwRow"><div class="ctl-head"><span>Outline width</span></div><input type="range" id="picOlw" min="2" max="40" value="8"></div>
       <div class="ctl"><div class="ctl-head"><span>Round corners</span></div><input type="range" id="picRound" min="0" max="100" value="0"></div>
       <div class="ctl"><div class="ctl-head"><span>Opacity</span></div><input type="range" id="picAlpha" min="10" max="100" value="100"></div>
+      <div class="ctl-head"><span>Pop out</span></div>
+      <p class="hint">Part of the photo comes out of its frame, over the top: paint over that part (a head, the scroll of a cello).</p>
+      <div class="seg full" id="picPopOn"><button data-v="">Off</button><button data-v="on">On</button></div>
+      <div id="picPopRow" hidden>
+        <button class="btn primary" id="picPopPaint">Paint what pops out</button>
+        <div class="ctl"><div class="ctl-head"><span>Room above the frame</span></div><input type="range" id="picPopT" min="5" max="50" value="22"></div>
+        <div class="ctl-head"><span>Inside the frame</span></div><div class="tp-cols" id="picPopBg"></div>
+      </div>
     </div>
   </div>
   <div class="tb-bar" id="tbBar" hidden aria-label="Text box">

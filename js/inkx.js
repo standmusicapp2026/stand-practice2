@@ -494,12 +494,19 @@ function drawPhotoPlace(ctx, s, w, h, m) {
   if (showWord) { ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(word, ix + ic + fs * 0.5, fs * 0.04); }
 }
 export const FRAMES = [['', 'None'], ['shadow', 'Shadow'], ['white', 'White border'], ['polaroid', 'Instant photo'], ['tape', 'Tape']];
+// A shadow under a photo or a shape (s.shd, optional): 'soft' (the old "Shadow" frame, the same to the
+// pixel) or 'hard' (a solid offset shadow with no blur, as in Canva's "Offset"). m: the thing's size.
+function setShadow(ctx, kind, m) {
+  if (kind === 'hard') { ctx.shadowColor = 'rgba(22,24,29,.88)'; ctx.shadowBlur = 0; ctx.shadowOffsetX = m * 0.028; ctx.shadowOffsetY = m * 0.034; }
+  else { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = m * 0.05; ctx.shadowOffsetY = m * 0.02; }
+}
 export function drawPicture(ctx, s, W, H) {
   const p = picture(s.id);
   const cx = s.x * W, cy = s.y * H, w = s.w * W, h = s.h * H;
   ctx.translate(cx, cy); if (s.rot) ctx.rotate(s.rot);
   ctx.globalAlpha = s.a ?? 1;
   const fr = s.fr || '', m = Math.min(w, h);
+  const shd = s.shd || (fr === 'shadow' ? 'soft' : '');
   // frame behind the picture
   if (fr === 'white' || fr === 'polaroid') {
     const pad = m * 0.045, bottom = fr === 'polaroid' ? m * 0.2 : pad;
@@ -509,11 +516,17 @@ export function drawPicture(ctx, s, W, H) {
   const rr = (s.rr || 0) * m / 2;
   ctx.save();
   if (s.fx || s.fy) ctx.scale(s.fx ? -1 : 1, s.fy ? -1 : 1);
-  if (fr === 'shadow') { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = m * 0.05; ctx.shadowOffsetY = m * 0.02; }
+  if (shd) setShadow(ctx, shd, m);
+  // pop out: the photo comes out of its frame where it was painted (a head over the top of a circle)
+  if (s.pop && s.id && s.mask !== 'word' && s.mask !== 'bloom') {
+    drawPopOut(ctx, s, p, w, h, rr, shd, W);
+    ctx.restore();
+    return;
+  }
   // the photo shows through the letters of a word (and stripes under it)
   if (s.mask === 'word' || s.mask === 'bloom') {
     if (s.fx || s.fy) ctx.scale(s.fx ? -1 : 1, s.fy ? -1 : 1);   // the letters never mirror
-    if (fr === 'shadow') { ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = m * 0.05; ctx.shadowOffsetY = m * 0.02; }
+    if (shd) setShadow(ctx, shd, m);
     const T = ctx.getTransform(), k = Math.min(3, Math.hypot(T.a, T.b) || 1);
     ctx.drawImage(wordCanvas(s, p.ready ? p : null, w, h, k), -w / 2, -h / 2, w, h);
     ctx.restore();
@@ -523,12 +536,12 @@ export function drawPicture(ctx, s, W, H) {
   if (s.mask) shapePath(ctx, s.mask, w, h);
   else { ctx.beginPath(); if (rr > 0.5) ctx.roundRect(-w / 2, -h / 2, w, h, rr); else ctx.rect(-w / 2, -h / 2, w, h); }
   if (p.ready) {
-    if (fr === 'shadow') { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
+    if (shd) { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
     ctx.clip();
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(lookCanvas(s, p), -w / 2, -h / 2, w, h);
   } else if (!s.id) {
-    if (fr === 'shadow') { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
+    if (shd) { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
     drawPhotoPlace(ctx, s, w, h, m);
   } else {
     ctx.fillStyle = 'rgba(140,150,170,.16)'; ctx.fill();
@@ -547,6 +560,64 @@ export function drawPicture(ctx, s, W, H) {
       ctx.fillRect(-tw / 2, -th / 2, tw, th); ctx.restore();
     }
   }
+}
+
+// ---------- pop out (a photo breaking out of its frame, as in Canva) ----------
+// s.pop (optional): t, the room left above the frame (part of the photo's height, 0 to 0.6: the frame,
+// in the photo's shape or a box, sits in the rest, at the bottom); st, the strokes painted over the
+// part that comes out (each: p, points as fractions of the whole photo, so they stay on the subject
+// when the photo is moved or zoomed in its frame; r, the brush's radius as a part of the photo's
+// width; e, 1 for a stroke that rubs out); bg, a colour that fills the frame instead of the photo
+// (then only what was painted shows: a cut-out on a coloured shape).
+// The whole photo fills the box; inside the frame it shows as usual, and outside it only where painted.
+export function popFrame(s) { const t = Math.max(0, Math.min(0.6, s.pop && s.pop.t != null ? s.pop.t : 0.22)); return t; }
+function popPath(ctx, s, w, h, rr) {
+  const t = popFrame(s), fh = h * (1 - t);
+  ctx.save(); ctx.translate(0, (t * h) / 2);
+  if (s.mask) shapePath(ctx, s.mask, w, fh);
+  else { ctx.beginPath(); if (rr > 0.5) ctx.roundRect(-w / 2, -fh / 2, w, fh, Math.min(rr, fh / 2)); else ctx.rect(-w / 2, -fh / 2, w, fh); }
+  ctx.restore();
+}
+function drawPopOut(ctx, s, p, w, h, rr, shd, W) {
+  const bg = s.pop.bg || '';
+  popPath(ctx, s, w, h, rr);
+  if (shd || bg) { ctx.fillStyle = bg || '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; ctx.shadowBlur = 0; }
+  if (p.ready && !bg) { ctx.save(); ctx.clip(); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(lookCanvas(s, p), -w / 2, -h / 2, w, h); ctx.restore(); }
+  if (s.ol) { popPath(ctx, s, w, h, rr); ctx.strokeStyle = s.ol; ctx.lineWidth = Math.max(1, (s.olw || 0.008) * W); ctx.lineJoin = 'round'; ctx.stroke(); }
+  if (p.ready && s.pop.st && s.pop.st.length) {
+    const T = ctx.getTransform(), k = Math.min(3, Math.hypot(T.a, T.b) || 1);
+    ctx.drawImage(popCanvas(s, p, w, h, k), -w / 2, -h / 2, w, h);
+  }
+}
+// what was painted, cut out of the photo (with a soft edge), at the size it is drawn; kept while the
+// same (each change makes a new pop object)
+const pops = new WeakMap();
+function popCanvas(s, p, w, h, k) {
+  const sc = Math.min(k, 1600 / Math.max(w, h, 1)), Wc = Math.max(8, Math.round(w * sc)), Hc = Math.max(8, Math.round(h * sc));
+  const f = s.f || LOOK_DEFAULT, cr = s.cr || [0, 0, 1, 1];
+  const key = [Wc, Hc, cr.join(), f.b, f.c, f.s, f.w, f.bw].join('|');
+  const had = pops.get(s.pop); if (had && had.key === key) return had.c;
+  const cw = Math.max(1e-6, cr[2] - cr[0]), ch = Math.max(1e-6, cr[3] - cr[1]);
+  const m = document.createElement('canvas'); m.width = Wc; m.height = Hc;
+  const g = m.getContext('2d'); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#000'; g.fillStyle = '#000';
+  for (const st of s.pop.st) {
+    const pts = (st.p || []).map(([u, v]) => [((u - cr[0]) / cw) * Wc, ((v - cr[1]) / ch) * Hc]), lw = Math.max(1, (2 * (st.r || 0.03) / cw) * Wc);
+    if (!pts.length) continue;
+    g.globalCompositeOperation = st.e ? 'destination-out' : 'source-over';
+    g.lineWidth = lw; g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+    if (pts.length === 1) g.lineTo(pts[0][0] + 0.01, pts[0][1]); else for (const q of pts.slice(1)) g.lineTo(q[0], q[1]);
+    g.stroke();
+  }
+  // a soft edge, so the cut-out sits in the page like a photo, not a sticker
+  const c = document.createElement('canvas'); c.width = Wc; c.height = Hc;
+  const g2 = c.getContext('2d');
+  try { g2.filter = `blur(${Math.max(0.6, Wc / 500).toFixed(2)}px)`; } catch {}
+  g2.drawImage(m, 0, 0); g2.filter = 'none';
+  g2.globalCompositeOperation = 'source-in'; g2.imageSmoothingQuality = 'high'; g2.drawImage(lookCanvas(s, p), 0, 0, Wc, Hc);
+  m.width = m.height = 0;
+  if (had && had.c) { had.c.width = 0; had.c.height = 0; }
+  pops.set(s.pop, { key, c });
+  return c;
 }
 
 const words = new Map();
@@ -917,8 +988,10 @@ export function drawShape(ctx, s, W, H) {
     return;
   }
   if (s.k && s.k.startsWith('e:')) { drawElement(ctx, s.k.slice(2), w, h, fillStyleOf(ctx, s, w, h) || s.lc || '#16181d', s.lw ? s.lw * W : 0, s.lc && s.lw ? s.lc : '', s.sh); return; }
-  shapePath(ctx, s.k, w, h);
-  if (s.sh) { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = Math.min(w, h) * 0.08; ctx.shadowOffsetY = Math.min(w, h) * 0.03; }
+  // (a square or rounded box can have its corners rounded by s.rr, 0 to 1, as in a design app)
+  if (s.rr && (s.k === 'rect' || s.k === 'round')) { ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, (s.rr * Math.min(w, h)) / 2); } else shapePath(ctx, s.k, w, h);
+  if (s.sh && s.shd === 'hard') setShadow(ctx, 'hard', Math.min(w, h));
+  else if (s.sh) { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = Math.min(w, h) * 0.08; ctx.shadowOffsetY = Math.min(w, h) * 0.03; }
   if (s.f && s.k !== 'line') { ctx.fillStyle = fillStyleOf(ctx, s, w, h); ctx.fill(); }
   ctx.shadowColor = 'transparent';
   if (s.lc && (s.lw || s.k === 'line')) { ctx.strokeStyle = s.lc; ctx.lineWidth = Math.max(1, (s.lw || 0.004) * W); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke(); }
