@@ -3740,7 +3740,7 @@ const POP_OPENERS = {
   '#inkPop': '#inkColorBtn, .slot, .ink-tool[data-tool="pen"], .ink-tool[data-tool="hl"], #inkSizes',
   '#eraserPop': '.ink-tool[data-tool="eraser"]', '#tapePop': '.ink-tool[data-tool="tape"]',
   '#stampPop': '.ink-tool[data-tool="stamp"]', '#erasePop': '.ink-tool[data-tool="print"]',
-  '#insertPop': '#inkInsert, #nbPhotoBtn', '#picPop': '.sel-bar', '#shapePop': '.sel-bar',
+  '#insertPop': '#inkInsert, #nbPhotoBtn', '#picPop': '.sel-bar', '#shapePop': '.sel-bar', '#posPop': '.sel-bar',
   '#addPagePop': '#nbAddBtn', '#textPop': '#tbBar', '#zoomPop': '#zoomBtn', '#layerPop': '#layerBtn',
 };
 document.addEventListener('pointerdown', (e) => {
@@ -3753,7 +3753,7 @@ document.addEventListener('pointerdown', (e) => {
     p.hidden = true;
   }
 }, true);
-function closeInkPops() { $('#layerPop').hidden = true; $('#addPagePop').hidden = true; $('#shapePop').hidden = true; $('#eraserPop').hidden = true; $('#tapePop').hidden = true; $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; $('#insertPop').hidden = true; $('#picPop').hidden = true; }
+function closeInkPops() { if ($('#posPop')) $('#posPop').hidden = true; $('#layerPop').hidden = true; $('#addPagePop').hidden = true; $('#shapePop').hidden = true; $('#eraserPop').hidden = true; $('#tapePop').hidden = true; $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; $('#insertPop').hidden = true; $('#picPop').hidden = true; }
 function syncInkBar() {
   requestAnimationFrame(fitInkbar);
   const nb = NBK();
@@ -4088,6 +4088,7 @@ function clearSelection() {
   if (Sel.el && Sel.el.classList.contains('obj') && !tbEdit) { const tbb = $('#tbBar'); if (tbb && !tbb.hidden) { tbb.hidden = true; $('#inkbar').classList.remove('under'); $('#textPop').hidden = true; } }
   if (Sel.el) Sel.el.remove();
   if (Sel.bar) Sel.bar.remove();
+  if ($('#posPop')) $('#posPop').hidden = true;   // (the Position panel is for what was chosen)
   if (Sel.entry) Sel.entry.layer.redraw();
   Sel.entry = null; Sel.idx = []; Sel.box = null; Sel.el = null; Sel.bar = null; Sel.fr = null; Sel.dragging = false;
 }
@@ -4143,8 +4144,12 @@ function makeSelection(entry, idx) {
   const loop = Sel.pendingLoop; Sel.pendingLoop = null;
   clearSelection();
   if (!idx.length) return;
+  // a thing in a group brings the whole group with it (Ungroup to change one on its own)
+  { const its = entry.layer.items, g = new Set(idx.map((i) => its[i] && its[i].grp).filter(Boolean));
+    if (g.size) idx = [...new Set([...idx, ...its.map((s, i) => (s.grp && g.has(s.grp) ? i : -1)).filter((i) => i >= 0)])].sort((x, y) => x - y); }
+  const keepCrop = Sel.keepCrop; Sel.keepCrop = false;
   // (a new selection always starts by resizing: cropping is for the picture it was turned on for)
-  Sel.crop = false;
+  Sel.crop = !!keepCrop;
   Sel.entry = entry; Sel.idx = idx; Sel.box = selectionBox(entry, idx);
   const one = idx.length === 1 ? entry.layer.items[idx[0]] : null;
   Sel.fr = one ? frameOf(one) : null;
@@ -4153,53 +4158,54 @@ function makeSelection(entry, idx) {
   const box = el('div', 'sel-box');
   if (pic || tb || shp) box.classList.add('obj');
   if (locked) box.classList.add('locked');
-  const bar = el('div', 'sel-bar');
-  const mk = (label, fn, cls) => {
-    const b = el('button', cls || '', label);
+  const bar = el('div', 'sel-bar icons');
+  // Every tool is on the bar itself, an icon with its name under it, as in a design app's floating
+  // toolbar: nothing hidden behind a "More". Arranging (layers, aligning, spacing, flipping,
+  // locking, grouping) is one panel, Position, as in Canva.
+  const mk = (label, fn, cls, icon) => {
+    const b = el('button', cls || '');
+    if (icon && SEL_ICONS[icon]) { b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${SEL_ICONS[icon]}</svg>`; b.append(el('span', '', label)); } else b.textContent = label;
+    b.setAttribute('aria-label', label);
     b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); });
     b.addEventListener('pointerup', (e) => { e.stopPropagation(); fn(b); });
     return b;
   };
-  // a short bar; the rest is one tap away under More
-  const more = (...extra) => {
-    const m = mk('More', (btn) => { const on = bar.classList.toggle('more'); btn.textContent = on ? 'Less' : 'More'; placeSelection(); }, 'sel-more');
-    extra.forEach((x) => x.classList.add('extra'));
-    return [m, ...extra];
-  };
-  const arrange = () => [mk('Front', () => reorderSelection(1)), mk('Back', () => reorderSelection(-1)), mk('Centre', centreSelection), mk('Lock', () => lockSelection(true)), mk('Copy', copySelection)];
+  const multi = idx.length > 1;
+  const grp = multi && entry.layer.items[idx[0]].grp && idx.every((i) => entry.layer.items[i].grp === entry.layer.items[idx[0]].grp);
+  const common = () => [
+    ...(multi ? [grp ? mk('Ungroup', () => groupSelection(false), '', 'ungroup') : mk('Group', () => groupSelection(true), '', 'group')] : []),
+    mk('Position', () => openPosPop(), '', 'position'),
+    mk('Duplicate', duplicateSelection, '', 'duplicate'), mk('Delete', deleteSelection, 'danger', 'trash'),
+  ];
   if (locked) {
-    bar.append(mk('Unlock', () => lockSelection(false)));
+    bar.append(mk('Unlock', () => lockSelection(false), '', 'unlock'));
   } else if (pic) {
-    if (!pic.id) bar.append(mk('Add photo', () => { placeFor = { entry, i: idx[0] }; $('#insPlace').click(); }, 'accent'));
-    if (pic.mask === 'word' || pic.mask === 'bloom') bar.append(mk('Word', () => { openPicPop('style'); setTimeout(() => { const w = $('#picWord'); if (w) { w.focus(); w.select(); } }, 60); }, 'accent'));
     bar.append(
-      mk('Crop', (b) => { Sel.crop = !Sel.crop; box.classList.toggle('cropping', Sel.crop); b.classList.toggle('on', Sel.crop); b.textContent = Sel.crop ? 'Crop: done' : 'Crop'; if (Sel.crop) inkHint('Drag a corner to trim the photo. The photo stays where it is.', 3000); }),
-      mk('Adjust', () => openPicPop('adjust')), mk('Style', () => openPicPop('style')),
-      mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'),
-      ...more(mk('Flip', () => flipSelection()), ...arrange()),
+      pic.id ? mk('Replace', () => { placeFor = { entry, i: idx[0] }; $('#insPlace').click(); }, '', 'replace') : mk('Add photo', () => { placeFor = { entry, i: idx[0] }; $('#insPlace').click(); }, 'accent', 'replace'),
+      ...(pic.mask === 'word' || pic.mask === 'bloom' ? [mk('Word', () => { openPicPop('style'); setTimeout(() => { const w = $('#picWord'); if (w) { w.focus(); w.select(); } }, 60); }, '', 'text')] : []),
+      ...(pic.id ? [mk(Sel.crop ? 'Done' : 'Crop', () => setCrop(!Sel.crop), Sel.crop ? 'accent' : '', 'crop')] : []),
+      mk('Adjust', () => openPicPop('adjust'), '', 'adjust'), mk('Style', () => openPicPop('style'), '', 'style'),
+      ...common(),
     );
   } else if (shp && shp.k === 'mus') {
     // engraved music: a scale opens its chooser again; nothing here would mirror or restyle the notes
-    bar.append(...(shp.sc ? [mk('Edit scale', () => editScale(entry, idx[0]), 'accent')] : []),
-      mk('Colour', () => editSelection((s) => ({ ...s, f: penColor() }))),
-      mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'), ...more(...arrange()));
+    bar.append(...(shp.sc ? [mk('Edit scale', () => editScale(entry, idx[0]), 'accent', 'music')] : []),
+      mk('Colour', () => editSelection((s) => ({ ...s, f: penColor() })), '', 'colour'), ...common());
   } else if (shp) {
-    bar.append(mk('Style', () => openShapePop()), mk('Colour', () => editSelection((s) => (s.k === 'line' ? { ...s, lc: penColor() } : { ...s, f: penColor(), metal: undefined }))),
-      mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'),
-      ...more(mk('Flip', () => flipSelection()), ...arrange()));
+    bar.append(mk('Style', () => openShapePop(), '', 'style'), mk('Colour', () => editSelection((s) => (s.k === 'line' ? { ...s, lc: penColor() } : { ...s, f: penColor(), metal: undefined })), '', 'colour'), ...common());
   } else if (tb) {
     // in a notebook the text bar above already has Edit text
-    bar.append(...(NBK() ? [] : [mk('Edit', () => { const e2 = Sel.entry, i = Sel.idx[0]; clearSelection(); startTextBox(e2, null, i); })]),
-      mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'), ...more(...arrange()));
+    bar.append(...(NBK() ? [] : [mk('Edit', () => { const e2 = Sel.entry, i = Sel.idx[0]; clearSelection(); startTextBox(e2, null, i); }, '', 'text')]), ...common());
   } else {
     bar.append(
-      mk('Colour', () => editSelection((s) => (s.t === 'pen' || s.t === 'stamp' ? { ...s, c: penColor() } : s.t === 'tb' ? { ...s, c: penColor() } : s))),
-      ...(NBK() || loop ? [] : [mk('Passage', () => markRegion(entry.layer.key, { ...Sel.box }))]),
-      mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'),
-      ...(NBK() ? more(...arrange()) : [mk('Copy', copySelection)]),
+      mk('Colour', () => editSelection((s) => (s.t === 'pen' || s.t === 'stamp' ? { ...s, c: penColor() } : s.t === 'tb' ? { ...s, c: penColor() } : s)), '', 'colour'),
+      ...(NBK() || loop ? [] : [mk('Passage', () => markRegion(entry.layer.key, { ...Sel.box }), '', 'passage')]),
+      ...(NBK() ? [] : [mk('Copy', copySelection, '', 'copy')]),
+      ...common(),
     );
   }
-  if (loop && !NBK()) bar.prepend(mk('Passage', () => { const k = entry.layer.key; clearSelection(); markRegion(k, loop); }, 'accent'));
+  if (loop && !NBK()) bar.prepend(mk('Passage', () => { const k = entry.layer.key; clearSelection(); markRegion(k, loop); }, 'accent', 'passage'));
+  if (Sel.crop && pic) { box.classList.add('cropping'); }
   // four corners to resize (from the opposite corner); a photo also turns by its top handle
   if (!locked) {
     for (const c of ['nw', 'ne', 'sw', 'se']) { const h = el('div', 'sel-handle ' + c); h.dataset.c = c; box.append(h); }
@@ -4399,15 +4405,146 @@ function cropPicture(s, c, dxp, dyp, PS) {
   const cx = s.x * W + mx * c2 - my * s2, cy = s.y * H + mx * s2 + my * c2;
   return { ...s, cr: ncr, x: +(cx / W).toFixed(5), y: +(cy / H).toFixed(5), w: +((r - l) / W).toFixed(5), h: +((b - t) / H).toFixed(5) };
 }
+// The icons of the selection's bar and of the Position panel (24-unit boxes, drawn with the
+// text's colour), simple and familiar, as in Keynote, Freeform and Canva.
+const SVG_S = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+const SEL_ICONS = {
+  replace: `<g ${SVG_S}><rect x="3" y="5" width="14" height="12" rx="2"/><path d="M3 14l4-4 4 4 2-2 4 4"/><path d="M19 9v10H8"/></g>`,
+  crop: `<g ${SVG_S}><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/></g>`,
+  adjust: `<g ${SVG_S}><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></g>`,
+  style: `<g ${SVG_S}><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M12 3.5a8.5 8.5 0 0 1 0 17" fill="currentColor" fill-opacity=".35"/></g>`,
+  effects: `<g ${SVG_S}><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M18 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></g>`,
+  position: `<g ${SVG_S}><rect x="4" y="9" width="11" height="11" rx="1.5"/><path d="M9 9V5.5A1.5 1.5 0 0 1 10.5 4h8A1.5 1.5 0 0 1 20 5.5v8a1.5 1.5 0 0 1-1.5 1.5H15"/></g>`,
+  duplicate: `<g ${SVG_S}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/><path d="M14 11v6M11 14h6"/></g>`,
+  trash: `<g ${SVG_S}><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v5M14 11v5"/></g>`,
+  lock: `<g ${SVG_S}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g>`,
+  unlock: `<g ${SVG_S}><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.7-1.5"/></g>`,
+  group: `<g ${SVG_S}><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3 2.5"/><rect x="6.5" y="6.5" width="6" height="6" rx="1"/><rect x="11.5" y="11.5" width="6" height="6" rx="1"/></g>`,
+  ungroup: `<g ${SVG_S}><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></g>`,
+  colour: `<g ${SVG_S}><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></g>`,
+  text: `<g ${SVG_S}><path d="M5 6V4h14v2M12 4v16M9 20h6"/></g>`,
+  music: `<g ${SVG_S}><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></g>`,
+  passage: `<g ${SVG_S}><path d="M4 6h16M4 12h10M4 18h16"/></g>`,
+  copy: `<g ${SVG_S}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></g>`,
+  front: `<g ${SVG_S}><rect x="8" y="8" width="11" height="11" rx="1.5" fill="currentColor"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/></g>`,
+  forward: `<g ${SVG_S}><rect x="8" y="8" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity=".45"/><rect x="5" y="5" width="11" height="11" rx="1.5"/></g>`,
+  backward: `<g ${SVG_S}><rect x="5" y="5" width="11" height="11" rx="1.5" fill="currentColor" fill-opacity=".45"/><rect x="8" y="8" width="11" height="11" rx="1.5"/></g>`,
+  back: `<g ${SVG_S}><rect x="5" y="5" width="11" height="11" rx="1.5" fill="currentColor"/><path d="M19 9v9a1 1 0 0 1-1 1H9"/></g>`,
+  aleft: `<g ${SVG_S}><path d="M4 3v18"/><rect x="7" y="6" width="12" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/></g>`,
+  acentre: `<g ${SVG_S}><path d="M12 3v18"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/></g>`,
+  aright: `<g ${SVG_S}><path d="M20 3v18"/><rect x="5" y="6" width="12" height="4" rx="1"/><rect x="10" y="14" width="7" height="4" rx="1"/></g>`,
+  atop: `<g ${SVG_S}><path d="M3 4h18"/><rect x="6" y="7" width="4" height="12" rx="1"/><rect x="14" y="7" width="4" height="7" rx="1"/></g>`,
+  amiddle: `<g ${SVG_S}><path d="M3 12h18"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/></g>`,
+  abottom: `<g ${SVG_S}><path d="M3 20h18"/><rect x="6" y="5" width="4" height="12" rx="1"/><rect x="14" y="10" width="4" height="7" rx="1"/></g>`,
+  spacex: `<g ${SVG_S}><path d="M3 4v16M21 4v16"/><rect x="6.5" y="8" width="3.5" height="8" rx="1"/><rect x="14" y="8" width="3.5" height="8" rx="1"/></g>`,
+  spacey: `<g ${SVG_S}><path d="M4 3h16M4 21h16"/><rect x="8" y="6.5" width="8" height="3.5" rx="1"/><rect x="8" y="14" width="8" height="3.5" rx="1"/></g>`,
+  fliph: `<g ${SVG_S}><path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L4 17h5z"/><path d="M15 7l5 10h-5z" fill="currentColor"/></g>`,
+  flipv: `<g ${SVG_S}><path d="M3 12h18" stroke-dasharray="2 2"/><path d="M7 9L17 4v5z"/><path d="M7 15l10 5v-5z" fill="currentColor"/></g>`,
+};
+// Crop: the photo's frame stays and the photo moves and zooms inside it (drag it; corners trim the
+// frame). Double-tapping a photo does the same, as in Canva and Keynote.
+function setCrop(on) {
+  if (!Sel.entry) return;
+  if (on) inkHint('Drag to move the photo inside its frame. Pinch, or use the slider, to zoom. Corners trim the frame.', 3600);
+  Sel.keepCrop = !!on; makeSelection(Sel.entry, Sel.idx.slice());
+}
+// The selection in units that move as one: a group is one unit, anything else on its own
+function selUnits() {
+  const its = Sel.entry.layer.items, map = new Map();
+  for (const i of Sel.idx) { const k = its[i].grp ? 'g:' + its[i].grp : 'i:' + i; if (!map.has(k)) map.set(k, []); map.get(k).push(i); }
+  return [...map.values()].map((ix) => ({ ix, b: boundsOf(ix.map((i) => its[i])) }));
+}
+// move each unit by its own amount (page fractions), one undo step
+function moveUnits(units, moves) {
+  const entry = Sel.entry, before = entry.layer.items.slice(), after = before.slice();
+  units.forEach((u, k) => { const [dx, dy] = moves[k]; if (dx || dy) for (const i of u.ix) after[i] = transformItem(before[i], dx, dy, 1, 0, 0); });
+  entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
+  makeSelection(entry, Sel.idx.slice());
+}
+// Align: one thing (or one group) to the page, several to the box around them all, as in Canva
+function alignSelection(how) {
+  if (!Sel.entry) return;
+  const units = selUnits(), ref = units.length > 1 ? boundsOf(Sel.idx.map((i) => Sel.entry.layer.items[i])) : { x0: 0, y0: 0, x1: 1, y1: 1 };
+  moveUnits(units, units.map(({ b }) => {
+    if (how === 'left') return [ref.x0 - b.x0, 0];
+    if (how === 'right') return [ref.x1 - b.x1, 0];
+    if (how === 'centre') return [(ref.x0 + ref.x1) / 2 - (b.x0 + b.x1) / 2, 0];
+    if (how === 'top') return [0, ref.y0 - b.y0];
+    if (how === 'bottom') return [0, ref.y1 - b.y1];
+    return [0, (ref.y0 + ref.y1) / 2 - (b.y0 + b.y1) / 2];
+  }));
+}
+// Even spacing: the same gap between each and the next, across or down (the outer two stay)
+function distributeSelection(ax) {
+  if (!Sel.entry) return;
+  const units = selUnits(); if (units.length < 3) return;
+  const m = distribute(units.map((u) => u.b), ax);
+  moveUnits(units, m.map((d) => (ax === 'x' ? [d, 0] : [0, d])));
+}
+// Group: chosen together, moved, resized and arranged together (a new optional mark, grp, on each)
+function groupSelection(on) {
+  if (!Sel.entry) return;
+  const id = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  editSelection((s) => (on ? { ...s, grp: id } : (({ grp, ...r }) => r)(s)));
+  inkHint(on ? 'Grouped: they move together. Ungroup to change one on its own.' : 'Ungrouped', 1800);
+}
+// copies of grouped things make new groups of their own (never join the group they came from)
+function freshGroups(items) {
+  const ids = new Map();
+  return items.map((s) => { if (!s.grp) return s; if (!ids.has(s.grp)) ids.set(s.grp, 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5)); return { ...s, grp: ids.get(s.grp) }; });
+}
+// Layers: to the very front or back, or one step past the next thing it overlaps (as in Keynote);
+// the page's background always stays under everything
 function reorderSelection(dir) {
   const entry = Sel.entry; if (!entry) return;
   const before = entry.layer.items.slice();
   const picked = Sel.idx.map((i) => before[i]);
   const rest = before.filter((_, i) => !Sel.idx.includes(i));
-  const after = dir > 0 ? [...rest, ...picked] : [...picked, ...rest];
+  const bgN = rest.filter((x) => x.t === 'bg').length, bgs = rest.filter((x) => x.t === 'bg'), others = rest.filter((x) => x.t !== 'bg');
+  let after;
+  if (dir === 1 || dir === -1) after = dir > 0 ? [...bgs, ...others, ...picked] : [...bgs, ...picked, ...others];
+  else {
+    // one step: past the nearest thing above (or below) that it overlaps, else past the next one
+    const b = Sel.box, over = (s) => { if (s.t === 'passage') return false; const q = itemBounds(s); return q && !(q.x1 < b.x0 || q.x0 > b.x1 || q.y1 < b.y0 || q.y0 > b.y1); };
+    const top = Math.max(...Sel.idx), bot = Math.min(...Sel.idx);
+    let at;
+    if (dir === 'up') { const j = before.findIndex((s, i) => i > top && !Sel.idx.includes(i) && s.t !== 'bg' && over(s)); at = j >= 0 ? j : Math.min(before.length - 1, top + 1); }
+    else { let j = -1; for (let i = bot - 1; i >= 0; i--) if (!Sel.idx.includes(i) && before[i].t !== 'bg' && over(before[i])) { j = i; break; } at = j >= 0 ? j : Math.max(0, bot - 1); }
+    const anchor = before[at];
+    if (!anchor || Sel.idx.includes(at) || anchor.t === 'bg') { inkHint(dir === 'up' ? 'Already in front' : 'Already at the back', 1200); return; }
+    const k = rest.indexOf(anchor);
+    after = dir === 'up' ? [...rest.slice(0, k + 1), ...picked, ...rest.slice(k + 1)] : [...rest.slice(0, k), ...picked, ...rest.slice(k)];
+    if (after.slice(0, bgN).some((x) => x.t !== 'bg')) after = [...after.filter((x) => x.t === 'bg'), ...after.filter((x) => x.t !== 'bg')];
+  }
   entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
   makeSelection(entry, picked.map((x) => after.indexOf(x)));
-  inkHint(dir > 0 ? 'In front' : 'Behind', 1000);
+  inkHint(dir === 1 ? 'In front of everything' : dir === -1 ? 'Behind everything' : dir === 'up' ? 'One step forward' : 'One step back', 1000);
+}
+// The Position panel: layers, aligning, even spacing, flipping, lock and group, each a clear icon
+// with its name (Canva's Position panel, Keynote's Arrange)
+function openPosPop() {
+  if (!Sel.entry) return;
+  closeInkPops();
+  let p = $('#posPop');
+  if (!p) { p = el('div', 'ink-pop nb pos-pop'); p.id = 'posPop'; p.hidden = true; $('#score').append(p); }
+  p.textContent = ''; p.hidden = false;
+  const units = selUnits(), many = units.length > 1, one = Sel.idx.length === 1 ? Sel.entry.layer.items[Sel.idx[0]] : null;
+  const btn = (label, icon, fn) => {
+    const b = el('button', 'pos-btn'); b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${SEL_ICONS[icon]}</svg>`; b.append(el('span', '', label)); b.setAttribute('aria-label', label);
+    b.addEventListener('click', () => { fn(); if (Sel.entry) openPosPop(); else p.hidden = true; });
+    return b;
+  };
+  const sec = (title, ...bs) => { p.append(el('div', 'ctl-head', title)); const g = el('div', 'pos-grid'); g.style.setProperty('--n', bs.length === 6 ? 3 : 4); g.append(...bs); p.append(g); };
+  sec('Layer', btn('To front', 'front', () => reorderSelection(1)), btn('Forward', 'forward', () => reorderSelection('up')), btn('Backward', 'backward', () => reorderSelection('down')), btn('To back', 'back', () => reorderSelection(-1)));
+  sec(many ? 'Align' : 'Align to page', btn('Left', 'aleft', () => alignSelection('left')), btn('Centre', 'acentre', () => alignSelection('centre')), btn('Right', 'aright', () => alignSelection('right')),
+    btn('Top', 'atop', () => alignSelection('top')), btn('Middle', 'amiddle', () => alignSelection('middle')), btn('Bottom', 'abottom', () => alignSelection('bottom')));
+  if (units.length > 2) sec('Even spacing', btn('Across', 'spacex', () => distributeSelection('x')), btn('Down', 'spacey', () => distributeSelection('y')));
+  if (one && (one.t === 'img' || (one.t === 'shape' && one.k !== 'mus'))) sec('Flip', btn('Horizontal', 'fliph', () => editSelection((s) => ({ ...s, fx: s.fx ? 0 : 1 }), true)), btn('Vertical', 'flipv', () => editSelection((s) => ({ ...s, fy: s.fy ? 0 : 1 }), true)));
+  sec('Lock', btn('Lock', 'lock', () => { lockSelection(true); $('#posPop').hidden = true; }), btn('Copy', 'copy', () => copySelection()));
+  // on a wide screen the panel stands beside the selection, never over it
+  const r = Sel.el && Sel.el.getBoundingClientRect();
+  if (r && innerWidth >= 900) { const left = (r.left + r.right) / 2 > innerWidth / 2; Object.assign(p.style, { left: left ? '16px' : 'auto', right: left ? 'auto' : '16px', transform: 'none' }); }
+  else Object.assign(p.style, { left: '', right: '', transform: '' });
 }
 // Smart guides (js/guides.js) work in page pixels on plain boxes: the boxes of everything else on
 // the page that something can line up with (not the page's background, passages or cover-ups).
@@ -4451,12 +4588,6 @@ function drawGuides(entry, g, PS) {
   drawGuides.last = key;
 }
 function hideGuides(entry) { const b = entry && entry.inner.querySelector('.sguides'); if (b) { b.hidden = true; b.textContent = ''; } drawGuides.last = ''; }
-function centreSelection() {
-  const b = Sel.box; if (!b) return;
-  const dx = 0.5 - (b.x0 + b.x1) / 2;
-  editSelection((s) => transformItem(s, dx, 0, 1, 0, 0), true);
-  inkHint('Centred on the page', 1200);
-}
 function lockSelection(on) {
   const entry = Sel.entry, idx = Sel.idx.slice(); if (!entry) return;
   const before = entry.layer.items.slice();
@@ -4465,7 +4596,6 @@ function lockSelection(on) {
   makeSelection(entry, idx);
   inkHint(on ? 'Locked: it stays where it is. Tap it with the lasso to unlock.' : 'Unlocked', 2200);
 }
-function flipSelection() { editSelection((s) => ({ ...s, fx: s.fx ? 0 : 1 }), true); }
 // the look of a chosen shape
 function selShape() { return Sel.entry && Sel.idx.length === 1 && Sel.entry.layer.items[Sel.idx[0]].t === 'shape' ? Sel.entry.layer.items[Sel.idx[0]] : null; }
 function openShapePop() {
@@ -4522,7 +4652,7 @@ function editSelection(fn, keepBox) {
 function duplicateSelection() {
   const entry = Sel.entry; if (!entry) return;
   const before = entry.layer.items.slice();
-  const copies = Sel.idx.map((i) => transformItem(before[i], 0.02, 0.02, 1, 0, 0));
+  const copies = freshGroups(Sel.idx.map((i) => transformItem(before[i], 0.02, 0.02, 1, 0, 0)));
   const after = [...before, ...copies];
   entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
   makeSelection(entry, copies.map((_, k) => before.length + k));
@@ -7659,7 +7789,7 @@ function pasteAt(entry, at) {
   // centred on the finger, but kept on the page
   const hw = bb ? Math.min(0.5, (bb.x1 - bb.x0) / 2) : 0, hh = bb ? Math.min(0.5, (bb.y1 - bb.y0) / 2) : 0;
   const tx = clamp(at[0], hw, 1 - hw), ty = clamp(at[1], hh, 1 - hh);
-  const moved = CLIP.map((x) => transformItem(JSON.parse(JSON.stringify(x)), tx - cx, ty - cy, 1, 0, 0));
+  const moved = freshGroups(CLIP.map((x) => transformItem(JSON.parse(JSON.stringify(x)), tx - cx, ty - cy, 1, 0, 0)));
   if (!V.inking) setInking(true);
   const before = entry.layer.items.slice(), after = [...before, ...moved];
   entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());

@@ -2742,3 +2742,19 @@ body:not(.phone) .dock .media-pill { min-width: 280px; }
 .sel-box.small .sel-side { display: none; }
 .sel-angle-f { position: fixed; z-index: 13; transform: translate(-50%, -100%); padding: 6px 12px; border-radius: 14px; background: var(--ink); color: var(--surface-solid); font: 700 15px var(--font); pointer-events: none; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .sel-angle-f.snap { background: #ff2d87; color: #fff; }
+/* The selection's floating bar, as in a design app: an icon with its name under it for every tool
+   (no "More"), each at least 44 points to touch; on the iPhone it wraps to a second row. */
+.sel-bar.icons { gap: 0; padding: 4px; border-radius: 14px; max-width: min(640px, calc(100vw - 16px)); }
+.sel-bar.icons button { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 52px; min-height: 48px; padding: 4px 6px; border-radius: 10px; font-size: 11px; font-weight: 600; line-height: 1.1; }
+.sel-bar.icons button svg { width: 22px; height: 22px; flex-shrink: 0; }
+.sel-bar.icons button span { white-space: nowrap; }
+.sel-bar.icons button:active { background: rgba(255,255,255,.14); }
+@media (max-width: 600px) { .sel-bar.icons button { min-width: 46px; padding: 4px 3px; font-size: 10px; } }
+/* Position panel: Layer, Align, Even spacing, Flip, Lock/Group */
+.pos-pop .ctl-head { margin-bottom: -4px; }
+.pos-grid { display: grid; grid-template-columns: repeat(var(--n, 4), 1fr); gap: 6px; }
+.pos-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 58px; padding: 6px 4px; border-radius: 12px; background: var(--sunk); color: var(--ink); font: 600 12px var(--font); text-align: center; }
+.pos-btn svg { width: 24px; height: 24px; }
+.pos-btn:active { background: var(--accent); color: #fff; }
+/* on the iPhone the Position panel is a sheet at the bottom, leaving the chosen thing in sight */
+@media (max-width: 600px) { .pos-pop { top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); max-height: 58vh; gap: 8px; padding: 12px; } .pos-btn { min-height: 52px; } }
