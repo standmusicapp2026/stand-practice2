@@ -4715,6 +4715,8 @@ function openPosPop() {
   const r = Sel.el && Sel.el.getBoundingClientRect();
   if (r && innerWidth >= 900) { const left = (r.left + r.right) / 2 > innerWidth / 2; Object.assign(p.style, { left: left ? '16px' : 'auto', right: left ? 'auto' : '16px', transform: 'none' }); }
   else Object.assign(p.style, { left: '', right: '', transform: '' });
+  // (on the iPhone it is a sheet at the bottom, or at the top when what is chosen is low on the screen)
+  p.classList.toggle('at-top', !!r && (r.top + r.bottom) / 2 > innerHeight * 0.5);
 }
 // Smart guides (js/guides.js) work in page pixels on plain boxes: the boxes of everything else on
 // the page that something can line up with (not the page's background, passages or cover-ups).
