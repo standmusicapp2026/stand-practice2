@@ -245,10 +245,16 @@ export async function searchWorks(q, onEarly, pin) {
     results = works.map((t) => ({ title: t, score: scoreTitle(t, pq.words) - fold(t).length / 2000 }))
       .filter((r) => r.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 30);
   }
-  if (!pq.composer || results.length < 6) {
-    const extra = await quick;
+  // IMSLP's own search always has its say (it knows a piece's other names: "Moonlight", "Trout", "Eroica"):
+  // what it finds is added, and a piece of the composer's it finds that the words alone missed comes near
+  // the top. (Before, with six or more near matches its answer was not asked — and a piece that is on
+  // IMSLP did not show.) Not waited for more than a few seconds when the composer's list has answered.
+  {
+    const extra = pq.composer && results.length >= 6 ? await Promise.race([quick, new Promise((r) => setTimeout(() => r([]), 3500))]) : await quick;
     const seen = new Set(results.map((r) => r.title));
-    for (const t of extra) if (!seen.has(t)) { seen.add(t); results.push({ title: t, score: 0.2 }); }
+    const mine = pq.composer ? new Set((await composerWorks(pq.composer.c).catch(() => [])) || []) : new Set();
+    extra.forEach((t, i) => { if (seen.has(t)) return; seen.add(t); results.push({ title: t, score: mine.has(t) && i < 5 ? 0.62 - i * 0.02 : 0.2 }); });
+    results.sort((a, b) => b.score - a.score);
   }
   if (results.length < 5) {
     const extra = await wikidataSearch(q).catch(() => []);
