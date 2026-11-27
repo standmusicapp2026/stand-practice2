@@ -2225,11 +2225,16 @@ async function layout(fade) {
     const proms = idx.map((i, k) => renderPage(i, made[k].iw, made[k].ih));
     prefetch(token);   // queued now, so it comes straight after these and before anything else
     const stale = idx.map((i, k) => staleFor(i, pageKey(i, made[k].iw, made[k].ih).key));
-    const quick = await Promise.all(proms.map((p, k) => (stale[k] ? Promise.race([p, new Promise((r) => setTimeout(() => r(null), 30))]) : p)));
+    // (a page not drawn yet — a new score, the iPad busy reading the others just added — no longer
+    // holds the turn: after a moment the page turns at once to clean paper, and the music appears on
+    // it as soon as it is drawn. The turn used to wait for it, seconds at times.)
+    const WAIT = globalThis.__turnWait ?? 160;
+    const quick = await Promise.all(proms.map((p, k) => (stale[k] ? Promise.race([p, new Promise((r) => setTimeout(() => r(null), 30))]) : WAIT > 0 ? Promise.race([p, new Promise((r) => setTimeout(() => r(null), WAIT))]) : p)));
     // (the score closed meanwhile — back to the library while its pages were drawn: nothing to lay out)
     if (token !== layoutToken || !V.score || !V.doc) return;
     // (a drawing let go before it was shown has no size: drawn again)
-    const canvases = quick.map((c, k) => (c && c.width ? c : null) || stale[k]);
+    const paper = (k) => { const { pw, ph } = pageKey(idx[k], made[k].iw, made[k].ih); const c = document.createElement('canvas'); c.width = 8; c.height = Math.max(8, Math.round((8 * ph) / pw)); const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); c.paper = [Math.round(pw), Math.round(ph)]; return c; };
+    const canvases = quick.map((c, k) => (c && c.width ? c : null) || stale[k] || (WAIT > 0 ? paper(k) : null));
     // a drawing stopped on the way (very quick turning): asked for again
     if (canvases.some((c) => !c)) { if (!layout.retry) { layout.retry = true; setTimeout(() => { layout.retry = false; if (token === layoutToken) layout(); }, 0); } return; }
     idx.forEach((i, k) => {
@@ -2245,7 +2250,7 @@ async function layout(fade) {
         inkFollowsArt(e);
         if (!INCACHE.has(art)) freeCanvas(art);
       }, () => {});
-      const ink = el('canvas', 'ink'); ink.width = art.width; ink.height = art.height;
+      const ink = el('canvas', 'ink'); ink.width = art.paper ? art.paper[0] : art.width; ink.height = art.paper ? art.paper[1] : art.height;
       b.inner.append(art, ink); spread.append(b.pg);
       const layer = new InkLayer(ink, V.score.id, V.doc.composite && V.doc.composite(i) ? `${V.doc.orig(i)}+${V.doc.gluedFrom(i)}` : V.doc.orig(i));
       const entry = { index: i, orig: V.doc.orig(i), pg: b.pg, inner: b.inner, art, ink, layer, iw: b.iw, ih: b.ih };
