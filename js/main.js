@@ -4235,7 +4235,7 @@ function makeSelection(entry, idx) {
   entry.inner.append(box);
   $('#score').append(bar);
   Sel.el = box; Sel.bar = bar; placeSelection();
-  Sel.tapT = performance.now();
+  Sel.tapT = 0;   // (a double tap is two taps by a finger or the Pencil: see where things are tapped)
   if (Sel.paint && pic) popGhost(entry, pic, pageSize(entry.inner.getBoundingClientRect()));
   if (Sel.crop && pic) {
     // cropping: the whole photo shows faintly round its frame, and a slider zooms it (for the Pencil
@@ -8253,7 +8253,7 @@ function pointerEnd(e) {
       if (hit) {
         const s0 = hit.entry.layer.items[hit.i];
         if (s0.t === 'tb' && Sel.entry === hit.entry && Sel.idx.length === 1 && Sel.idx[0] === hit.i) { clearSelection(); startTextBox(hit.entry, null, hit.i); return; }
-        makeSelection(hit.entry, [hit.i]); return;
+        makeSelection(hit.entry, [hit.i]); Sel.tapT = performance.now(); return;
       }
       if (Sel.entry) { clearSelection(); return; }
     }
