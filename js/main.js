@@ -261,7 +261,7 @@ function showPanel(name, tab) {
   if (name === 'passages') { renderPassages(); $('#passShow').checked = S.passShow !== false; }
   if (name === 'study') renderStudy();
   if (name === 'record') {
-    syncLink(); if (host.state === 'linked') showRemotePreview();
+    syncLink();
     // the camera is opened ahead when the last recording was a video, so Record starts at once
     clearTimeout(VW.t);
     recPreview();
@@ -10120,6 +10120,18 @@ const vidShape = () => S.vidShape || devShape();
 let REC_OPENING = false;
 async function recPreview(on = true) {
   const box = $('#recPreview'), v = $('#recPreviewVideo');
+  // the iPhone as the camera: its picture here, the same way (and the same Upright / Wide)
+  if (on && openPanel === 'record' && S.cam === 'iphone' && !recState) {
+    const ok = host.state === 'linked' && !!host.stream;
+    box.hidden = !ok;
+    if (!ok) { v.srcObject = null; return; }
+    const sh = (host.info || {}).shape || 'portrait';
+    $$('#vidShape button').forEach((x) => x.classList.toggle('on', x.dataset.s === sh));
+    box.classList.toggle('wide', sh === 'landscape');
+    v.classList.toggle('mirror', (host.info || {}).facing === 'user');
+    if (v.srcObject !== host.stream) { v.srcObject = host.stream; v.play().catch(() => {}); }
+    return;
+  }
   const want = on && openPanel === 'record' && S.cam !== 'iphone' && !recState && !!(navigator.mediaDevices && window.MediaRecorder);
   box.hidden = !want;
   // (closed a moment later, unless a recording took it up: Record keeps the open camera, so it starts at once)
@@ -10133,10 +10145,14 @@ async function recPreview(on = true) {
     v.srcObject = vrec.stream; v.classList.toggle('mirror', S.cam === 'user'); v.play().catch(() => {});
   } catch { box.hidden = true; }
 }
-$$('#vidShape button').forEach((b) => b.addEventListener('click', () => { S.vidShape = b.dataset.s; saveSettings(); recPreview(); }));
+$$('#vidShape button').forEach((b) => b.addEventListener('click', () => {
+  if (S.cam === 'iphone') { S.iphShape = b.dataset.s; saveSettings(); host.set({ shape: b.dataset.s }); recPreview(); return; }
+  S.vidShape = b.dataset.s; saveSettings(); recPreview();
+}));
 
 // ---------- the iPhone as the camera ----------
 const host = new CameraHost();
+window.__host = host;   // (tests)
 function syncLink() {
   const on = S.cam === 'iphone';
   if (on && PAIR() && !syncLink.asked) { syncLink.asked = true; linkedCount().then((n) => { if (!n && S.cam === 'iphone') openPair(); }); }
@@ -10165,6 +10181,7 @@ function drawLink() {
     $$('#linkFacing button').forEach((b) => b.classList.toggle('on', b.dataset.f === (info.facing || 'environment')));
     const shape = info.shape || 'portrait';
     $('#linkShape').classList.toggle('landscape', shape === 'landscape');
+    $('#linkShape').hidden = true;   // (Upright / Wide under the picture says it now)
     $('#linkShape span').textContent = (shape === 'landscape' ? 'Horizontal' : 'Vertical') + ' — follows how the iPhone is held';
     if (document.activeElement !== $('#linkBright')) $('#linkBright').value = info.bright || 0;
     if (document.activeElement !== $('#linkWarm')) $('#linkWarm').value = info.warm || 0;
@@ -10182,9 +10199,9 @@ function drawLink() {
   $('#linkOff').hidden = st === 'off';
   syncRemoteShape();
 }
-host.onState = (st) => { if (st === 'linked' && S.shareIphone !== false && !PHONE) setTimeout(async () => { try { host.sendPractice(await practiceForPhone()); } catch {} }, 600); drawLink(); if (st === 'linked' && openPanel === 'record') showRemotePreview(); if (st === 'lost' || st === 'off') { if (!(recState && recState.iphone)) hideRemotePreview(); } if (st === 'lost' && S.cam === 'iphone') setTimeout(() => { if (host.state === 'lost' && S.cam === 'iphone') host.start(); }, 1500); };
-host.onInfo = () => drawLink();
-host.onStream = () => { if (openPanel === 'record' || (recState && recState.iphone)) showRemotePreview(); };
+host.onState = (st) => { if (st === 'linked' && S.shareIphone !== false && !PHONE) setTimeout(async () => { try { host.sendPractice(await practiceForPhone()); } catch {} }, 600); if (st === 'linked' && S.iphShape && (host.info || {}).shape !== S.iphShape) host.set({ shape: S.iphShape }); drawLink(); if (openPanel === 'record') recPreview(); if (st === 'lost' || st === 'off') { if (!(recState && recState.iphone)) hideRemotePreview(); } if (st === 'lost' && S.cam === 'iphone') setTimeout(() => { if (host.state === 'lost' && S.cam === 'iphone') host.start(); }, 1500); };
+host.onInfo = () => { drawLink(); if (openPanel === 'record' && S.cam === 'iphone' && !recState) recPreview(); };
+host.onStream = () => { if (recState && recState.iphone) showRemotePreview(); else if (openPanel === 'record') recPreview(); };
 $$('#linkFacing button').forEach((b) => b.addEventListener('click', () => { host.set({ facing: b.dataset.f }); drawLink(); }));
 $$('#linkQuality button').forEach((b) => b.addEventListener('click', () => { host.set({ quality: b.dataset.q }); drawLink(); }));
 $$('#linkFps button').forEach((b) => b.addEventListener('click', () => { host.set({ fps: +b.dataset.r }); drawLink(); }));

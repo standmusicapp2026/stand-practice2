@@ -491,9 +491,11 @@ export class CameraPhone {
   _shapeFromFrame() {
     const v = this.src; if (!v || !v.videoWidth) return;
     if (this.recording) { this._route(); return; }            // shape and turn are kept for the whole take
-    let shape = v.videoWidth >= v.videoHeight ? 'landscape' : 'portrait', rot = 0;
+    let shape = this.s.shape === 'portrait' || this.s.shape === 'landscape' ? this.s.shape : v.videoWidth >= v.videoHeight ? 'landscape' : 'portrait', rot = 0;
     if (this.tilt === 0 || this.tilt === 90 || this.tilt === -90 || this.tilt === 180) {
       shape = this.tilt === 90 || this.tilt === -90 ? 'landscape' : 'portrait';
+      // (the iPad can ask for upright or wide, however the iPhone is held: the picture is cut to it)
+      if (this.s.shape === 'portrait' || this.s.shape === 'landscape') shape = this.s.shape;
       let d = ((this.tilt - this._frameAngle()) % 360 + 540) % 360 - 180;   // -180..179
       if (d === -180) d = 180;
       // the back camera's picture turns against the iPhone; the front one (not mirrored) with it
@@ -588,7 +590,7 @@ export class CameraPhone {
     Object.assign(this.s, next);
     const reopen = !this.recording && (before.facing !== this.s.facing || before.quality !== this.s.quality || before.fps !== this.s.fps);
     if (reopen) await this.openCamera().catch(() => {});
-    else { this._resize(); await this._hardware(); this._route(); }
+    else { if (before.shape !== this.s.shape) this._shapeFromFrame(); this._resize(); await this._hardware(); this._route(); }
     this.sendState(); this.onState && this.onState(this.state);
   }
   // look for the iPad on this Wi-Fi (or the one showing this code) until it answers
