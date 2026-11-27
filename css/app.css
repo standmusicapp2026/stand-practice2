@@ -2557,13 +2557,14 @@ body.phone #tab-drone > #droneToggle { padding: 0; background: var(--accent); bo
    row, in the page's bottom margin where there are no notes; the score itself never moves. The page
    slider steps aside while a bar is there (it comes back with the bars gone). With a study session's
    bar at the bottom, they sit just above it. */
-body:not(.phone) .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); flex-wrap: nowrap; align-items: flex-end; }
+body:not(.phone) .dock { bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) - 10px)); flex-wrap: nowrap; align-items: flex-end; justify-content: center; }
+/* (metronome, drone, tuner tone, Listen… side by side on one line, always in the middle: they share the width) */
+body:not(.phone) .dock > * { flex: 0 1 auto; min-width: 0; }
 body:not(.phone) .dock .media-pill { flex: 0 1 auto; min-width: 400px; }
 body:not(.phone).dock-on .page-scrub { opacity: 0; pointer-events: none; }
 body:not(.phone).run-on .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--run-h, 56px) + 16px); }
 /* (sideways the pages reach lower: the bars a little slimmer and nearer the edge) */
 @media (orientation: landscape) {
-  body:not(.phone) .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 4px); }
   body:not(.phone) .dock .pill { min-height: 42px; }
   body:not(.phone) .dock .media-pill .mp-play { width: 34px; height: 34px; }
 }
@@ -2579,3 +2580,10 @@ body:not(.phone).run-on .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 
 .cam-tab .rec-dot { width: 8px; height: 8px; }
 .cam-tab:not(.rec) .rec-dot { display: none; }
 @keyframes camTabIn { from { opacity: 0; } to { opacity: 1; } }
+/* (all the bars the same height, their words on one line) */
+body:not(.phone) .dock .pill { height: 50px; white-space: nowrap; }
+body:not(.phone) .dock .pill * { white-space: nowrap; }
+@media (orientation: landscape) { body:not(.phone) .dock .pill { height: 42px; } }
+/* (the small bars keep their size; the Listen bar, with its long track, gives way) */
+body:not(.phone) .dock > *:not(.media-pill) { flex-shrink: 0; }
+body:not(.phone) .dock .media-pill { min-width: 280px; }
