@@ -4236,9 +4236,36 @@ export async function recogniseBest(canvas, opts = {}) {
   // (softish, and the crisper reading finds clearly more notes — open heads a blur had filled or lost —
   // and fits about as well: it is the likelier one)
   if ((globalThis.__crispMore ?? 1) && c2 && soft > 1.9 && best !== c2 && c2.notes.length >= best.notes.length * 1.03 && c2.fitRead >= best.fitRead - 0.06 && !lost(c2, best)) best = c2;
+  // (an accidental by a note blurred into a smudge in this reading, read clearly in the crisper one:
+  // the same note, at the same place in the same line, takes it)
+  if ((globalThis.__accFuse ?? 1) && best && c2 && best !== c2) try { fuseAcc(best, c2); } catch (err) { console.warn(err); }
   return best;
 }
 let sharpNext = 0, softNext = 0;
+// which lines two readings of one picture found alike (the same staves, in the same places), or null
+// when they were not read in the same frame or did not find the same lines
+function sameLineMask(A, B) {
+  if (!A || !B || B.w !== A.w || B.h !== A.h || Math.abs((B.angle || 0) - (A.angle || 0)) > 0.05 || B.systems.length !== A.systems.length || B.staves.length !== A.staves.length) return null;
+  return A.systems.map((sy, si) => sy.length === B.systems[si].length && sy.every((k, j) => k === B.systems[si][j] && Math.abs(A.staves[k].top - B.staves[k].top) < A.staves[k].sp * 0.6 && Math.abs(A.staves[k].bottom - B.staves[k].bottom) < A.staves[k].sp * 0.6));
+}
+function fuseAcc(best, o) {
+  const ok = sameLineMask(best.analysis, o.analysis); if (!ok) return 0;
+  const sp = best.analysis.sp || SP, near = sp * (globalThis.__accFuseX ?? 0.5);
+  const items = (r) => { const out = []; r.bars.forEach((b, i) => { for (const it of b) if (!it.rest && it.ps) out.push([r.barSys[i], it]); const v = r.v2 && r.v2[i]; if (v) for (const it of v) if (it && !it.rest && it.ps) out.push([r.barSys[i], it]); }); return out; };
+  const theirs = items(o); let n = 0;
+  for (const [si, it] of items(best)) {
+    if (it.grace || !ok[si]) continue;
+    const m = theirs.find(([sj, q]) => sj === si && !q.grace && Math.abs((q.x || 0) - (it.x || 0)) < near && q.ps.length === it.ps.length && q.ps.every((p, k) => p === it.ps[k]));
+    if (!m || !m[1].acc) continue;
+    for (const p of it.ps) {
+      const v = m[1].acc[p];
+      if (v === undefined || v === null || (it.acc && it.acc[p] !== undefined && it.acc[p] !== null)) continue;
+      it.acc = { ...(it.acc || {}), [p]: v }; n++;
+    }
+  }
+  if (globalThis.__rbDbg) globalThis.__fuseDbg = n;
+  return n;
+}
 // For a picture read once and shown large (the music of a video): read as it is, and when its edges
 // are soft (a scan drawn bigger than it was made, a photo), read again with its edges made crisper;
 // the reading that finds the same staves and more notes is kept. Soft edges fill the open heads (a
