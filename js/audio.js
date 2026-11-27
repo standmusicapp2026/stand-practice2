@@ -428,7 +428,7 @@ export async function acquireMic() {
 // (or iPhone's) own: it hears the instrument, and the headphones keep their full sound. If iOS
 // opened another microphone, the built-in one is asked for instead.
 const BUILT_IN = /iphone|ipad|built[- ]?in|integr|intern|eingebaut/i;
-async function preferBuiltIn(stream) {
+export async function preferBuiltIn(stream) {
   try {
     const tr = stream.getAudioTracks()[0];
     if (!tr || BUILT_IN.test(tr.label || '')) return stream;

@@ -10712,7 +10712,9 @@ async function selectTake(id) {
       if (!tried) { tried = true; if (videoURL) URL.revokeObjectURL(videoURL); videoURL = URL.createObjectURL(vf.data); video.src = videoURL; video.load(); return; }
       toast('This video could not be played on this iPad. Try Share to open it in Photos.', 4500);
     };
-    $('#videoWrap').hidden = false; $('#videoWrap').classList.toggle('mirror', !!t.mirror);
+    // (played back as the camera saw it, never as a mirror: a video turned the wrong way round looked odd —
+    // the mirror is only for the live picture while recording)
+    $('#videoWrap').hidden = false; $('#videoWrap').classList.toggle('mirror', !!t.mirror && (globalThis.__playMirror ?? false));
     if (!t.pcm) nativeVideo = true;
   } else $('#videoWrap').hidden = true;
   if (!nativeVideo) {
@@ -10793,9 +10795,9 @@ async function cutTake(mode) {
       let blob = null, keptMirror = false;
       try {
         const vf = await db.get('files', 'video:' + t.id);
-        if (vf && vf.data) { setPct(0.3); blob = await cutVideoNative(vf.data, segs, t.mime); keptMirror = !!blob && !!t.mirror; }
+        if (vf && vf.data) { setPct(0.3); blob = await cutVideoNative(vf.data, segs, t.mime); keptMirror = !!blob && !!t.mirror && (globalThis.__playMirror ?? false); }
       } catch (e) { nlog('cut (iOS): ' + (e && e.message)); blob = null; }
-      if (!blob) blob = await renderVideoCut({ url: videoURL, mirror: !!t.mirror, segs, pcm, sr: t.sr, onProgress: setPct });
+      if (!blob) blob = await renderVideoCut({ url: videoURL, mirror: !!t.mirror && (globalThis.__playMirror ?? false), segs, pcm, sr: t.sr, onProgress: setPct });
       setPct(1);
       take = { ...take, mime: blob.type, mirror: keptMirror, pcm: true, thumb: await videoThumb(blob) };
       await db.put('files', { id: 'video:' + id, data: blob });

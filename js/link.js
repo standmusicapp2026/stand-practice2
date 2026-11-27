@@ -456,7 +456,7 @@ export class CameraPhone {
     const [w, h] = this.s.quality === 'hd' ? [1280, 720] : [1920, 1080];
     this.cam = await navigator.mediaDevices.getUserMedia({ video: { facingMode: this.s.facing, width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: this.s.fps } }, audio: false });
     if (!this.mic) {
-      try { this.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); } catch { this.mic = null; }
+      try { this.mic = await (await import('./audio.js')).preferBuiltIn(await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })); } catch { this.mic = null; }
     }
     const track = this.cam.getVideoTracks()[0];
     // iOS can take the camera away (a call, another app): it is asked for again

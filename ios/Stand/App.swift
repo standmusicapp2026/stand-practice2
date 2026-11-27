@@ -1167,7 +1167,9 @@ final class NativeVideo: NSObject, AVCaptureFileOutputRecordingDelegate {
             return
         }
         session.addInput(videoIn)
-        if let mic = AVCaptureDevice.default(for: .audio), let audioIn = try? AVCaptureDeviceInput(device: mic), session.canAddInput(audioIn) {
+        // (the iPad's own microphone, never the headphones': it hears the instrument in the room)
+        standPreferBuiltInMicrophone()
+        if let mic = AVCaptureDevice.default(.builtInMicrophone, for: .audio, position: .unspecified) ?? AVCaptureDevice.default(for: .audio), let audioIn = try? AVCaptureDeviceInput(device: mic), session.canAddInput(audioIn) {
             session.addInput(audioIn)
         }
         if !session.outputs.contains(output) && session.canAddOutput(output) { session.addOutput(output) }

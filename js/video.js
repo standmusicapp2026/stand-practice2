@@ -1,6 +1,6 @@
 // Camera recording with MediaRecorder. The audio track is decoded afterwards so video takes
 // get the same waveform, looping, slow-down and reverb as audio takes.
-import { getCtx, cameraMic, holdSound } from './audio.js';
+import { getCtx, cameraMic, holdSound, preferBuiltIn } from './audio.js';
 
 const TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 
@@ -27,6 +27,12 @@ export class VideoRecorder {
       video: { facingMode: facing, width: { ideal: land ? 1280 : 720 }, height: { ideal: land ? 720 : 1280 }, frameRate: { ideal: 30, max: 30 } },
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
     });
+    // (the sound from the iPad's own microphone, never the headphones' — with headphones on to play
+    // along, the video still hears the instrument from the room)
+    try {
+      const a0 = this.cam.getAudioTracks()[0];
+      if (a0) { const own = await preferBuiltIn(new MediaStream([a0])); const a1 = own.getAudioTracks()[0]; if (a1 && a1 !== a0) { this.cam.removeTrack(a0); a0.stop(); this.cam.addTrack(a1); } }
+    } catch {}
     this.shape = shape; this.facing = facing;
     cameraMic(true);
     // the camera's own picture, kept in the page (iOS slows down videos that are not on the page)
