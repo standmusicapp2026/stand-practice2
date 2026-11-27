@@ -12308,8 +12308,12 @@ const wink = { on: false, testing: false, lv: [], det: new WinkLevels(), lastLv:
 function winkLookOk(evLook) {
   if (S.winkLook === false) return true;
   if (evLook === false) return false;
-  // (the latest word on it, if recent)
-  return performance.now() - wink.lookAt > 600 || wink.look !== false;
+  // (the latest word on it, however old: "looking away" said once stays true until the iPad says
+  // otherwise — a wink while still looking away used to count once that word was 0.6 s old, and the
+  // page turned while you were looking elsewhere. And back on the music for a moment first: a wink
+  // as the eyes come back is a blink more often than a wink)
+  if (wink.look === false && !(globalThis.__winkLookOld ?? false)) return false;
+  return !(wink.lookBackAt && performance.now() - wink.lookBackAt < 350);
 }
 // a wink as the iPad saw it, checked against the levels of both eyes just before it: the winking eye
 // clearly shut, the other clearly open all along (with no levels to go by, it stands)
@@ -12465,7 +12469,7 @@ window.standFaceEvent = (ev) => {
     const now = performance.now();
     wink.lv.push({ t: now, l: +ev.l || 0, r: +ev.r || 0 }); while (wink.lv.length && now - wink.lv[0].t > 1500) wink.lv.shift();
     wink.lastLv = now;
-    if (ev.look !== undefined) { wink.look = !!ev.look; wink.lookAt = now; }
+    if (ev.look !== undefined) { if (ev.look && wink.look === false) wink.lookBackAt = now; wink.look = !!ev.look; wink.lookAt = now; }
     // the iPad's own winks turn the page as they always did; with the face aside the levels are
     // judged here too, each eye against its own rest (the iPad misses those winks)
     wink.det.sens = S.winkSens || 0.7;
