@@ -1551,7 +1551,7 @@ async function showFree(q, token) {
   ul.textContent = ''; box.hidden = !good.length;
   for (const e of good.slice(0, 5)) {
     const li = el('li'), b = el('button');
-    const main = el('div', 'w-main'); main.append(el('div', 'w-title', e.t + (e.o && !fold(e.t).includes(fold(e.o)) ? ', ' + e.o : '')), el('div', 'w-comp', e.cn || ''));
+    const main = el('div', 'w-main'), cl = el('div', 'w-comp', e.cn || ''); cl.append(el('span', 'w-src', 'Mutopia')); main.append(el('div', 'w-title', e.t + (e.o && !fold(e.t).includes(fold(e.o)) ? ', ' + e.o : '')), cl);
     if (e.i) main.append(el('div', 'w-inst', e.i));
     b.append(main, el('span', 'free-go', 'Open'));
     b.addEventListener('click', () => openFree(e));
@@ -1595,7 +1595,8 @@ function renderWorkList(list, limit) {
   list.slice(0, limit).forEach((r) => {
     const { work, composer } = splitTitle(r.title);
     const li = el('li'); const b = el('button');
-    const main = el('div', 'w-main'); main.append(el('div', 'w-title', work), el('div', 'w-comp', composer));
+    // (where it comes from, on every result: IMSLP here, Mutopia in its own list below)
+    const main = el('div', 'w-main'), cl = el('div', 'w-comp', composer); cl.append(el('span', 'w-src', 'IMSLP')); main.append(el('div', 'w-title', work), cl);
     const chev = icon('i-back'); chev.classList.add('chev');
     b.append(main, chev);
     b.addEventListener('click', () => openWork(r.title));

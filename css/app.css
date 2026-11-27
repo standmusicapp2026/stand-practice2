@@ -2543,3 +2543,4 @@ body.phone #tab-drone > #droneToggle { padding: 0; background: var(--accent); bo
 .tune-dock .mt-scale { flex: 1; position: relative; height: 18px; }
 .tune-dock .mt-c { min-width: 34px; text-align: right; color: var(--muted); font-weight: 600; }
 .tune-dock.intune .mt-c, .tune-dock.intune .mt-note { color: var(--ok, #1a8a4a); }
+.w-src { display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 6px; font-size: 11px; font-weight: 600; line-height: 18px; color: var(--muted); background: var(--sunk); vertical-align: 1px; }
