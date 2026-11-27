@@ -2552,3 +2552,18 @@ body.phone #tab-drone > #droneToggle { padding: 0; background: var(--accent); bo
 .rec-preview video.mirror { transform: scaleX(-1); }
 .rp-shape { min-width: 200px; }
 .rp-shape button { flex: 1; }
+
+/* The bars (Listen, metronome, recording, drone…) sit at the very bottom of the iPad's screen, in one
+   row, in the page's bottom margin where there are no notes; the score itself never moves. The page
+   slider steps aside while a bar is there (it comes back with the bars gone). With a study session's
+   bar at the bottom, they sit just above it. */
+body:not(.phone) .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); flex-wrap: nowrap; align-items: flex-end; }
+body:not(.phone) .dock .media-pill { flex: 0 1 auto; min-width: 400px; }
+body:not(.phone).dock-on .page-scrub { opacity: 0; pointer-events: none; }
+body:not(.phone).run-on .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--run-h, 56px) + 16px); }
+/* (sideways the pages reach lower: the bars a little slimmer and nearer the edge) */
+@media (orientation: landscape) {
+  body:not(.phone) .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 4px); }
+  body:not(.phone) .dock .pill { min-height: 42px; }
+  body:not(.phone) .dock .media-pill .mp-play { width: 34px; height: 34px; }
+}

@@ -10156,6 +10156,20 @@ $$('#vidShape button').forEach((b) => b.addEventListener('click', () => {
 }));
 
 // ---------- the iPhone as the camera ----------
+// (the bars at the bottom: the page slider steps aside while one is showing; above a study session's bar)
+{
+  const dock = document.getElementById('dock'), run = document.getElementById('runPill');
+  const sync = () => {
+    document.body.classList.toggle('dock-on', !!dock && [...dock.children].some((e) => !e.hidden && e.classList.contains('pill') && getComputedStyle(e).display !== 'none'));
+    const on = !!run && !run.hidden && getComputedStyle(run).display !== 'none';
+    document.body.classList.toggle('run-on', on);
+    if (on) document.body.style.setProperty('--run-h', run.getBoundingClientRect().height + 'px');
+  };
+  const mo = new MutationObserver(sync);
+  if (dock) mo.observe(dock, { subtree: true, attributes: true, attributeFilter: ['hidden', 'class'] });
+  if (run) mo.observe(run, { attributes: true, attributeFilter: ['hidden', 'data-kind', 'class'] });
+  sync();
+}
 const host = new CameraHost();
 window.__host = host;   // (tests)
 function syncLink() {
