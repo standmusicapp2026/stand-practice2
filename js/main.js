@@ -10642,13 +10642,50 @@ $('#takeImportFile').addEventListener('change', async (e) => {
 // draggable camera preview
 (function dragCam() {
   const cam = $('#cam'); let d = null;
-  cam.addEventListener('pointerdown', (e) => { cam.setPointerCapture(e.pointerId); const r = cam.getBoundingClientRect(); d = { dx: e.clientX - r.left, dy: e.clientY - r.top }; });
+  // Pushed off the side (like a YouTube video put aside): the picture slides away and a small tab with
+  // an arrow stays at the edge; the recording goes on. A tap on the tab (or dragging it in) brings it back.
+  const tab = el('button', 'cam-tab'); tab.type = 'button'; tab.hidden = true; tab.setAttribute('aria-label', 'Show the camera');
+  tab.innerHTML = '<span class="rec-dot live"></span><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  document.body.append(tab);
+  const placeTab = () => { const r = cam.getBoundingClientRect(); tab.style.top = Math.round(clamp(r.top + r.height / 2 - 32, 70, innerHeight - 140)) + 'px'; };
+  const stash = (side) => {
+    const r = cam.getBoundingClientRect();
+    cam.style.top = r.top + 'px'; cam.style.bottom = 'auto';
+    cam.classList.add('stashed'); cam.dataset.side = side;
+    cam.style.left = (side === 'left' ? -r.width - 24 : innerWidth + 24) + 'px';
+    tab.dataset.side = side; tab.classList.toggle('rec', cam.classList.contains('rec')); placeTab(); tab.hidden = false;
+  };
+  const unstash = () => {
+    if (!cam.classList.contains('stashed')) return;
+    const w = cam.offsetWidth, side = cam.dataset.side;
+    cam.classList.remove('stashed'); tab.hidden = true;
+    cam.style.left = (side === 'left' ? 8 : innerWidth - w - 8) + 'px';
+  };
+  tab.addEventListener('click', unstash);
+  // (the camera put away: the tab goes with it; shown again, it comes back as it was)
+  new MutationObserver(() => { if (cam.hidden) { tab.hidden = true; } else if (cam.classList.contains('stashed')) { tab.classList.toggle('rec', cam.classList.contains('rec')); tab.hidden = false; placeTab(); } }).observe(cam, { attributes: true, attributeFilter: ['hidden', 'class'] });
+  cam.addEventListener('pointerdown', (e) => { cam.setPointerCapture(e.pointerId); const r = cam.getBoundingClientRect(); d = { dx: e.clientX - r.left, dy: e.clientY - r.top, over: 0, side: '', t: performance.now(), x: e.clientX, v: 0 }; cam.classList.add('dragging'); });
   cam.addEventListener('pointermove', (e) => {
     if (!d) return;
-    const x = clamp(e.clientX - d.dx, 8, innerWidth - cam.offsetWidth - 8), y = clamp(e.clientY - d.dy, 8, innerHeight - cam.offsetHeight - 8);
+    const rawX = e.clientX - d.dx, max = innerWidth - cam.offsetWidth - 8;
+    const now = performance.now(); d.v = (e.clientX - d.x) / Math.max(1, now - d.t); d.t = now; d.x = e.clientX;
+    d.over = rawX < 8 ? 8 - rawX : rawX > max ? rawX - max : 0; d.side = rawX < 8 ? 'left' : rawX > max ? 'right' : '';
+    // (past the edge it follows the finger a little, so it is felt going)
+    const x = clamp(rawX, 8, max) + (d.side === 'left' ? -d.over * 0.6 : d.side === 'right' ? d.over * 0.6 : 0), y = clamp(e.clientY - d.dy, 8, innerHeight - cam.offsetHeight - 8);
     cam.style.left = x + 'px'; cam.style.top = y + 'px'; cam.style.bottom = 'auto';
   });
-  cam.addEventListener('pointerup', () => { d = null; });
+  const up = () => {
+    if (!d) return;
+    const r = cam.getBoundingClientRect(), nearL = r.left < 40, nearR = r.right > innerWidth - 40;
+    const fling = (nearL && d.v < -0.6) ? 'left' : (nearR && d.v > 0.6) ? 'right' : '';
+    const side = d.over > 50 ? d.side : fling;
+    cam.classList.remove('dragging');
+    if (side) stash(side);
+    else if (d.over) cam.style.left = clamp(r.left, 8, innerWidth - cam.offsetWidth - 8) + 'px';
+    d = null;
+  };
+  cam.addEventListener('pointerup', up); cam.addEventListener('pointercancel', up);
+  window.__camStash = { stash, unstash, tab };   // (tests)
   // the phone turned: the camera stays on the screen, and before recording starts the video
   // takes the new shape (portrait or landscape)
   const keep = () => {
@@ -10666,7 +10703,8 @@ $('#takeImportFile').addEventListener('change', async (e) => {
         }).catch(() => {}).finally(() => { keep.busy = false; });
       }
     }
-    if (cam.style.left) {
+    if (cam.classList.contains('stashed')) { cam.style.left = (cam.dataset.side === 'left' ? -cam.offsetWidth - 24 : innerWidth + 24) + 'px'; placeTab(); }
+    else if (cam.style.left) {
       const r = cam.getBoundingClientRect();
       cam.style.left = clamp(r.left, 8, Math.max(8, innerWidth - r.width - 8)) + 'px';
       cam.style.top = clamp(r.top, 8, Math.max(8, innerHeight - r.height - 8)) + 'px';

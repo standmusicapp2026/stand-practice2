@@ -2567,3 +2567,15 @@ body:not(.phone).run-on .dock { bottom: calc(env(safe-area-inset-bottom, 0px) + 
   body:not(.phone) .dock .pill { min-height: 42px; }
   body:not(.phone) .dock .media-pill .mp-play { width: 34px; height: 34px; }
 }
+/* the camera put aside while recording: it slides off the side, a small tab with an arrow stays */
+.cam { transition: left .28s cubic-bezier(.2, .8, .25, 1); }
+.cam.dragging { transition: none; cursor: grabbing; }
+.cam-tab { position: fixed; z-index: 36; width: 30px; height: 64px; display: grid; place-items: center; align-content: center; gap: 6px; padding: 0; border: 0; background: rgba(20, 22, 28, .78); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: #fff; box-shadow: 0 6px 18px rgba(0,0,0,.22); cursor: pointer; animation: camTabIn .25s ease-out; }
+.cam-tab[hidden] { display: none; }
+.cam-tab[data-side="left"] { left: 0; border-radius: 0 14px 14px 0; padding-left: env(safe-area-inset-left); }
+.cam-tab[data-side="right"] { right: 0; border-radius: 14px 0 0 14px; padding-right: env(safe-area-inset-right); }
+.cam-tab[data-side="right"] svg { transform: scaleX(-1); }
+.cam-tab svg { width: 18px; height: 18px; }
+.cam-tab .rec-dot { width: 8px; height: 8px; }
+.cam-tab:not(.rec) .rec-dot { display: none; }
+@keyframes camTabIn { from { opacity: 0; } to { opacity: 1; } }
