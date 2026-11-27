@@ -5737,8 +5737,442 @@ const LAYOUTS = [
     tb('note', 0.08, 0.72, 'Warm, slow, singing. Like an evening in late summer.', { w: 0.62, c: '#3d2e22' }),
   ] },
 ];
+// ---------- games, cards and pages for children and lessons: bright, drawn, ready to print or tap ----------
+// One family of colours: warm paper, deep ink, and a box of bright crayons. Words sit on the deep
+// crayons in white and on the pale ones in ink, so they stay clear in every colour theme.
+const K = { paper: '#fffaf2', ink: '#26304a', soft: '#6b6f80', line: '#e3dccf',
+  coral: '#ef6f5b', orange: '#f29e38', teal: '#2f9e8f', blue: '#4a86d6', purple: '#8a6fd1', berry: '#d9577f', navy: '#1f2a48',
+  sun: '#fbe3a1', mint: '#cdeedf', sky: '#d3e5fa', blush: '#fbd9d2', lilac: '#e4dcf7', peach: '#fde2c4' };
+const DEEP = [K.coral, K.orange, K.teal, K.blue, K.purple, K.berry], PALE = [K.sun, K.mint, K.sky, K.blush, K.lilac, K.peach];
+// a circle d wide (on an upright page), a shape in a box, an element at its own shape, a music sign
+const disc = (cx, cy, d, f, extra = {}) => ({ t: 'shape', k: 'circle', x: cx, y: cy, w: d, h: d / 1.414, f, a: 1, rot: 0, ...extra });
+const shp = (k, cx, cy, w, h, f, extra = {}) => ({ t: 'shape', k, x: cx, y: cy, w, h, f, a: 1, rot: 0, ...extra });
+const elx = (k, cx, cy, w, f, extra = {}) => ({ t: 'shape', k: 'e:' + k, x: cx, y: cy, w, h: +(w / elementAspect(k) / 1.414).toFixed(5), f, a: 1, rot: 0, ...extra });
+const glyph = (e, x, y, s, c, extra = {}) => ({ t: 'stamp', k: 'mus', e, x, y, s, c, a: 1, ...extra });
+const washi = (x0, y0, x1, y1, c, pat = 'stripes', w = 0.03) => ({ t: 'tape', x0, y0, x1, y1, w, c, pat, a: 0.9 });
+// a photo place in a colour of the page (it shows as a soft picture until a photo is chosen)
+const pic = (cx, cy, w, h, mask, f, extra = {}) => photo(cx, cy, w, h, mask, { f, ...extra });
+// words centred on a point
+const tcen = (T, style, cx, cy, w, txt, extra = {}) => { const it = T(style, cx - w / 2, cy, txt, { w, al: 'center', ...extra }); it.y = +(cy - it.h / 2).toFixed(4); return it; };
+// a face (how practice felt): a coloured circle and the face drawn on it
+const face = (k, cx, cy, d, f, ink = K.ink) => [disc(cx, cy, d, f), { ...elx('f-' + k, cx, cy, d * 0.9, ink), f: '', lc: ink, lw: d * 0.045 }];
+// a die showing n, turned a little
+function die(cx, cy, size, n, rot = 0, f = '#ffffff', pip = K.ink) {
+  const out = [shp('round', cx, cy, size, size / 1.414, f, { rot, sh: 1, lc: K.line, lw: 0.0012 })];
+  const P = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] }[n];
+  const c = Math.cos(rot), s = Math.sin(rot);
+  for (const [a, b] of P) { const dx = a * 0.25 * size, dy = b * 0.25 * size; out.push(disc(cx + dx * c - dy * s, cy + (dx * s + dy * c) / 1.414, size * 0.16, pip)); }
+  return out;
+}
+// a card to cut out: white, a thin edge, a soft shadow
+const card = (x, y, w, h, f = '#ffffff', extra = {}) => rbox(x, y, w, h, f, { lc: K.line, lw: 0.0012, ...extra });
+// the head of a children's page: a small spaced word, a big friendly title, a line under it
+function kidHead(T, kicker, title, sub, col = K.coral) {
+  const out = [T('spaced', 0.07, 0.04, kicker, { w: 0.86, c: col, fs: 0.016, ff: 'round', b: 1 }),
+    T('heading', 0.07, 0.062, title, { w: 0.86, al: 'center', ff: 'round', b: 1, fs: 0.056, c: K.ink })];
+  if (sub) out.push(T('body', 0.1, 0.062 + out[1].h + 0.006, sub, { w: 0.8, al: 'center', ff: 'avenir', fs: 0.0175, c: K.soft, lh: 1.35 }));
+  return out;
+}
+// a single note on a short staff, for the cards
+// music centred on a point
+const musAt = (cx, cy, w, m, extra = {}) => { const it = mus(0, 0, w, m, extra); it.x = +cx.toFixed(5); it.y = +cy.toFixed(5); return it; };
+const oneNote = (cx, cy, w, clef, p, ws = 14, f = K.ink) => musAt(cx, cy, w, { clef, key: null, ws, notes: [W1(p), { bar: '||' }] }, { f });
+// a group of things turned together about a point (a card pinned a little crooked, with all on it)
+function turnAbout(items, cx, cy, rot) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return items.map((it) => {
+    const tb = it.t === 'tb', mx = tb ? it.x + it.w / 2 : it.x, my = tb ? it.y + (it.h || 0) / 2 : it.y;
+    const dx = (mx - cx) * 1000, dy = (my - cy) * 1414, nx = cx + (dx * c - dy * s) / 1000, ny = cy + (dx * s + dy * c) / 1414;
+    return { ...it, x: +(tb ? nx - it.w / 2 : nx).toFixed(5), y: +(tb ? ny - (it.h || 0) / 2 : ny).toFixed(5), rot: (it.rot || 0) + rot };
+  });
+}
+
+const KID_LAYOUTS = [
+  // ---- games
+  { k: 'g-bingo', cat: 'games', label: 'Practice bingo', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: K.paper, pat: '', a: 1 },
+      T('spaced', 0.07, 0.04, 'Four in a row wins', { w: 0.86, c: K.coral, fs: 0.016, ff: 'round', b: 1 })];
+    'BINGO'.split('').forEach((ch, i) => { const cx = 0.26 + i * 0.12; out.push(disc(cx, 0.112, 0.105, DEEP[i], { rot: 0 }), tcen(T, 'heading', cx, 0.112, 0.1, ch, { ff: 'round', b: 1, fs: 0.052, c: '#ffffff' })); });
+    out.push(T('body', 0.1, 0.168, 'Colour a square, or put a sticker on it, each time you do what it says.', { w: 0.8, al: 'center', ff: 'avenir', fs: 0.0175, c: K.soft }));
+    const tasks = ['Play your scale with your eyes closed', 'Clap the rhythm of your new piece', 'Ten long, straight bows', 'Play a piece for someone at home',
+      'Name all the notes in one line', 'Play it as softly as you can', 'Make up a tune of four bars', '',
+      'Play it like a giant, then like a mouse', 'Practise 15 minutes without stopping', 'Play the hardest bar five times', 'Sing your piece, then play it',
+      'Play along with a recording', 'Draw a picture of your piece', 'Listen to a concert or a recording', 'Record yourself and listen back'];
+    const cw = 0.2, gap = 0.02, ch = cw / 1.414, y0 = 0.225;
+    tasks.forEach((t, i) => {
+      const c = i % 4, r = Math.floor(i / 4), x = 0.07 + c * (cw + gap), y = y0 + r * (ch + gap / 1.414);
+      if (!t) {
+        out.push(rbox(x, y, cw, ch, K.sun), shp('burst', x + cw / 2, y + ch / 2, cw * 0.78, ch * 0.78 * 1.0, K.orange, { rot: 0.2 }),
+          tcen(T, 'heading', x + cw / 2, y + ch / 2, cw * 0.6, 'Free!', { ff: 'round', b: 1, fs: 0.03, c: '#ffffff', rot: -0.12 }));
+        return;
+      }
+      out.push(rbox(x, y, cw, ch, PALE[(c + r * 2) % 6]), tcen(T, 'heading', x + cw / 2, y + ch / 2, cw - 0.03, t, { ff: 'round', b: 1, fs: 0.02, c: K.ink, lh: 1.18 }));
+    });
+    const yb = y0 + 4 * ch + 3 * gap / 1.414 + 0.035;
+    out.push(elx('rosette', 0.15, yb + 0.06, 0.12, K.coral, { rot: -0.12 }), T('heading', 0.25, yb + 0.02, 'My prize for a line of four', { w: 0.6, ff: 'round', b: 1, fs: 0.022, c: K.ink }),
+      rule(0.25, yb + 0.085, 0.68, K.line, 0.0015), T('note', 0.25, yb + 0.04, '…', { w: 0.6, fs: 0.03, c: K.coral }));
+    return out;
+  } },
+  { k: 'g-path', cat: 'games', label: 'Practice path game', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#f4f9f3', pat: '', a: 1 }, ...kidHead(T, 'A board game', 'The practice path', 'Roll the dice and move. Land on a coloured stop? Do what it says!', K.teal)];
+    const X = [0.13, 0.278, 0.426, 0.574, 0.722, 0.87], Y = [0.27, 0.43, 0.59, 0.75], d = 0.1;
+    // the road: a band along each row, joined at the ends
+    Y.forEach((y, r) => { out.push(rbox(0.1, y - 0.016, 0.8, 0.032, '#e1efe4')); if (r < 3) { const x = (r % 2 ? 0.13 : 0.87) - 0.015; out.push(rbox(x, y, 0.03, Y[r + 1] - y, '#e1efe4')); } });
+    const special = { 3: 'Play your scale', 6: 'Clap a rhythm', 9: 'Back 2', 12: 'Play it softly', 15: 'Skip ahead 3', 18: 'Sing a phrase', 21: 'Play for someone' };
+    let n = 0;
+    Y.forEach((y, r) => {
+      const xs = r % 2 ? X.slice().reverse() : X;
+      xs.forEach((x) => {
+        n++;
+        if (n === 24) { out.push(shp('burst', x, y, 0.15, 0.15 / 1.414, K.orange, { rot: 0.1, sh: 1 }), tcen(T, 'heading', x, y, 0.12, 'Finish!', { ff: 'round', b: 1, fs: 0.02, c: '#ffffff' })); return; }
+        const sp = special[n], col = n === 1 ? K.teal : sp ? DEEP[(n / 3) % 6] : '#ffffff';
+        out.push(disc(x, y, d, col, { lc: sp || n === 1 ? '' : '#b9d6c3', lw: sp || n === 1 ? 0 : 0.0025, sh: sp ? 1 : 0 }));
+        out.push(tcen(T, 'heading', x, y, d, n === 1 ? 'Start' : String(n), { ff: 'round', b: 1, fs: n === 1 ? 0.02 : 0.03, c: sp || n === 1 ? '#ffffff' : K.ink }));
+        if (sp) out.push(T('body', x - 0.07, y + 0.042, sp, { w: 0.14, al: 'center', ff: 'round', b: 1, fs: 0.015, c: K.ink, lh: 1.15 }));
+      });
+    });
+    out.push(...die(0.16, 0.89, 0.085, 5, -0.25), ...die(0.27, 0.9, 0.085, 3, 0.18));
+    out.push(T('heading', 0.38, 0.865, 'Players', { w: 0.3, ff: 'round', b: 1, fs: 0.02, c: K.ink }));
+    [K.coral, K.blue, K.orange, K.purple].forEach((c, i) => out.push(disc(0.4 + i * 0.075, 0.915, 0.05, c, { sh: 1 }), rule(0.38 + i * 0.075, 0.95, 0.04, K.line, 0.0015)));
+    out.push(elx('cello', 0.86, 0.885, 0.07, '#b5653a', { g: 1, g2: '#7a3e1f', rot: 0.25 }));
+    return out;
+  } },
+  { k: 'g-dice', cat: 'games', label: 'Roll and play', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: K.paper, pat: '', a: 1 },
+      T('spaced', 0.07, 0.045, 'Practice challenge', { w: 0.5, al: 'left', c: K.berry, fs: 0.016, ff: 'round', b: 1 }),
+      T('heading', 0.07, 0.07, 'Roll & play', { w: 0.6, al: 'left', ff: 'round', b: 1, fs: 0.07, c: K.ink }),
+      T('body', 0.07, 0.15, 'Roll a dice, then play your piece the way it says.', { w: 0.56, ff: 'avenir', fs: 0.018, c: K.soft }),
+      ...die(0.75, 0.09, 0.12, 6, 0.3, K.berry, '#ffffff'), ...die(0.86, 0.14, 0.1, 2, -0.2, K.sun)];
+    const rows = [['Slow motion', 'Play your passage at half speed, every note clear.'], ['Echo', 'Each bar loud, then once more softly, like an echo.'], ['Eyes closed', 'Play your scale without looking at your hands.'],
+      ['Five in a row', 'The hardest bar, five times right without a slip.'], ['New rhythm', 'Play your scale long-short, long-short.'], ['Your choice', 'Play your favourite piece. You earned it!']];
+    rows.forEach(([h, sub], i) => {
+      const y = 0.22 + i * 0.115, col = DEEP[i], pale = PALE[i];
+      out.push(rbox(0.2, y, 0.73, 0.095, pale), ...die(0.12, y + 0.0475, 0.1, i + 1, i % 2 ? 0.12 : -0.12, col, '#ffffff'),
+        T('heading', 0.24, y + 0.015, h, { w: 0.66, ff: 'round', b: 1, fs: 0.027, c: K.ink }), T('body', 0.24, y + 0.053, sub, { w: 0.66, ff: 'avenir', fs: 0.0175, c: K.ink }));
+    });
+    out.push(T('heading', 0.07, 0.92, 'Rolls today', { w: 0.25, ff: 'round', b: 1, fs: 0.02, c: K.ink }));
+    for (let i = 0; i < 10; i++) out.push(shp('star', 0.33 + i * 0.062, 0.932, 0.045, 0.045 / 1.414, '#ffffff', { lc: K.orange, lw: 0.0018 }));
+    return out;
+  } },
+  { k: 'g-memory', cat: 'games', label: 'Note memory game', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#f5f3fb', pat: '', a: 1 }, ...kidHead(T, 'Cut out · turn over · find the pairs', 'Note memory', 'Each note has a partner: its letter. Turn two cards over; a pair? Keep them!', K.purple)];
+    const cards = [['n', 'treble', 'G4'], ['l', 'C'], ['n', 'bass', 'F3'], ['l', 'E'], ['l', 'G'], ['n', 'treble', 'C5'], ['n', 'bass', 'A2'], ['l', 'D'], ['n', 'treble', 'E4'], ['l', 'F'], ['n', 'bass', 'D3'], ['l', 'A']];
+    const cw = 0.2, ch = 0.2, gx = 0.02, gy = 0.025, y0 = 0.2;
+    cards.forEach((c, i) => {
+      const x = 0.07 + (i % 4) * (cw + gx), y = y0 + Math.floor(i / 4) * (ch + gy), col = DEEP[i % 6];
+      if (c[0] === 'l') { out.push(rbox(x, y, cw, ch, col, { sh: 1 }), disc(x + cw / 2, y + ch / 2, 0.15, '#ffffff', { a: 0.16 }), tcen(T, 'heading', x + cw / 2, y + ch / 2, cw, c[1], { ff: 'round', b: 1, fs: 0.1, c: '#ffffff' })); return; }
+      out.push(card(x, y, cw, ch, '#ffffff', { sh: 1, lc: col, lw: 0.003 }), oneNote(x + cw / 2, y + ch / 2, cw - 0.03, c[1], c[2], 12));
+    });
+    out.push(rbox(0.07, 0.885, 0.86, 0.05, '#ffffff', { lc: K.line, lw: 0.0012 }), T('body', 0.1, 0.898, 'Harder: play the note on your instrument before you keep the pair.', { w: 0.8, al: 'center', ff: 'avenir', fs: 0.0175, c: K.ink }));
+    return out;
+  } },
+  { k: 'g-character', cat: 'games', label: 'Play it like…', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: K.paper, pat: '', a: 1 }, ...kidHead(T, 'Character cards', 'Play it like…', 'Draw a card and play your piece that way. Can the others guess which card it was?', K.blue)];
+    const cards = [
+      ['a storm', 'loud, fast and sudden', '#45506e', (cx, cy) => [shp('cloud', cx, cy - 0.015, 0.17, 0.075, '#dfe6f2'), ...[[-0.045, 0.03], [-0.01, 0.04], [0.025, 0.03], [0.06, 0.04]].map(([dx, dy]) => shp('round', cx + dx, cy + dy, 0.007, 0.018, '#9cc3f0', { rot: 0.3 }))]],
+      ['a lullaby', 'soft, slow, smooth bows', K.navy, (cx, cy) => [elx('moon', cx - 0.02, cy, 0.1, K.sun, { rot: -0.3 }), elx('sparkle', cx + 0.06, cy - 0.04, 0.035, '#ffffff'), elx('sparkle', cx + 0.045, cy + 0.035, 0.022, '#ffffff')]],
+      ['a sunny dance', 'bouncy and bright', K.orange, (cx, cy) => [elx('sun', cx, cy, 0.14, '#ffffff')]],
+      ['falling leaves', 'light, floating, getting softer', K.coral, (cx, cy) => [elx('leaf', cx - 0.05, cy - 0.02, 0.05, '#ffffff', { rot: -0.6 }), elx('leaf', cx + 0.02, cy + 0.01, 0.045, '#ffe7c7', { rot: 0.7 }), elx('leaf', cx + 0.065, cy - 0.035, 0.035, '#ffffff', { rot: 2.2 })]],
+      ['a rainbow', 'one long, singing line', K.purple, (cx, cy) => [elx('rainbow', cx, cy, 0.16, '', { lc: '#ffffff', lw: 0.006 })]],
+      ['the sea', 'grow louder, then softer', K.teal, (cx, cy) => [0, 1, 2].map((k) => elx('divwave', cx, cy - 0.025 + k * 0.025, 0.17, '', { lc: k === 1 ? '#bfeee6' : '#ffffff', lw: 0.004 }))],
+    ];
+    const cw = 0.42, ch = 0.235, y0 = 0.175;
+    cards.forEach(([word, how, col, art], i) => {
+      const x = 0.07 + (i % 2) * 0.44, y = y0 + Math.floor(i / 2) * (ch + 0.02), cx = x + cw / 2;
+      out.push(rbox(x, y, cw, ch, col, { sh: 1 }), ...art(cx, y + 0.062));
+      out.push(T('spaced', x, y + 0.125, 'Play it like', { w: cw, c: '#ffffff', fs: 0.0135, ff: 'round', b: 1, a: 0.85 }),
+        T('heading', x, y + 0.145, word, { w: cw, al: 'center', ff: 'round', b: 1, fs: 0.036, c: '#ffffff' }),
+        T('body', x, y + 0.195, how, { w: cw, al: 'center', ff: 'avenir', i: 1, fs: 0.0165, c: '#ffffff' }));
+    });
+    out.push(T('note', 0.07, 0.94, 'Make your own: a robot, a secret, a giant…', { w: 0.86, al: 'center', fs: 0.024, c: K.blue }));
+    return out;
+  } },
+  { k: 'g-flash', cat: 'games', label: 'Note flash cards', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, ...kidHead(T, 'Flash cards', 'Name that note', 'Cut out the cards. The answer hides upside down in the corner.', K.orange)];
+    const notes = [['treble', 'G4', 'G'], ['treble', 'B4', 'B'], ['treble', 'D5', 'D'], ['treble', 'F5', 'F'], ['bass', 'A2', 'A'], ['bass', 'C3', 'C'], ['bass', 'E3', 'E'], ['bass', 'G3', 'G']];
+    const cw = 0.42, ch = 0.165, y0 = 0.18;
+    notes.forEach(([clef, p, ans], i) => {
+      const x = 0.07 + (i % 2) * 0.44, y = y0 + Math.floor(i / 2) * (ch + 0.022), col = DEEP[(i + Math.floor(i / 2)) % 6];
+      out.push(card(x, y, cw, ch, PALE[(i + Math.floor(i / 2)) % 6]), rbox(x + 0.015, y + 0.012, cw - 0.03, ch - 0.024, '#ffffff'),
+        oneNote(x + cw / 2, y + ch / 2 + 0.012, cw - 0.14, clef, p, 15),
+        tcen(T, 'heading', x + cw - 0.045, y + ch - 0.035, 0.05, ans, { ff: 'round', b: 1, fs: 0.022, c: col, rot: Math.PI }),
+        T('spaced', x + 0.03, y + 0.022, clef === 'treble' ? 'Treble clef' : 'Bass clef', { w: 0.2, al: 'left', c: col, fs: 0.011, ff: 'round', b: 1 }));
+    });
+    out.push(T('body', 0.07, 0.94, 'Shuffle them, show one, and say its name as fast as you can.', { w: 0.86, al: 'center', ff: 'avenir', i: 1, fs: 0.0165, c: K.soft }));
+    return out;
+  } },
+  { k: 'g-rhythm', cat: 'games', label: 'Rhythm cards', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#f2f7fc', pat: '', a: 1 }, ...kidHead(T, 'Clap it · tap it · play it', 'Rhythm cards', 'Clap one card, then two in a row. Play them on one note, then on your scale.', K.blue)];
+    const q = { p: 'B4', d: 'q' }, h = { p: 'B4', d: 'h' }, e1 = { p: 'B4', d: '8', b: '[' }, e2 = { p: 'B4', d: '8', b: ']' }, em = { p: 'B4', d: '8', b: '-' };
+    const R = [[q, q, h], [h, h], [q, e1, e2, q, q], [{ p: 'B4', d: 'h', dot: 1 }, q], [{ p: 'B4', d: 'q', dot: 1 }, { p: 'B4', d: '8' }, h], [e1, em, em, e2, h], [{ p: 'B4', d: 'w' }], [q, { r: 'q' }, q, q]];
+    const cw = 0.42, ch = 0.15, y0 = 0.185;
+    R.forEach((notes, i) => {
+      const x = 0.07 + (i % 2) * 0.44, y = y0 + Math.floor(i / 2) * (ch + 0.025), col = DEEP[[3, 2, 0, 4, 1, 5, 3, 2][i]];
+      out.push(card(x, y, cw, ch), rbox(x, y, 0.06, ch, col), tcen(T, 'heading', x + 0.03, y + ch / 2, 0.06, String(i + 1), { ff: 'round', b: 1, fs: 0.03, c: '#ffffff' }),
+        musAt(x + 0.06 + (cw - 0.06) / 2, y + ch / 2, cw - 0.1, { staff: 1, time: '4/4', ws: 23, notes: [...notes, END] }, { f: K.ink }));
+    });
+    out.push(T('note', 0.07, 0.905, 'Make a long rhythm: put three cards in a row.', { w: 0.86, al: 'center', fs: 0.026, c: K.blue }));
+    return out;
+  } },
+  // ---- teaching, for children
+  { k: 'k-jar', cat: 'teach', label: 'Practice jar', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fff6ec', pat: '', a: 1 }, ...kidHead(T, 'Reward chart', 'My practice jar', 'Each time you practise, colour one marble. A full jar means a treat!', K.orange)];
+    // the jar: lid, neck and a big rounded body, with marbles to colour
+    out.push(rbox(0.25, 0.235, 0.5, 0.62, '#ffffff', { lc: '#c9b9a6', lw: 0.004, sh: 1 }), rbox(0.33, 0.2, 0.34, 0.05, '#ffffff', { lc: '#c9b9a6', lw: 0.004 }),
+      rbox(0.31, 0.175, 0.38, 0.035, K.coral), rbox(0.28, 0.255, 0.04, 0.2, '#ffffff', { a: 0.9 }), shp('round', 0.3, 0.36, 0.014, 0.18, '#f3eadf'));
+    const cols = [K.coral, K.orange, K.teal, K.blue, K.purple, K.berry];
+    let n = 0;
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 5; c++) {
+      const x = 0.345 + c * 0.077 + (r % 2 ? 0.0385 : 0), y = 0.81 - r * 0.069; if (r % 2 && c === 4) continue;
+      out.push(disc(x, y, 0.064, '#ffffff', { lc: cols[n++ % 6], lw: 0.0025 }));
+    }
+    out.push(rbox(0.07, 0.885, 0.86, 0.075, K.peach), elx('sparkles', 0.13, 0.922, 0.06, K.orange),
+      T('heading', 0.18, 0.898, 'When my jar is full:', { w: 0.35, ff: 'round', b: 1, fs: 0.021, c: K.ink }), T('note', 0.53, 0.893, '…', { w: 0.38, fs: 0.03, c: K.coral }));
+    out.push(T('note', 0.77, 0.3, 'Name:', { w: 0.18, fs: 0.026, c: K.soft }), rule(0.77, 0.36, 0.17, '#c9b9a6', 0.0015), elx('cello', 0.86, 0.6, 0.09, '#b5653a', { g: 1, g2: '#7a3e1f', rot: 0.2 }),
+      elx('sparkle', 0.14, 0.33, 0.06, K.orange), elx('sparkle', 0.18, 0.4, 0.03, K.coral), shp('star', 0.12, 0.62, 0.07, 0.07 / 1.414, K.sun, { rot: -0.2 }), shp('heart', 0.17, 0.72, 0.06, 0.06 / 1.414, K.blush, { rot: 0.2 }));
+    return out;
+  } },
+  { k: 'k-feelings', cat: 'teach', label: 'How did practice feel?', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: K.paper, pat: '', a: 1 }, ...kidHead(T, 'Feelings diary', 'How did practice feel?', 'Every day, draw the face that fits, or colour one of these.', K.teal)];
+    const F = [['happy', 'Happy', K.sun], ['proud', 'Proud', K.peach], ['calm', 'Calm', K.mint], ['unsure', 'Unsure', K.sky], ['tired', 'Tired', K.lilac], ['cross', 'Frustrated', K.blush]];
+    F.forEach(([k, lab, col], i) => { const cx = 0.135 + i * 0.146; out.push(...face(k, cx, 0.24, 0.115, col), T('heading', cx - 0.07, 0.29, lab, { w: 0.14, al: 'center', ff: 'round', b: 1, fs: 0.0165, c: K.ink })); });
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    out.push(rbox(0.07, 0.345, 0.86, 0.24, '#ffffff', { lc: K.line, lw: 0.0012 }));
+    days.forEach((d, i) => { const cx = 0.135 + i * 0.122; out.push(T('heading', cx - 0.05, 0.365, d, { w: 0.1, al: 'center', ff: 'round', b: 1, fs: 0.018, c: DEEP[i % 6] }), disc(cx, 0.45, 0.095, PALE[i % 6], { a: 0.55, lc: DEEP[i % 6], lw: 0.0018 }), T('body', cx - 0.05, 0.515, '… min', { w: 0.1, al: 'center', ff: 'avenir', fs: 0.015, c: K.soft })); });
+    out.push(shp('bubble', 0.29, 0.73, 0.42, 0.2, K.mint), T('heading', 0.11, 0.66, 'Something that felt good', { w: 0.36, ff: 'round', b: 1, fs: 0.02, c: K.ink }), rule(0.11, 0.725, 0.36, '#ffffff', 0.002), rule(0.11, 0.76, 0.36, '#ffffff', 0.002));
+    out.push(shp('bubble', 0.71, 0.73, 0.42, 0.2, K.sky, { fx: 1 }), T('heading', 0.53, 0.66, 'Something to ask my teacher', { w: 0.36, ff: 'round', b: 1, fs: 0.02, c: K.ink }), rule(0.53, 0.725, 0.36, '#ffffff', 0.002), rule(0.53, 0.76, 0.36, '#ffffff', 0.002));
+    out.push(T('note', 0.07, 0.885, 'All feelings are welcome. Even tricky days help you grow.', { w: 0.86, al: 'center', fs: 0.024, c: K.teal }), elx('heartline', 0.9, 0.92, 0.06, '', { lc: K.coral, lw: 0.003 }));
+    return out;
+  } },
+  ...[['cello', 'Parts of the cello', 'Endpin'], ['violin', 'Parts of the violin', 'Chin rest']].map(([inst, label, low]) => ({ k: 'k-parts-' + inst, cat: 'teach', label, make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: K.paper, pat: '', a: 1 }, ...kidHead(T, 'Know your instrument', label, 'Write the name of each part in its box. The words are at the bottom.', K.coral)];
+    const cx = 0.5, w = inst === 'cello' ? 0.3 : 0.32, it = elx(inst, cx, 0.53, w, '#b5653a', { g: 1, g2: '#7a3e1f' });
+    const at = (u, v) => [cx + (u / 44 - 0.5) * w, it.y + (v / 100 - 0.5) * it.h];
+    out.push(disc(cx, 0.53, 0.62, '#fbe9d6'), it);
+    const top = inst === 'cello' ? 1 : 3, y0 = inst === 'cello' ? 37 : 41;
+    const parts = [['Scroll', 22, top + 3.4, -1], ['Pegs', 26.5, top + 7.4, 1], ['Fingerboard', 22, y0 - 10, -1], ['Strings', 23.6, y0 + 15, 1], ['F-hole', 14.5, y0 + 33, -1], ['Bridge', 26, y0 + 33, 1], ['Tailpiece', 21, y0 + 47, -1], [low, inst === 'cello' ? 22 : 10, inst === 'cello' ? 98 : 94, 1]];
+    const L = parts.filter((p) => p[3] < 0), R = parts.filter((p) => p[3] > 0);
+    for (const side of [L, R]) side.forEach(([name, u, v, s], i) => {
+      const [px, py] = at(u, v), by = 0.25 + i * 0.165, bx = s < 0 ? 0.06 : 0.73, bw = 0.21;
+      // (a line from the part to its box, bent once)
+      const ex = s < 0 ? bx + bw : bx;
+      out.push({ t: 'shape', k: 'line', x: (px + ex) / 2, y: (py + by + 0.03) / 2, w: Math.hypot(ex - px, (by + 0.03 - py) * 1.414), h: 0.01, lc: K.ink, lw: 0.0014, a: 0.7, rot: Math.atan2((by + 0.03 - py) * 1.414, ex - px) });
+      out.push(disc(px, py, 0.016, K.coral, { lc: '#ffffff', lw: 0.0015 }), rbox(bx, by, bw, 0.06, '#ffffff', { lc: DEEP[(i * 2 + (s > 0)) % 6], lw: 0.002 }),
+        disc(s < 0 ? bx + 0.02 : bx + bw - 0.02, by, 0.034, DEEP[(i * 2 + (s > 0)) % 6]), tcen(T, 'heading', s < 0 ? bx + 0.02 : bx + bw - 0.02, by, 0.034, String(parts.indexOf(parts.find((p) => p[0] === name)) + 1), { ff: 'round', b: 1, fs: 0.016, c: '#ffffff' }));
+    });
+    out.push(T('spaced', 0.07, 0.865, 'Word bank', { w: 0.86, c: K.coral, fs: 0.014, ff: 'round', b: 1 }));
+    const words = parts.map((p) => p[0]).sort();
+    words.forEach((wd, i) => { const x = 0.07 + (i % 4) * 0.22, y = 0.89 + Math.floor(i / 4) * 0.045; out.push(rbox(x, y, 0.2, 0.036, PALE[i % 6]), tcen(T, 'heading', x + 0.1, y + 0.018, 0.2, wd, { ff: 'round', b: 1, fs: 0.017, c: K.ink })); });
+    return out;
+  } })),
+  { k: 'k-star', cat: 'teach', label: 'Student of the month', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fff7dc', pat: '', a: 1 },
+      elx('dots', 0.13, 0.1, 0.16, K.coral, { a: 0.55 }), elx('dots', 0.9, 0.62, 0.14, K.blue, { a: 0.5, rot: 1 }),
+      shp('burst', 0.5, 0.29, 0.6, 0.6 / 1.414, K.sun, { rot: 0.1 }),
+      elx('laurel', 0.5, 0.29 + 0.075 * (0.6 * 0.8 / 1.414), 0.6, K.teal),
+      pic(0.5, 0.29, 0.34, 0.34 / 1.414, 'circle', '#e9b98f', { ol: '#ffffff', olw: 0.009 }),
+      shp('banner', 0.5, 0.5, 0.84, 0.13, K.coral, { sh: 1 }),
+      elx('sparkles', 0.12, 0.32, 0.1, K.orange), elx('sparkle', 0.88, 0.2, 0.07, K.coral), elx('sparkle', 0.83, 0.39, 0.04, K.orange)];
+    out.push(tcen(T, 'heading', 0.5, 0.505, 0.68, 'Student of the month', { ff: 'round', b: 1, fs: 0.042, c: '#ffffff' }));
+    out.push(T('body', 0.1, 0.585, 'This award goes to', { w: 0.8, al: 'center', ff: 'avenir', i: 1, fs: 0.022, c: K.soft }),
+      T('signature', 0.08, 0.615, 'Name of the pupil', { w: 0.84, c: K.ink, fs: 0.08 }),
+      T('body', 0.13, 0.715, 'for practising every single day, the beautiful long bows, and for always trying again.', { w: 0.74, al: 'center', ff: 'avenir', fs: 0.021, c: K.ink, lh: 1.45 }),
+      rule(0.14, 0.9, 0.3, K.ink, 0.0015), rule(0.56, 0.9, 0.3, K.ink, 0.0015),
+      T('spaced', 0.14, 0.91, 'Month', { w: 0.3, c: K.soft, fs: 0.013, ff: 'round', b: 1 }), T('spaced', 0.56, 0.91, 'Teacher', { w: 0.3, c: K.soft, fs: 0.013, ff: 'round', b: 1 }),
+      elx('rosette', 0.5, 0.88, 0.08, K.blue));
+    return out;
+  } },
+  { k: 'k-parents', cat: 'teach', label: 'Lesson news for parents', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: K.paper, pat: '', a: 1 },
+      shp('blob', 0.33, 0.25, 0.56, 0.3, K.peach, { rot: -0.2 }),
+      pic(0.31, 0.25, 0.42, 0.36, 'arch', '#d9a98a', { fr: 'shadow' }),
+      disc(0.76, 0.18, 0.27, K.mint), pic(0.76, 0.18, 0.24, 0.24 / 1.414, 'circle', '#9cc4b2', { ol: '#ffffff', olw: 0.008 }),
+      pic(0.7, 0.37, 0.2, 0.2 / 1.414, 'circle', '#a9b8de', { ol: '#ffffff', olw: 0.008, fr: 'shadow' }),
+      elx('sparkles', 0.9, 0.33, 0.07, K.orange), washi(0.18, 0.08, 0.3, 0.06, K.coral, 'dots')];
+    out.push(T('spaced', 0.07, 0.47, 'For parents · week of …', { w: 0.86, al: 'left', c: K.coral, fs: 0.016, ff: 'round', b: 1 }),
+      T('heading', 0.07, 0.492, 'This week in lessons', { w: 0.86, ff: 'round', b: 1, fs: 0.05, c: K.ink }));
+    const cards = [['We learnt', K.teal, K.mint, 'The new bow hold, two new notes on the A string, and the first line of “Go tell Aunt Rhody”.'],
+      ['Please practise', K.coral, K.blush, 'Five minutes a day: the open-string song, slowly, then the new line with the CD.'],
+      ['Coming up', K.blue, K.sky, 'Class concert on Saturday 3 May at 11. Wear something comfy and bring a friend!']];
+    cards.forEach(([h, col, pale, txt], i) => {
+      const y = 0.56 + i * 0.11;
+      out.push(rbox(0.07, y, 0.86, 0.095, pale), rbox(0.095, y + 0.02, 0.2, 0.034, col), tcen(T, 'heading', 0.195, y + 0.037, 0.2, h, { ff: 'round', b: 1, fs: 0.0165, c: '#ffffff' }),
+        T('body', 0.32, y + 0.017, txt, { w: 0.58, ff: 'avenir', fs: 0.0175, c: K.ink, lh: 1.35 }));
+    });
+    out.push(T('sticky', 0.07, 0.91, 'Proud moment: …', { w: 0.46, fs: 0.02, rot: -0.03 }), T('signature', 0.49, 0.91, 'Your teacher', { w: 0.44, al: 'right', c: K.ink, fs: 0.039 }));
+    return out;
+  } },
+  // ---- music theory, playful
+  { k: 'th-detective', cat: 'theory', label: 'Note detectives', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#f4f8fd', pat: '', a: 1 },
+      disc(0.83, 0.085, 0.13, '#ffffff', { lc: K.navy, lw: 0.007 }), shp('round', 0.905, 0.135, 0.07, 0.016, K.navy, { rot: 0.9 }), disc(0.83, 0.085, 0.1, K.sky, { a: 0.6 }), glyph('\uE1D5', 0.83, 0.083, 0.03, K.navy),
+      T('spaced', 0.07, 0.045, 'Music theory · case file', { w: 0.6, al: 'left', c: K.blue, fs: 0.016, ff: 'round', b: 1 }),
+      T('heading', 0.07, 0.068, 'Note detectives', { w: 0.66, al: 'left', ff: 'round', b: 1, fs: 0.056, c: K.ink })];
+    // case 1: a famous tune (Beethoven, Ode to Joy)
+    const q = (p) => ({ p, d: 'q' });
+    out.push(...qBadge(T, 0.07, 0.165, 1, K.blue), T('heading', 0.125, 0.167, 'Name the notes. Which famous tune is hiding here?', { w: 0.8, ff: 'avenir', b: 1, fs: 0.0185, c: K.ink }));
+    const tune = mus(0.07, 0.205, 0.86, { clef: 'treble', key: null, time: '4/4', ws: 66, notes: [q('E4'), q('E4'), q('F4'), q('G4'), BAR, q('G4'), q('F4'), q('E4'), q('D4'), BAR, q('C4'), q('C4'), q('D4'), q('E4'), BAR, { p: 'E4', d: 'q', dot: 1 }, { p: 'D4', d: '8' }, { p: 'D4', d: 'h' }, END] }, { f: K.ink });
+    out.push(tune); noteXs(tune).forEach((x, i) => out.push(disc(x, musBottom(tune) + 0.02, 0.036, '#ffffff', { lc: [K.coral, K.orange, K.teal, K.blue][Math.floor(i / 4) % 4], lw: 0.002 })));
+    let y = musBottom(tune) + 0.045;
+    out.push(rbox(0.5, y, 0.43, 0.05, '#ffffff', { lc: K.line, lw: 0.0012 }), T('body', 0.07, y + 0.012, 'The tune is called:', { w: 0.4, al: 'right', ff: 'avenir', i: 1, fs: 0.018, c: K.soft }));
+    y += 0.08;
+    // case 2: one bar has a beat too many
+    out.push(...qBadge(T, 0.07, y, 2, K.coral), T('heading', 0.125, y + 0.002, 'One bar has too many beats. Find it and circle it!', { w: 0.8, ff: 'avenir', b: 1, fs: 0.0185, c: K.ink }));
+    const h = { p: 'B4', d: 'h' }, e1 = { p: 'B4', d: '8', b: '[' }, e2 = { p: 'B4', d: '8', b: ']' }, qq = { p: 'B4', d: 'q' };
+    const rh = mus(0.07, y + 0.045, 0.86, { staff: 1, time: '4/4', ws: 66, notes: [qq, qq, h, BAR, e1, e2, qq, qq, qq, BAR, h, qq, qq, qq, BAR, { p: 'B4', d: 'w' }, END] }, { f: K.ink });
+    out.push(rh); y = musBottom(rh) + 0.045;
+    // case 3: words spelt in notes
+    out.push(...qBadge(T, 0.07, y, 3, K.teal), T('heading', 0.125, y + 0.002, 'Secret words: every note is a letter. Crack the code!', { w: 0.8, ff: 'avenir', b: 1, fs: 0.0185, c: K.ink }));
+    [['treble', ['B4', 'E4', 'A4', 'D4'], K.mint], ['bass', ['C3', 'A2', 'G2', 'E3'], K.sun], ['treble', ['F4', 'A4', 'C5', 'E5'], K.blush], ['bass', ['B2', 'A2', 'D3', 'G3', 'E3'], K.lilac]].forEach(([clef, ps, col], i) => {
+      const x = 0.07 + (i % 2) * 0.44, yy = y + 0.045 + Math.floor(i / 2) * 0.135;
+      out.push(rbox(x, yy, 0.42, 0.125, col));
+      const st = mus(x + 0.02, yy + 0.015, 0.38, { clef, key: null, ws: 34, notes: [...ps.map((p) => W1(p)), { bar: '||' }] }, { f: K.ink });
+      out.push(st); for (const cx of noteXs(st)) out.push(rule(cx - 0.016, musBottom(st) + 0.028, 0.032, K.ink, 0.0018));
+    });
+    out.push(elx('sparkles', 0.9, 0.955, 0.05, K.blue), T('note', 0.07, Math.max(y + 0.31, 0.93), 'Case closed? Signed, detective …', { w: 0.7, fs: 0.025, c: K.blue }));
+    return out;
+  } },
+  // ---- practice, more visual
+  { k: 'p-journal', cat: 'practice', label: 'Practice journal', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fbf7ef', pat: 'dots', a: 1 },
+      pic(0.3, 0.2, 0.34, 0.2, '', '#c9a88c', { fr: 'polaroid', rot: -0.06 }), washi(0.22, 0.085, 0.36, 0.08, K.teal, 'stripes'),
+      T('spaced', 0.56, 0.06, 'Practice journal', { w: 0.37, al: 'left', c: K.teal, fs: 0.016, ff: 'round', b: 1 }),
+      T('heading', 0.56, 0.085, 'Today', { w: 0.37, ff: 'round', b: 1, fs: 0.06, c: K.ink }),
+      T('note', 0.56, 0.16, 'date …', { w: 0.37, fs: 0.028, c: K.soft }),
+      disc(0.83, 0.3, 0.17, K.coral, { sh: 1 }), tcen(T, 'heading', 0.83, 0.293, 0.15, '30', { ff: 'round', b: 1, fs: 0.05, c: '#ffffff' }), T('spaced', 0.755, 0.312, 'minutes', { w: 0.15, c: '#ffffff', fs: 0.011, ff: 'round', b: 1 })];
+    out.push(rbox(0.07, 0.4, 0.86, 0.19, '#ffffff', { lc: K.line, lw: 0.0012 }), T('heading', 0.1, 0.42, 'I worked on', { w: 0.4, ff: 'round', b: 1, fs: 0.024, c: K.ink }),
+      T('checklist', 0.1, 0.465, 'Warm-up: long bows on open strings\nScale: G major, two octaves\nMy piece: the middle part, slowly', { w: 0.8, ff: 'avenir', fs: 0.019, lh: 1.75, c: K.ink }),
+      glyph('\uE050', 0.86, 0.47, 0.05, K.teal, { a: 0.35 }));
+    out.push(T('heading', 0.07, 0.625, 'It felt', { w: 0.3, ff: 'round', b: 1, fs: 0.024, c: K.ink }));
+    [['happy', K.sun], ['proud', K.peach], ['calm', K.mint], ['unsure', K.sky], ['tired', K.lilac]].forEach(([k, c], i) => out.push(...face(k, 0.3 + i * 0.13, 0.64, 0.09, c)));
+    out.push(T('sticky', 0.07, 0.72, 'Tomorrow I’ll try: the shift in bar 9, with the metronome at 60', { w: 0.44, fs: 0.022, rot: -0.025 }),
+      rbox(0.56, 0.71, 0.37, 0.16, K.sky), T('heading', 0.59, 0.725, 'One bar I’m proud of', { w: 0.31, ff: 'round', b: 1, fs: 0.019, c: K.ink }),
+      mus(0.59, 0.775, 0.31, { clef: 'treble', key: null, ws: 30, notes: [{ bar: '||' }] }, { f: K.ink }));
+    out.push(T('heading', 0.07, 0.905, 'My streak', { w: 0.2, ff: 'round', b: 1, fs: 0.02, c: K.ink }));
+    ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((d, i) => out.push(disc(0.3 + i * 0.09, 0.917, 0.06, i < 3 ? DEEP[i % 6] : '#ffffff', { lc: DEEP[i % 6], lw: 0.002 }), tcen(T, 'heading', 0.3 + i * 0.09, 0.917, 0.06, d, { ff: 'round', b: 1, fs: 0.017, c: i < 3 ? '#ffffff' : DEEP[i % 6] })));
+    return out;
+  } },
+  { k: 'p-vision', cat: 'practice', label: 'Music vision board', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fdf8f3', pat: '', a: 1 },
+      T('spaced', 0.07, 0.04, 'My year in music', { w: 0.5, al: 'left', c: K.berry, fs: 0.016, ff: 'round', b: 1 }),
+      T('outline', 0.07, 0.06, '2027', { w: 0.5, al: 'left', ff: 'futura', b: 1, fs: 0.11, c: K.berry, fc: '#fdf8f3' }),
+      pic(0.745, 0.17, 0.39, 0.25, 'arch', '#cf9f8a'),
+      rbox(0.07, 0.2, 0.42, 0.12, K.berry), T('heading', 0.1, 0.225, 'Learn my dream piece', { w: 0.36, ff: 'round', b: 1, fs: 0.03, c: '#ffffff', lh: 1.15 }),
+      pic(0.28, 0.465, 0.42, 0.24, 'round', '#9fb7c9', { rr: 0.2 }),
+      rbox(0.51, 0.32, 0.42, 0.14, K.sun), T('heading', 0.54, 0.335, 'A little every day', { w: 0.36, ff: 'round', b: 1, fs: 0.03, c: K.ink, lh: 1.15 }), T('body', 0.54, 0.41, '20 minutes, even on busy days', { w: 0.36, ff: 'avenir', fs: 0.016, c: K.ink }),
+      disc(0.72, 0.56, 0.36, K.teal), T('heading', 0.57, 0.52, 'Play in a real concert', { w: 0.3, al: 'center', ff: 'round', b: 1, fs: 0.03, c: '#ffffff', lh: 1.15 }),
+      elx('sparkles', 0.92, 0.47, 0.07, K.orange),
+      rbox(0.07, 0.6, 0.42, 0.1, K.lilac), T('heading', 0.1, 0.62, 'Join a summer orchestra', { w: 0.36, ff: 'round', b: 1, fs: 0.028, c: K.ink, lh: 1.15 }),
+      pic(0.24, 0.85, 0.34, 0.19, '', '#b7a6d3', { fr: 'polaroid', rot: -0.05 }), washi(0.17, 0.745, 0.3, 0.75, K.orange, 'dots'),
+      pic(0.66, 0.79, 0.25, 0.25 / 1.414, 'circle', '#e0b07e', { ol: K.orange, olw: 0.006 }),
+      T('note', 0.46, 0.925, 'Believe in the slow practice!', { w: 0.43, al: 'right', fs: 0.03, c: K.berry, rot: -0.04 }),
+      elx('heartline', 0.88, 0.8, 0.07, '', { lc: K.coral, lw: 0.003 })];
+    return out;
+  } },
+  { k: 'p-wish', cat: 'practice', label: 'Repertoire wish list', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#efe4d3', pat: 'dots', a: 1 },
+      T('heading', 0.07, 0.045, 'Pieces I dream of playing', { w: 0.86, al: 'center', ff: 'round', b: 1, fs: 0.046, c: K.ink }),
+      T('body', 0.1, 0.105, 'Pin a card for every piece you fall in love with. Colour the hearts: how much do you want it?', { w: 0.8, al: 'center', ff: 'avenir', fs: 0.0175, c: K.soft })];
+    const P = [['Saint-Saëns', 'The Swan', 'For a concert with the piano', K.blush, -0.04], ['J. S. Bach', 'Suite No. 1: Prélude', 'The one everyone knows', K.sun, 0.03], ['Fauré', 'Élégie', 'Big, dark and singing', K.lilac, 0.025],
+      ['Popper', 'Hungarian Rhapsody', 'One day, when my thumb position is ready', K.mint, -0.03], ['Elgar', 'Concerto in E minor', 'The dream of dreams', K.sky, -0.02], ['Piazzolla', 'Le Grand Tango', 'With a pianist friend', K.peach, 0.035]];
+    const tapes = [K.coral, K.teal, K.purple, K.orange, K.blue, K.berry];
+    P.forEach(([who, what, why, col, rot], i) => {
+      const x = 0.08 + (i % 2) * 0.44, y = 0.17 + Math.floor(i / 2) * 0.255, w = 0.4, h = 0.21, cx = x + w / 2;
+      const cardItems = [rbox(x, y, w, h, '#ffffff', { sh: 1 }), rbox(x + 0.015, y + 0.012, w - 0.03, 0.04, col),
+        T('spaced', x + 0.03, y + 0.024, who, { w: w - 0.06, al: 'left', c: K.ink, fs: 0.013, ff: 'round', b: 1 }),
+        T('heading', x + 0.03, y + 0.07, what, { w: w - 0.06, ff: 'baskerville', fs: 0.03, c: K.ink, lh: 1.1 }),
+        T('body', x + 0.03, y + 0.14, why, { w: w - 0.06, ff: 'avenir', i: 1, fs: 0.0165, c: K.soft })];
+      for (let k = 0; k < 3; k++) cardItems.push(shp('heart', x + w - 0.13 + k * 0.04, y + h - 0.025, 0.032, 0.032 / 1.414, k < 3 - (i % 3) ? K.coral : '#ffffff', { lc: K.coral, lw: 0.0015 }));
+      out.push(...turnAbout(cardItems, cx, y + h / 2, rot));
+      out.push(i % 2 ? washi(cx - 0.06, y - 0.004, cx + 0.06, y + 0.002, tapes[i], ['stripes', 'dots', 'grid'][i % 3]) : disc(cx, y + 0.004, 0.03, tapes[i], { sh: 1 }));
+    });
+    out.push(T('note', 0.07, 0.94, 'Next to learn: …', { w: 0.86, al: 'center', fs: 0.03, c: K.ink }));
+    return out;
+  } },
+  // ---- orchestra camp and quartet
+  { k: 'e-camp', cat: 'ensemble', label: 'Orchestra camp', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#cfe6f7', c2: '#fdf3e1', pat: '', a: 1 },
+      elx('sun', 0.85, 0.08, 0.18, K.orange), shp('cloud', 0.15, 0.08, 0.2, 0.07, '#ffffff', { a: 0.9 }),
+      T('arc', 0.1, 0.05, 'String orchestra camp', { w: 0.8, ff: 'round', b: 1, fs: 0.042, c: K.navy, ls: 0.04, curve: 30 }),
+      T('spaced', 0.1, 0.175, 'Summer 2027 · one week of music', { w: 0.8, c: K.coral, fs: 0.016, ff: 'round', b: 1 })];
+    [[0.2, 0.33, -0.08, K.coral, '#e2a98e'], [0.5, 0.31, 0.04, K.teal, '#93c2b7'], [0.8, 0.34, 0.07, K.purple, '#b3a5d9']].forEach(([x, y, r, tc, f], i) => {
+      out.push(pic(x, y, 0.26, 0.15, '', f, { fr: 'polaroid', rot: r }), washi(x - 0.05, y - 0.105, x + 0.05, y - 0.1 + (i - 1) * 0.008, tc, ['stripes', 'dots', 'grid'][i]));
+    });
+    out.push(T('note', 0.1, 0.455, 'first rehearsal · lake day · final concert', { w: 0.8, al: 'center', fs: 0.026, c: K.navy }));
+    // the day
+    out.push(rbox(0.07, 0.51, 0.5, 0.36, '#ffffff', { sh: 1 }), T('heading', 0.1, 0.525, 'A day at camp', { w: 0.44, ff: 'round', b: 1, fs: 0.026, c: K.ink }));
+    [['8.30', 'Breakfast & warm-up', K.orange], ['9.30', 'Sectionals', K.teal], ['14.00', 'Full orchestra', K.blue], ['16.30', 'Games & swimming', K.coral], ['20.00', 'Evening concert', K.purple]].forEach(([t, w, c], i) => {
+      const y = 0.575 + i * 0.056;
+      out.push(rbox(0.1, y, 0.1, 0.036, c), tcen(T, 'heading', 0.15, y + 0.018, 0.1, t, { ff: 'round', b: 1, fs: 0.016, c: '#ffffff' }), T('body', 0.22, y + 0.007, w, { w: 0.33, ff: 'avenir', fs: 0.018, c: K.ink }));
+    });
+    // what to bring, on a scrap of paper
+    out.push(shp('torn', 0.765, 0.665, 0.36, 0.29, '#fffdf8', { sh: 1, rot: 0.035 }), washi(0.71, 0.525, 0.82, 0.53, K.sun, 'dots'),
+      T('heading', 0.61, 0.555, 'Pack it!', { w: 0.3, ff: 'round', b: 1, fs: 0.026, c: K.ink, rot: 0.035 }),
+      T('checklist', 0.61, 0.6, 'Instrument & bow\nRosin, spare strings\nMusic & a pencil\nMusic stand\nSun hat, swimsuit', { w: 0.31, ff: 'avenir', fs: 0.018, lh: 1.7, c: K.ink, rot: 0.035 }));
+    out.push(elx('violin', 0.12, 0.93, 0.06, '#b5653a', { g: 1, g2: '#7a3e1f', rot: -0.5 }), elx('cello', 0.9, 0.92, 0.065, '#b5653a', { g: 1, g2: '#7a3e1f', rot: 0.35 }),
+      T('note', 0.2, 0.9, 'Friends, music and a lot of fun!', { w: 0.6, al: 'center', fs: 0.03, c: K.navy }));
+    return out;
+  } },
+  { k: 'e-quartet', cat: 'ensemble', label: 'Quartet rehearsal', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, box(0, 0, 1, 0.2, K.navy),
+      T('spaced', 0.07, 0.04, 'String quartet', { w: 0.5, al: 'left', c: K.sun, fs: 0.016, ff: 'round', b: 1 }),
+      T('heading', 0.07, 0.065, 'Rehearsal plan', { w: 0.6, ff: 'round', b: 1, fs: 0.055, c: '#ffffff' }),
+      T('body', 0.07, 0.135, 'Thursday · 18.00–20.30 · at Anna’s', { w: 0.6, ff: 'avenir', fs: 0.019, c: '#c9d2e6' }),
+      elx('quavers', 0.86, 0.1, 0.07, K.sun, { rot: 0.15 })];
+    const P = [['Violin I', 'Name', K.coral], ['Violin II', 'Name', K.orange], ['Viola', 'Name', K.teal], ['Cello', 'Name', K.blue]];
+    P.forEach(([part, n, c], i) => {
+      const cx = 0.16 + i * 0.227;
+      out.push(disc(cx, 0.23, 0.15, c, { lc: '#ffffff', lw: 0.004 }), pic(cx, 0.23, 0.13, 0.13 / 1.414, 'circle', PALE[i]),
+        T('heading', cx - 0.1, 0.29, part, { w: 0.2, al: 'center', ff: 'round', b: 1, fs: 0.019, c: c }), T('body', cx - 0.1, 0.316, n, { w: 0.2, al: 'center', ff: 'avenir', fs: 0.017, c: K.soft }));
+    });
+    out.push(T('spaced', 0.07, 0.355, 'The plan', { w: 0.86, al: 'left', c: K.soft, fs: 0.014, ff: 'round', b: 1 }));
+    const R = [['18.00', '15′', 'Tune & a slow chorale', 'Listen for the viola in the middle', K.sun], ['18.15', '45′', 'Haydn, first movement', 'Bars 1–40: the same bow length for the opening chords', K.mint], ['19.00', '10′', 'Break', 'Tea and biscuits', '#f1f1f1'],
+      ['19.10', '50′', 'Dvořák “American”, slow movement', 'The cello solo with the violin II; dynamics in bars 18–30', K.sky], ['20.00', '30′', 'Play-through, recorded', 'No stopping. Listen back together', K.blush]];
+    R.forEach(([t, d, h, sub, c], i) => {
+      const y = 0.38 + i * 0.09;
+      out.push(T('heading', 0.07, y + 0.012, t, { w: 0.12, ff: 'round', b: 1, fs: 0.02, c: K.ink }), T('body', 0.07, y + 0.042, d, { w: 0.12, ff: 'avenir', fs: 0.015, c: K.soft }),
+        rbox(0.2, y, 0.73, 0.075, c), T('heading', 0.23, y + 0.012, h, { w: 0.66, ff: 'avenir', b: 1, fs: 0.019, c: K.ink }), T('body', 0.23, y + 0.042, sub, { w: 0.66, ff: 'avenir', fs: 0.0155, c: K.ink }));
+    });
+    out.push(rbox(0.07, 0.84, 0.42, 0.12, '#ffffff', { lc: K.line, lw: 0.0012 }), T('heading', 0.1, 0.852, 'Tricky spots', { w: 0.36, ff: 'round', b: 1, fs: 0.019, c: K.ink }),
+      glyph('\uE4C0', 0.12, 0.915, 0.025, K.coral), T('body', 0.15, 0.903, 'bar 64: who leads the fermata?', { w: 0.32, ff: 'avenir', fs: 0.0155, c: K.ink }),
+      rbox(0.51, 0.84, 0.42, 0.12, K.navy), T('heading', 0.54, 0.852, 'Next time', { w: 0.36, ff: 'round', b: 1, fs: 0.019, c: '#ffffff' }),
+      T('checklist', 0.54, 0.885, 'Bring the Haydn parts\nBook the hall', { w: 0.36, ff: 'avenir', fs: 0.0155, lh: 1.6, c: '#ffffff' }));
+    return out;
+  } },
+  // ---- a concert poster and a thank-you card
+  { k: 'c-bold', cat: 'concert', label: 'Bold poster', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#1d2340', pat: '', a: 1 },
+      disc(0.86, 0.17, 0.78, K.coral), disc(0.1, 0.6, 0.2, K.orange),
+      shp('arch', 0.6, 0.4, 0.56, 0.44, '', { lc: '#fbe3a1', lw: 0.003 }),
+      pic(0.57, 0.38, 0.56, 0.44, 'arch', '#c98f78', { fr: 'shadow' }),
+      elx('sparkles', 0.18, 0.2, 0.13, '#fbe3a1'), glyph('\uE050', 0.13, 0.4, 0.07, '#fbe3a1', { a: 0.8 }),
+      T('spaced', 0.07, 0.045, 'Live in concert', { w: 0.5, al: 'left', c: '#fbe3a1', fs: 0.017 }),
+      T('poster', 0.06, 0.635, 'Cello & piano', { w: 0.88, al: 'left', fs: 0.105, c: '#ffffff' }),
+      T('elegant', 0.07, 0.735, 'Bach · Schumann · Fauré · Brahms', { w: 0.86, al: 'left', fs: 0.03, c: '#fbe3a1', ls: 0 }),
+      rbox(0.07, 0.81, 0.55, 0.12, '#fbe3a1'),
+      T('heading', 0.1, 0.825, 'Saturday 14 June', { w: 0.5, ff: 'avenir', b: 1, fs: 0.032, c: '#1d2340' }),
+      T('body', 0.1, 0.875, '7.30 pm · Concert Hall', { w: 0.5, ff: 'avenir', fs: 0.021, c: '#1d2340' }),
+      shp('burst', 0.8, 0.86, 0.24, 0.24 / 1.414, K.coral, { rot: 0.2 }),
+      tcen(T, 'heading', 0.8, 0.86, 0.17, 'Free entry', { ff: 'avenir', b: 1, fs: 0.025, c: '#ffffff', rot: -0.15 })];
+    return out;
+  } },
+  { k: 'c-thanks', cat: 'concert', label: 'Thank-you card, with photo', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fbeee9', pat: '', a: 1 },
+      shp('blob', 0.5, 0.31, 0.58, 0.34, '#f6d3c8', { rot: 0.4 }),
+      pic(0.5, 0.3, 0.42, 0.42 / 1.414, 'circle', '#d9a596', { ol: '#ffffff', olw: 0.01 }),
+      elx('sprig', 0.2, 0.36, 0.1, '#7d9b76', { rot: -0.5 }), elx('sprig', 0.8, 0.36, 0.1, '#7d9b76', { rot: 0.5 }),
+      elx('sparkles', 0.8, 0.14, 0.09, K.berry), elx('sparkle', 0.2, 0.13, 0.05, K.berry),
+      T('signature', 0.08, 0.5, 'Thank you', { w: 0.84, c: '#7a2f3f', fs: 0.11 }),
+      T('spaced', 0.1, 0.65, 'for being part of our concert', { w: 0.8, c: K.berry, fs: 0.016, ff: 'round', b: 1 }),
+      T('body', 0.15, 0.695, 'Your listening, your clapping and your kind words made the evening. We hope to see you next time!', { w: 0.7, al: 'center', ff: 'avenir', fs: 0.02, c: '#5a3a40', lh: 1.5 }),
+      elx('heartline', 0.5, 0.82, 0.08, '', { lc: K.berry, lw: 0.003 }),
+      T('heading', 0.1, 0.87, 'Your Name & friends', { w: 0.8, al: 'center', ff: 'baskerville', fs: 0.026, c: '#5a3a40' })];
+    return out;
+  } },
+];
+LAYOUTS.unshift(...KID_LAYOUTS);
 function tb(style, x, y, txt, extra = {}) { return measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }); }
-const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['teach', 'Teaching'], ['theory', 'Music theory'], ['ensemble', 'Ensembles and gigs'], ['social', 'For sharing']];
+const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['teach', 'Teaching'], ['games', 'Games and cards'], ['theory', 'Music theory'], ['ensemble', 'Ensembles and gigs'], ['social', 'For sharing']];
 // Every layout in other colours: the same design, its paper, ink and accent moved together to another
 // family (or turned to dark paper). nh/ns: the hue and strength the neutral colours (paper, ink,
 // rules) take; ah/as: the hue and strength of the accents; inv: light ink on dark paper.
@@ -5767,14 +6201,17 @@ function palColour(c, P) {
   else { const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\)$/i.exec(c); if (!m) return c; rgb = [m[1] / 255, m[2] / 255, m[3] / 255]; a = m[4] !== undefined ? +m[4] : null; }
   let [h, s, l] = rgbHsl(rgb);
   const neutral = s < 0.22 || l > 0.9 || l < 0.12 || (l > 0.74 && s < 0.5);
+  const l0 = l;
   if (P.inv && !P.keepDark) l = 1 - l * 0.94;
   if (neutral) { h = P.nh; s = P.ns * (l > 0.85 || l < 0.15 ? 0.6 : 1); }
-  else { h = P.ah; s = Math.min(1, P.as * (0.6 + s * 0.6)); if (P.inv && !P.keepDark && l < 0.45) l = 0.62; }
+  // (a pale, coloured block turns into a deep one on dark paper, so the words on it, which turn
+  // light, can still be read; other colours keep a middle lightness)
+  else { h = P.ah; s = Math.min(1, P.as * (0.6 + s * 0.6)); if (P.inv && !P.keepDark && l < 0.45) l = l0 > 0.76 ? 0.24 : 0.62; }
   const hex = hslHex(h, s, l);
   if (a === null) return hex;
   const [r, g, b] = hexRgb(hex).map((x) => Math.round(x * 255)); return `rgba(${r},${g},${b},${a})`;
 }
-const PAL_KEYS = ['f', 'c', 'c2', 'lc', 'bg', 'g2', 'sc', 'oc', 'hc'];
+const PAL_KEYS = ['f', 'c', 'c2', 'lc', 'bg', 'g2', 'sc', 'oc', 'hc', 'ol'];
 // The type of a layout, in families that go together (as a design app's themes): headings and text
 // set in one pair of typefaces. "As designed" leaves each layout as it was drawn.
 const LAY_FONTS = [
@@ -5867,7 +6304,8 @@ const lgGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || d);
 function drawLayoutInto(c, L) {
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   for (const it0 of inFonts(inPalette(L.make()), layFont, !!L.land)) {
-    const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { t: 'shape', k: it0.mask || (it0.rr ? 'round' : 'rect'), x: it0.x, y: it0.y, w: it0.w, h: it0.h, rot: it0.rot, f: '#d9c7b4', g: 1, g2: '#8fa7bd', a: 1 } : it0;
+    // (an empty photo place: its soft picture, without the "Add photo" sign)
+    const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { ...it0, pv: 1 } : it0;
     drawItem(g, it, c.width, c.height, false);
   }
   c.dataset.drawn = layPal + '|' + layFont;
@@ -5965,11 +6403,13 @@ function openLayGallery() {
   $('#layGal').hidden = false; lgCounts(); lgRender(); translatePage();
 }
 globalThis.__layouts = LAYOUTS; globalThis.__inPalette = inPalette; globalThis.__layGallery = openLayGallery;
+// (tests: a layout drawn as its page will look, empty photo places and all, in the colours and type given)
+globalThis.__layDraw = async (c, k, pal = 'cream', font = 'design') => { await loadMusicFont(); const L = LAYOUTS.find((x) => x.k === k); const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it of inFonts(inPalette(L.make(), pal), font, !!L.land)) drawItem(g, it, c.width, c.height, false); };
 async function drawLayoutThumbs() {
   await loadMusicFont();
   $$('#insLayouts canvas').forEach((c, i) => { const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it0 of inFonts(inPalette(LAYOUTS[i].make()), layFont, !!LAYOUTS[i].land)) {
     // empty photo places show as a soft picture in the little previews
-    const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { t: 'shape', k: it0.mask || (it0.rr ? 'round' : 'rect'), x: it0.x, y: it0.y, w: it0.w, h: it0.h, rot: it0.rot, f: '#d9c7b4', g: 1, g2: '#8fa7bd', a: 1 } : it0;
+    const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { ...it0, pv: 1 } : it0;
     drawItem(g, it, c.width, c.height, false);
   } });
 }
