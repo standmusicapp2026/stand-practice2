@@ -2124,7 +2124,12 @@ function renderPage(i, w, h, zoom = 1, prio = 0) {
   // (never the pages on the stand now, nor the one just asked for: one of them let go while it was
   // being put on the page came out white, after the music had shown)
   const onStand = (k) => { const pi = +k.split('|')[0]; return k === key || (pi >= V.page && pi < V.page + (V.spread || 1)); };
-  for (const k of [...V.cache.keys()]) {
+  // (the pages farthest from the stand go first, not the ones drawn longest ago: going forward, the
+  // pages just left were let go and drawn again a moment later as the pages behind, half a second
+  // each, and turning through a score with two pages showing waited for it)
+  const far = (k) => { const pi = +k.split('|')[0]; const a = V.page, b = V.page + (V.spread || 1) - 1; return pi < a ? a - pi : pi > b ? pi - b : 0; };
+  const order = (globalThis.__evictFar ?? true) ? [...V.cache.keys()].map((k, n) => [k, n]).sort((x, y) => far(y[0]) - far(x[0]) || x[1] - y[1]).map((x) => x[0]) : [...V.cache.keys()];
+  for (const k of order) {
     if (!(V.cache.size > 2 && (V.cache.size > (phone ? 4 : 6) || total > (phone ? 8e6 : 20e6)))) break;
     if (onStand(k)) continue;
     total -= pxOf(k); const old = V.cache.get(k); V.cache.delete(k); old.then((c) => { INCACHE.delete(c); freeCanvas(c); }, () => {});

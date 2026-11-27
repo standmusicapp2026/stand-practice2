@@ -239,6 +239,7 @@ async function openDocumentOne(file, known) {
     // (one queue for the whole app: the same scan open twice — on the stand and for the iPhone —
     // never draws two of its pages at once either)
     let heavy = !!(fid && HEAVY.fids.has(fid)), gone = false, lightening = false, lightHave = null, cur = 0;
+    const lightOk = new Set(), pixOk = new Set();
     const lightenAll = async () => {
       if (lightening || !fid || gone || HEAVY.lightening.has(fid)) return; lightening = true; HEAVY.lightening.add(fid);
       try {
@@ -280,7 +281,7 @@ async function openDocumentOne(file, known) {
         if (!gone) try { pdf.getPage(old + 1).then((pg) => { if (!(drawing.get(old) > 0)) pg.cleanup(); }).catch(() => {}); } catch {}
       }
     };
-    return {
+    const D = {
       pages: pdf.numPages, sizes, pdf,
       // the page's music as the PDF wrote it (signs of a music font, stems and beams), in the frame of
       // a picture of it w × h; nothing for a page without (a scan)
@@ -307,12 +308,15 @@ async function openDocumentOne(file, known) {
           const lb = lightHave.has(i) ? await lightGet(fid, i) : null;
           if (lb) {
             try {
-              const bmp = await createImageBitmap(lb);
+              // (decoded straight at the size shown when it is smaller: a light copy decoded whole and
+              // then made smaller took half a second a page on an iPad, and turning quickly waited for it)
+              const bmp = await fastBitmap(lb, W, H);
               canvas.width = W; canvas.height = H;
               const g = canvas.getContext('2d', { alpha: false });
               g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, W, H); if (bmp.close) bmp.close();
-              // (a white copy kept by mistake: thrown away, the page drawn from the original)
-              if (!looksBlank(canvas)) return;
+              // (a white copy kept by mistake: thrown away, the page drawn from the original; looked at
+              // once per page, not at every turn: reading the picture back is slow)
+              if (lightOk.has(i) || !looksBlank(canvas)) { lightOk.add(i); return; }
               lightHave.delete(i); lightDel(fid, i);
             } catch { /* drawn from the original below */ }
           }
@@ -327,7 +331,7 @@ async function openDocumentOne(file, known) {
               canvas.width = W; canvas.height = H;
               const g = canvas.getContext('2d', { alpha: false });
               g.drawImage(bmp, 0, 0, W, H); if (bmp.close) bmp.close();
-              if (!looksBlank(canvas)) return;
+              if (pixOk.has(key) || !looksBlank(canvas)) { pixOk.add(key); return; }
               pixDel(key);
             } catch { /* drawn again below */ }
           }
@@ -433,6 +437,9 @@ async function openDocumentOne(file, known) {
       },
       destroy() { gone = true; pdf.destroy(); },
     };
+    // (tests: how long each page takes to draw)
+    if (globalThis.__renderLog) { const r0 = D.render; D.render = async function (i, c, w, h, o) { const t0 = performance.now(); try { return await r0.call(this, i, c, w, h, o); } finally { globalThis.__renderLog.push([i, Math.round(w), Math.round(t0), Math.round(performance.now() - t0), heavy ? 'H' : '', lightHave && lightHave.has(i) ? 'L' : '']); } }; }
+    return D;
   }
   // Photos and scans: decode only the pages being shown (a few at a time), so a long scan
   // never holds every full-size photo in memory.
@@ -488,6 +495,17 @@ async function openDocumentOne(file, known) {
 // stopped half way), never something to keep
 // A page that came out white, with no ink at all (iOS short of memory draws a scan's picture as
 // nothing): never kept, and one kept before is thrown away and drawn again.
+// a picture decoded at the size it is shown (when smaller), where the browser can
+async function fastBitmap(blob, W, H) {
+  if ((globalThis.__fastBmp ?? true) && W > 0 && H > 0) {
+    try {
+      const b = await createImageBitmap(blob, { resizeWidth: W, resizeHeight: H, resizeQuality: 'high' });
+      if (b.width === W && b.height === H) return b;
+      if (b.close) b.close();
+    } catch {}
+  }
+  return createImageBitmap(blob);
+}
 export function looksBlank(src, w = 64, h = 88) {
   try {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
