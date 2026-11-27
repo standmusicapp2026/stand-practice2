@@ -2717,3 +2717,28 @@ body:not(.phone) .dock .media-pill { min-width: 280px; }
   .seg .sd-glyph { font-size: 18px; }
   .sd-clefs button { padding: 0 6px; font-size: 12.5px; }
 }
+
+/* Smart guides (js/guides.js): pink lines to what a thing lines up with and pink spans for equal
+   gaps with their size, as in a design app. Over the page, never in the way of a finger. */
+.sguides { position: absolute; inset: 0; z-index: 6; pointer-events: none; --pink: #ff2d87; }
+.sg-line { position: absolute; background: var(--pink); }
+.sg-line.x { width: calc(1px * var(--inv, 1)); margin-left: calc(-0.5px * var(--inv, 1)); }
+.sg-line.y { height: calc(1px * var(--inv, 1)); margin-top: calc(-0.5px * var(--inv, 1)); }
+.sg-line.mid.x { width: calc(1.5px * var(--inv, 1)); } .sg-line.mid.y { height: calc(1.5px * var(--inv, 1)); }
+.sg-gap { position: absolute; }
+.sg-gap.x { height: 0; border-top: calc(1px * var(--inv, 1)) solid var(--pink); }
+.sg-gap.y { width: 0; border-left: calc(1px * var(--inv, 1)) solid var(--pink); }
+.sg-gap.x::before, .sg-gap.x::after { content: ''; position: absolute; top: calc(-6px * var(--inv, 1)); height: calc(11px * var(--inv, 1)); width: calc(1px * var(--inv, 1)); background: var(--pink); }
+.sg-gap.x::before { left: 0; } .sg-gap.x::after { right: 0; }
+.sg-gap.y::before, .sg-gap.y::after { content: ''; position: absolute; left: calc(-6px * var(--inv, 1)); width: calc(11px * var(--inv, 1)); height: calc(1px * var(--inv, 1)); background: var(--pink); }
+.sg-gap.y::before { top: 0; } .sg-gap.y::after { bottom: 0; }
+.sg-num { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(var(--inv, 1)); padding: 2px 7px; border-radius: 9px; background: var(--pink); color: #fff; font: 700 11.5px var(--font); white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+/* (the size just under its span, or beside it, clear of the handles) */
+.sg-gap.x .sg-num { top: calc(16px * var(--inv, 1)); }
+.sg-gap.y .sg-num { left: calc(30px * var(--inv, 1)); }
+.sel-angle.snap { background: #ff2d87; color: #fff; }
+/* the bar steps out of the way while something is dragged, as in a design app */
+.sel-bar.dragging { opacity: 0; pointer-events: none; transition: opacity .12s; }
+.sel-box.small .sel-side { display: none; }
+.sel-angle-f { position: fixed; z-index: 13; transform: translate(-50%, -100%); padding: 6px 12px; border-radius: 14px; background: var(--ink); color: var(--surface-solid); font: 700 15px var(--font); pointer-events: none; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.sel-angle-f.snap { background: #ff2d87; color: #fff; }

@@ -17,6 +17,7 @@ import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInf
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath, tbIndent, tbCssBaseline, tbPad } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
+import { snapMove, guidesFor, distribute } from './guides.js';
 import { engrave } from './engrave.js';
 import { openScaleDialog, scaleItemMusic, autoOctave } from './scaledlg.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
@@ -4118,6 +4119,9 @@ function placeSelection() {
     Object.assign(Sel.el.style, { left: (f.cx - f.w / 2) * 100 + '%', top: (f.cy - f.h / 2) * 100 + '%', width: f.w * 100 + '%', height: f.h * 100 + '%', transform: f.rot ? `rotate(${f.rot}rad)` : '' });
   } else Object.assign(Sel.el.style, { left: b.x0 * 100 + '%', top: b.y0 * 100 + '%', width: (b.x1 - b.x0) * 100 + '%', height: (b.y1 - b.y0) * 100 + '%', transform: '' });
   Sel.el.style.setProperty('--inv', 1 / Z.s);
+  // something small on screen: no side handles (they would cover it, and it could not be dragged by
+  // its middle), as in a design app; the corners still resize it
+  { const r0 = Sel.el.getBoundingClientRect(); Sel.el.classList.toggle('small', Math.min(r0.width, r0.height) < 64 || Math.max(r0.width, r0.height) < 110); }
   // the bar floats above the page (never cut off by the page's edge), clear of the tools at the
   // top and of the screen's edges: above the selection, else below it, else inside its top
   const bar = Sel.bar; if (!bar) return;
@@ -4227,7 +4231,7 @@ function makeSelection(entry, idx) {
     };
     const opp = { nw: 'se', ne: 'sw', sw: 'ne', se: 'nw' };
     drag = { mode: c ? (c === 'rot' ? 'rot' : c === 'e' || c === 'w' ? 'width' : Sel.crop ? 'crop' : 'scale') : 'move', c, r, PS, b0, p0: pagePx(e, r), items: Sel.idx.map((i) => entry.layer.items[i]) };
-    if (c && c !== 'rot') { drag.C = corner(c); drag.A = corner(opp[c]); }
+    if (opp[c]) { drag.C = corner(c); drag.A = corner(opp[c]); }   // (the corners: the side handles need neither)
     drag.f0 = f0;
     // turning: about the middle of the thing, following the finger round
     if (c === 'rot') { drag.rx = (f0 ? f0.cx : (b0.x0 + b0.x1) / 2) * PS[0]; drag.ry = (f0 ? f0.cy : (b0.y0 + b0.y1) / 2) * PS[1]; drag.a0 = Math.atan2(drag.p0[1] - drag.ry, drag.p0[0] - drag.rx); drag.rot0 = (drag.items[0].rot || 0); }
@@ -4236,19 +4240,27 @@ function makeSelection(entry, idx) {
     const PS = d.PS, dx = (P[0] - d.p0[0]) / PS[0], dy = (P[1] - d.p0[1]) / PS[1];
     if (d.mode === 'move') {
       // pink guides, like a design app: the edges and middles of the things around it, the middle
-      // and the margins of the page pull the selection into line
-      if (!d.lines) d.lines = snapLines(entry, Sel.idx);
-      const b = { x0: d.b0.x0 + dx, x1: d.b0.x1 + dx, y0: d.b0.y0 + dy, y1: d.b0.y1 + dy };
-      const sx = snapAxis([b.x0, (b.x0 + b.x1) / 2, b.x1], d.lines.x, 7 / PS[0]);
-      const sy = snapAxis([b.y0, (b.y0 + b.y1) / 2, b.y1], d.lines.y, 7 / PS[1]);
-      const mx = dx + (sx ? sx.d : 0), my = dy + (sy ? sy.d : 0);
-      showGuides(entry, sx ? sx.at : null, sy ? sy.at : null);
-      return d.items.map((s) => transformItem(s, mx, my, 1, 0, 0));
+      // and the margins of the page, and equal gaps between neighbours pull the selection into line
+      if (!d.others) d.others = otherBoxes(entry, Sel.idx, PS);
+      const b = pxBox({ x0: d.b0.x0 + dx, x1: d.b0.x1 + dx, y0: d.b0.y0 + dy, y1: d.b0.y1 + dy }, PS);
+      const sn = snapMove(b, d.others, PS[0], PS[1], SNAP_REACH);
+      return d.items.map((s) => transformItem(s, dx + sn.dx / PS[0], dy + sn.dy / PS[1], 1, 0, 0));
     }
     if (d.mode === 'scale') {
       const vx = d.C[0] - d.A[0], vy = d.C[1] - d.A[1];
-      const k = clamp(((P[0] - d.A[0]) * vx + (P[1] - d.A[1]) * vy) / (vx * vx + vy * vy || 1), 0.08, 10);
-      return d.items.map((s) => transformItem(s, 0, 0, k, d.A[0] / PS[0], d.A[1] / PS[1]));
+      let k = clamp(((P[0] - d.A[0]) * vx + (P[1] - d.A[1]) * vy) / (vx * vx + vy * vy || 1), 0.08, 10);
+      const at = (kk) => d.items.map((s) => transformItem(s, 0, 0, kk, d.A[0] / PS[0], d.A[1] / PS[1]));
+      // resizing also lands on the guides: the edges the corner drags (the others stay put). The
+      // box grows about the fixed corner, so an edge's distance from it grows with the size: the
+      // size that puts that edge on a line is found by simple proportion.
+      if (!d.others) d.others = otherBoxes(entry, Sel.idx, PS);
+      const bb = pxBox(boundsOf(at(k)), PS), ex = d.c.includes('w') ? 0 : 2, ey = d.c.includes('n') ? 0 : 2;
+      const sx = snapMove(bb, d.others, PS[0], PS[1], SNAP_REACH, [ex], []).dx, sy = snapMove(bb, d.others, PS[0], PS[1], SNAP_REACH, [], [ey]).dy;
+      const edgeX = ex ? bb.x1 : bb.x0, edgeY = ey ? bb.y1 : bb.y0;
+      const kx = sx && Math.abs(edgeX - d.A[0]) > 4 ? k * (edgeX + sx - d.A[0]) / (edgeX - d.A[0]) : null;
+      const ky = sy && Math.abs(edgeY - d.A[1]) > 4 ? k * (edgeY + sy - d.A[1]) / (edgeY - d.A[1]) : null;
+      if (kx && (!ky || Math.abs(sx) <= Math.abs(sy))) k = kx; else if (ky) k = ky;
+      return at(clamp(k, 0.08, 10));
     }
     if (d.mode === 'rot') {
       // the angle the finger has gone round the middle (unwrapped, so it never jumps a full turn)
@@ -4257,9 +4269,10 @@ function makeSelection(entry, idx) {
       while (a - (d.lastA || 0) < -Math.PI) a += 2 * Math.PI;
       d.lastA = a;
       const s0 = d.items[0], tot = d.rot0 + a;
-      // a pull towards straight (every 45°), like a design app
+      // a pull towards straight (every 45°), like a design app; the angle badge turns pink there
       const q = Math.round(tot / (Math.PI / 4)) * (Math.PI / 4);
       const rot = Math.abs(tot - q) < 0.05 ? q : tot;
+      d.straight = rot === q;
       d.deg = Math.round(((rot * 180 / Math.PI) % 360 + 360) % 360);
       return [{ ...s0, rot: +rot.toFixed(4) }];
     }
@@ -4268,15 +4281,21 @@ function makeSelection(entry, idx) {
     const rot0 = d.items[0] && d.items[0].rot ? d.items[0].rot : 0;
     const along = ((P[0] - d.p0[0]) * Math.cos(rot0) + (P[1] - d.p0[1]) * Math.sin(rot0)) / PS[0];
     if (d.mode === 'width' && d.items[0].t === 'shape') {
-      const s0 = d.items[0], nw = clamp(s0.w + (d.c === 'e' ? along : -along) * 2, 0.02, 2);
+      const s0 = d.items[0]; let nw = clamp(s0.w + (d.c === 'e' ? along : -along) * 2, 0.02, 2);
+      // (straight shapes: the side dragged lands on the guides; both sides move, the middle stays)
+      if (!rot0) { if (!d.others) d.others = otherBoxes(entry, Sel.idx, PS); const sx = snapMove(pxBox(boundsOf([{ ...s0, w: nw }]), PS), d.others, PS[0], PS[1], SNAP_REACH, [d.c === 'e' ? 2 : 0], []).dx; nw = clamp(nw + (d.c === 'e' ? 2 : -2) * sx / PS[0], 0.02, 2); }
       return [{ ...s0, w: nw }];
     }
     if (d.mode === 'width') {
       // the sides change how wide the box is; the words flow to fit (the box keeps its middle when turned)
       const s0 = d.items[0];
       if (rot0) { const nw = clamp(s0.w + (d.c === 'e' ? along : -along), 0.06, 1.2); const t = measureTextBox({ ...s0, w: nw }); return [{ ...t, x: s0.x + (s0.w - nw) / 2, y: s0.y + ((s0.h || 0.04) - t.h) / 2 }]; }
-      if (d.c === 'e') return [measureTextBox({ ...s0, w: clamp(s0.w + along, 0.06, 1.2) })];
-      const nw = clamp(s0.w - along, 0.06, 1.2); return [measureTextBox({ ...s0, x: s0.x + (s0.w - nw), w: nw })];
+      // (the side dragged lands on the guides)
+      if (!d.others) d.others = otherBoxes(entry, Sel.idx, PS);
+      const edge = (t) => snapMove(pxBox({ x0: t.x, x1: t.x + t.w, y0: t.y, y1: t.y + (t.h || 0.04) }, PS), d.others, PS[0], PS[1], SNAP_REACH, [d.c === 'e' ? 2 : 0], []).dx / PS[0];
+      if (d.c === 'e') { const w1 = clamp(s0.w + along, 0.06, 1.2); return [measureTextBox({ ...s0, w: clamp(w1 + edge({ ...s0, w: w1 }), 0.06, 1.2) })]; }
+      let nw = clamp(s0.w - along, 0.06, 1.2); nw = clamp(nw - edge({ ...s0, x: s0.x + (s0.w - nw), w: nw }), 0.06, 1.2);
+      return [measureTextBox({ ...s0, x: s0.x + (s0.w - nw), w: nw })];
     }
     return d.items;
   };
@@ -4296,9 +4315,20 @@ function makeSelection(entry, idx) {
     let bb = null; for (const it of drag.out) { const q = itemBounds(it); bb = bb ? { x0: Math.min(bb.x0, q.x0), y0: Math.min(bb.y0, q.y0), x1: Math.max(bb.x1, q.x1), y1: Math.max(bb.y1, q.y1) } : q; }
     Sel.box = bb; if (drag.f0 && drag.out.length === 1) Sel.fr = frameOf(drag.out[0]);
     placeSelection();
+    // the guides it sits on now (none while turning: the angle says it all)
+    if (drag.others && !other && drag.mode !== 'rot') drawGuides(entry, guidesFor(pxBox(bb, drag.PS), drag.others, drag.PS[0], drag.PS[1]), drag.PS); else hideGuides(entry);
+    if (Sel.bar) Sel.bar.classList.add('dragging');
     // the angle while turning
     const ang = Sel.el && Sel.el.querySelector('.sel-angle');
-    if (drag.mode === 'rot' && ang) { ang.hidden = false; ang.textContent = drag.deg + '°'; ang.style.transform = `translate(-50%, -50%) rotate(${-(Sel.fr ? Sel.fr.rot : 0)}rad) scale(var(--inv, 1))`; }
+    // (the angle floats over everything, just above the finger, so neither the finger nor the
+    // thing being turned covers it; pink when it is held straight)
+    if (drag.mode === 'rot') {
+      let badge = $('#selAngle'); if (!badge) { badge = el('div', 'sel-angle-f num'); badge.id = 'selAngle'; $('#score').append(badge); }
+      badge.hidden = false; badge.textContent = drag.deg + '°'; badge.classList.toggle('snap', !!drag.straight);
+      badge.style.left = drag.cx + 'px'; badge.style.top = Math.max(70, drag.cy - 64) + 'px';
+      if (ang) { ang.textContent = drag.deg + '°'; ang.classList.toggle('snap', !!drag.straight); }
+      if (drag.straight !== drag.wasStraight) { drag.wasStraight = drag.straight; if (drag.straight) tick(); }
+    }
   };
   box.addEventListener('pointermove', (e) => {
     if (!drag) return;
@@ -4312,8 +4342,8 @@ function makeSelection(entry, idx) {
   const end = () => {
     if (!drag) return;
     if (raf) { cancelAnimationFrame(raf); raf = 0; if (drag.P) { const d0 = drag; frame(); drag = d0; } }
-    const d = drag; drag = null; Sel.dragging = false; clearLive(); showGuides(entry, false, false);
-    const ang = Sel.el && Sel.el.querySelector('.sel-angle'); if (ang) ang.hidden = true;
+    const d = drag; drag = null; Sel.dragging = false; clearLive(); hideGuides(entry); if (Sel.bar) Sel.bar.classList.remove('dragging');
+    const ang = Sel.el && Sel.el.querySelector('.sel-angle'); if (ang) ang.hidden = true; if ($('#selAngle')) $('#selAngle').hidden = true;
     if (!d.moved || !d.out) {
       Sel.box = d.b0; if (d.f0) Sel.fr = d.f0; placeSelection(); entry.layer.redraw();
       // a tap on a chosen text box: write in it
@@ -4379,34 +4409,48 @@ function reorderSelection(dir) {
   makeSelection(entry, picked.map((x) => after.indexOf(x)));
   inkHint(dir > 0 ? 'In front' : 'Behind', 1000);
 }
-// Lines things can line up with: page middle and margins, and the edges and middles of the other
-// things on the page.
-function snapLines(entry, skip) {
-  const x = [0.5, 0.06, 0.94], y = [0.5, 0.05, 0.95];
+// Smart guides (js/guides.js) work in page pixels on plain boxes: the boxes of everything else on
+// the page that something can line up with (not the page's background, passages or cover-ups).
+const SNAP_REACH = 8;   // how near (screen pixels) a guide pulls, as in a design app
+function pxBox(b, PS) { return { x0: b.x0 * PS[0], x1: b.x1 * PS[0], y0: b.y0 * PS[1], y1: b.y1 * PS[1] }; }
+function boundsOf(items) { let b = null; for (const it of items) { const q = itemBounds(it); if (!q || !isFinite(q.x0)) continue; b = b ? { x0: Math.min(b.x0, q.x0), y0: Math.min(b.y0, q.y0), x1: Math.max(b.x1, q.x1), y1: Math.max(b.y1, q.y1) } : q; } return b || { x0: 0, y0: 0, x1: 0, y1: 0 }; }
+function otherBoxes(entry, skip, PS) {
+  const out = [];
   entry.layer.items.forEach((s, i) => {
-    if (skip.includes(i) || s.t === 'bg' || s.t === 'passage' || s.t === 'mask') return;
+    if (skip.includes(i) || s.t === 'bg' || s.t === 'passage' || s.t === 'mask' || isHiddenItem(s)) return;
     const b = itemBounds(s); if (!b || !isFinite(b.x0)) return;
-    x.push(b.x0, (b.x0 + b.x1) / 2, b.x1); y.push(b.y0, (b.y0 + b.y1) / 2, b.y1);
+    out.push(pxBox(b, PS));
   });
-  return { x, y };
+  return out;
 }
-// the closest line to any of the edges, within reach: how far to move, and where the guide is
-function snapAxis(edges, lines, reach) {
-  let best = null;
-  for (const e of edges) for (const l of lines) { const d = l - e; if (Math.abs(d) < reach && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, at: l }; }
-  return best;
+// a little tick when something lands on a guide (or turns straight), as a design app does
+function tick() { if (navigator.vibrate) { try { navigator.vibrate(5); } catch {} } }
+// The guides drawn over the page: pink lines (across the whole page for the page's own middle and
+// margins, from one thing to the other for things), and equal gaps as pink spans with their size in
+// millimetres (the size the page prints at). Kept in one layer over the page, made again each frame.
+function drawGuides(entry, g, PS) {
+  let box = entry.inner.querySelector('.sguides');
+  if (!box) { box = el('div', 'sguides'); entry.inner.append(box); }
+  box.hidden = false; box.style.setProperty('--inv', 1 / Z.s); box.textContent = '';
+  const W = PS[0], H = PS[1], mm = (PS[0] > PS[1] ? 297 : 210) / W;
+  for (const l of g.lines) {
+    const d = el('div', 'sg-line ' + l.ax + (l.mid ? ' mid' : ''));
+    if (l.ax === 'x') Object.assign(d.style, { left: (l.at / W) * 100 + '%', top: (l.a / H) * 100 + '%', height: ((l.b - l.a) / H) * 100 + '%' });
+    else Object.assign(d.style, { top: (l.at / H) * 100 + '%', left: (l.a / W) * 100 + '%', width: ((l.b - l.a) / W) * 100 + '%' });
+    box.append(d);
+  }
+  for (const q of g.gaps) {
+    const d = el('div', 'sg-gap ' + q.ax);
+    if (q.ax === 'x') Object.assign(d.style, { left: (q.a / W) * 100 + '%', width: (q.len / W) * 100 + '%', top: (q.at / H) * 100 + '%' });
+    else Object.assign(d.style, { top: (q.a / H) * 100 + '%', height: (q.len / H) * 100 + '%', left: (q.at / W) * 100 + '%' });
+    d.append(el('span', 'sg-num num', Math.round(q.len * mm) + ' mm'));
+    box.append(d);
+  }
+  const key = g.lines.map((l) => l.ax + Math.round(l.at)).join() + '|' + g.gaps.length;
+  if (key !== drawGuides.last && (g.lines.length || g.gaps.length)) tick();
+  drawGuides.last = key;
 }
-function showGuides(entry, gx, gy) {
-  let g = entry.inner.querySelector('.guide-x'); if (!g) { g = el('div', 'guide-x'); entry.inner.append(g); }
-  let h = entry.inner.querySelector('.guide-y'); if (!h) { h = el('div', 'guide-y'); entry.inner.append(h); }
-  const ax = typeof gx === 'number' ? gx : gx === true ? 0.5 : null, ay = typeof gy === 'number' ? gy : gy === true ? 0.5 : null;
-  g.hidden = ax === null; if (ax !== null) g.style.left = (ax * 100) + '%';
-  h.hidden = ay === null; if (ay !== null) h.style.top = (ay * 100) + '%';
-  // a little tick when it lands on a line, as a design app does
-  const key = (ax ?? '') + '|' + (ay ?? '');
-  if ((ax !== null || ay !== null) && showGuides.last !== key && navigator.vibrate) { try { navigator.vibrate(5); } catch {} }
-  showGuides.last = key;
-}
+function hideGuides(entry) { const b = entry && entry.inner.querySelector('.sguides'); if (b) { b.hidden = true; b.textContent = ''; } drawGuides.last = ''; }
 function centreSelection() {
   const b = Sel.box; if (!b) return;
   const dx = 0.5 - (b.x0 + b.x1) / 2;
@@ -4502,6 +4546,15 @@ window.__inkPts = () => V.pages.map((p) => { const r = p.inner.getBoundingClient
 window.__openPens = () => { closeInkPops(); $('#inkPop').hidden = false; fillInkPop(); };   // (tests)
 window.__inkPick = (c) => { if (INK._pick) INK._pick(c); };
 window.__redrawInk = () => { for (const p of V.pages) if (p.layer) p.layer.redraw(); };
+// (tests: the editor of the page in the middle: its things, what is chosen, adding and choosing)
+window.__ed = {
+  items: () => { const e = centreEntry(); return e && e.layer ? e.layer.items : null; },
+  sel: () => (Sel.entry ? { idx: Sel.idx.slice(), box: Sel.box, crop: !!Sel.crop, paint: !!Sel.paint } : null),
+  add: (items) => { const e = addItems(items, false); return e ? e.layer.items.length : 0; },
+  select: (idx) => { const e = centreEntry(); INK.tool = 'select'; syncInkBar(); makeSelection(e, idx); },
+  page: () => { const e = centreEntry(); const r = e.inner.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, PS: pageSize(r) }; },
+  undo, redo, undoLen: () => V.undo.length,
+};
 window.__nbCount = () => V.pages.map((p) => (p.layer ? p.layer.items.filter((x) => x.t !== 'bg').map((x) => x.t).join('+') || '-' : '?')).join(' , ');
 // the page in the middle of the screen
 let lastEntry = null;
