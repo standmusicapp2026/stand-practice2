@@ -15,7 +15,7 @@ import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes
 import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findComposer, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
-import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath, tbIndent, tbCssBaseline, tbPad } from './inkx.js';
+import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, picSize, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath, tbIndent, tbCssBaseline, tbPad } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { snapMove, guidesFor, distribute } from './guides.js';
 import { engrave } from './engrave.js';
@@ -4086,6 +4086,7 @@ $('#inkRedo').addEventListener('click', redo);
 const Sel = { entry: null, idx: [], box: null, el: null };
 function clearSelection() {
   if (Sel.el && Sel.el.classList.contains('obj') && !tbEdit) { const tbb = $('#tbBar'); if (tbb && !tbb.hidden) { tbb.hidden = true; $('#inkbar').classList.remove('under'); $('#textPop').hidden = true; } }
+  if (Sel.crop) clearLive();   // (the faint whole photo shown while cropping)
   if (Sel.el) Sel.el.remove();
   if (Sel.bar) Sel.bar.remove();
   if ($('#posPop')) $('#posPop').hidden = true;   // (the Position panel is for what was chosen)
@@ -4187,6 +4188,8 @@ function makeSelection(entry, idx) {
       mk('Adjust', () => openPicPop('adjust'), '', 'adjust'), mk('Style', () => openPicPop('style'), '', 'style'),
       ...common(),
     );
+    // cropping is a mode of its own, as in Canva: only Zoom and Done on the bar
+    if (Sel.crop) [...bar.children].forEach((b) => { if (b.getAttribute('aria-label') !== 'Done') b.remove(); });
   } else if (shp && shp.k === 'mus') {
     // engraved music: a scale opens its chooser again; nothing here would mirror or restyle the notes
     bar.append(...(shp.sc ? [mk('Edit scale', () => editScale(entry, idx[0]), 'accent', 'music')] : []),
@@ -4216,16 +4219,36 @@ function makeSelection(entry, idx) {
   entry.inner.append(box);
   $('#score').append(bar);
   Sel.el = box; Sel.bar = bar; placeSelection();
+  Sel.tapT = performance.now();
+  if (Sel.crop && pic) {
+    // cropping: the whole photo shows faintly round its frame, and a slider zooms it (for the Pencil
+    // or one finger; two fingers pinch)
+    cropGhost(entry, pic, pageSize(entry.inner.getBoundingClientRect()));
+    const z = el('label', 'sel-zoom'); z.append(el('span', '', 'Zoom'));
+    const rg = el('input'); rg.type = 'range'; rg.min = 100; rg.max = 600; rg.value = Math.round(100 / Math.max((pic.cr || [0, 0, 1, 1])[2] - (pic.cr || [0, 0, 1, 1])[0], (pic.cr || [0, 0, 1, 1])[3] - (pic.cr || [0, 0, 1, 1])[1]));
+    rg.setAttribute('aria-label', 'Zoom');
+    for (const t of ['pointerdown', 'pointermove', 'pointerup']) rg.addEventListener(t, (e) => e.stopPropagation());
+    rg.addEventListener('input', () => { picEdit((s) => { const cr = s.cr || [0, 0, 1, 1]; return zoomPicture(s, (+rg.value / 100) * Math.max(cr[2] - cr[0], cr[3] - cr[1])); }); cropGhost(entry, selPic(), pageSize(entry.inner.getBoundingClientRect())); });
+    z.append(rg); bar.prepend(z); placeSelection();
+  }
   if (tb && NBK()) { $('#tbBar').hidden = false; $('#inkbar').classList.add('under'); syncTbBar(); }
   let drag = null;
   const pagePx = (e, r) => { const f = fracOf(e.clientX, e.clientY, r), PS = pageSize(r); return [f[0] * PS[0], f[1] * PS[1]]; };
   box.addEventListener('pointerdown', (e) => {
     // writing with the Pencil over something chosen writes (it never moves what is chosen);
     // the Pencil moves things only with the lasso tool, or by their handles
-    if (e.pointerType === 'pen' && INK.tool !== 'select' && !(e.target.dataset && e.target.dataset.c)) { clearSelection(); return; }
+    if (e.pointerType === 'pen' && INK.tool !== 'select' && !(e.target.dataset && e.target.dataset.c) && !Sel.crop && !Sel.paint) { clearSelection(); return; }
     e.preventDefault(); e.stopPropagation();
     if (locked) return;
-    box.setPointerCapture(e.pointerId);
+    // a second finger while cropping: pinch to zoom the photo inside its frame
+    if (drag && Sel.crop && pic && e.pointerType === 'touch' && drag.ids && !drag.ids.has(e.pointerId) && drag.ids.size === 1) {
+      try { box.setPointerCapture(e.pointerId); } catch {}
+      drag.ids.set(e.pointerId, [e.clientX, e.clientY]);
+      const [a, b] = [...drag.ids.values()];
+      drag.mode = 'pz'; drag.dist0 = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1; drag.k = 1; drag.items = [entry.layer.items[Sel.idx[0]]];
+      return;
+    }
+    try { box.setPointerCapture(e.pointerId); } catch {}
     const r = entry.inner.getBoundingClientRect(), PS = pageSize(r);
     const c = e.target.dataset && e.target.dataset.c;
     const b0 = { ...Sel.box }, f0 = Sel.fr ? { ...Sel.fr } : null;
@@ -4236,7 +4259,7 @@ function makeSelection(entry, idx) {
       return [f0.cx * PS[0] + lx * c - ly * sn, f0.cy * PS[1] + lx * sn + ly * c];
     };
     const opp = { nw: 'se', ne: 'sw', sw: 'ne', se: 'nw' };
-    drag = { mode: c ? (c === 'rot' ? 'rot' : c === 'e' || c === 'w' ? 'width' : Sel.crop ? 'crop' : 'scale') : 'move', c, r, PS, b0, p0: pagePx(e, r), items: Sel.idx.map((i) => entry.layer.items[i]) };
+    drag = { mode: c ? (c === 'rot' ? 'rot' : c === 'e' || c === 'w' ? 'width' : Sel.crop ? 'crop' : 'scale') : Sel.crop ? 'pan' : 'move', c, r, PS, b0, p0: pagePx(e, r), items: Sel.idx.map((i) => entry.layer.items[i]), ids: new Map([[e.pointerId, [e.clientX, e.clientY]]]) };
     if (opp[c]) { drag.C = corner(c); drag.A = corner(opp[c]); }   // (the corners: the side handles need neither)
     drag.f0 = f0;
     // turning: about the middle of the thing, following the finger round
@@ -4282,6 +4305,8 @@ function makeSelection(entry, idx) {
       d.deg = Math.round(((rot * 180 / Math.PI) % 360 + 360) % 360);
       return [{ ...s0, rot: +rot.toFixed(4) }];
     }
+    if (d.mode === 'pan') return [panPicture(d.items[0], P[0] - d.p0[0], P[1] - d.p0[1], PS)];
+    if (d.mode === 'pz') return [zoomPicture(d.items[0], d.k)];
     if (d.mode === 'crop') return [cropPicture(d.items[0], d.c, P[0] - d.p0[0], P[1] - d.p0[1], PS)];
     // the side handles: along the thing's own width, even when it is turned
     const rot0 = d.items[0] && d.items[0].rot ? d.items[0].rot : 0;
@@ -4316,8 +4341,16 @@ function makeSelection(entry, idx) {
     // dragged onto the other page of the spread: it is drawn there, where it will land
     const other = drag.mode === 'move' ? otherPageAt(entry, drag.cx, drag.cy) : null;
     drag.to = other;
-    for (const it of drag.out) { if (other) drawLiveItem(other, toOtherPage(entry, other, it), null, false); else drawLiveItem(entry, it, null, false); }
-    if (Sel.el) Sel.el.style.visibility = other ? 'hidden' : '';
+    // a photo dragged over a frame (an empty photo place, or a photo in a shape) shows itself in
+    // that frame, as in Canva; let go and it fills it
+    const into = !other && drag.mode === 'move' && pic && pic.id && Sel.idx.length === 1 ? frameAt(entry, P[0] / drag.PS[0], P[1] / drag.PS[1], Sel.idx[0]) : -1;
+    if (into !== (drag.into ?? -1)) { drag.into = into; entry.layer.redraw(new Set(into >= 0 ? [...Sel.idx, into] : Sel.idx)); }
+    if (into >= 0) {
+      drawLiveItem(entry, fillFrame(entry.layer.items[into], drag.out[0], drag.PS), null, false);
+      drawLiveItem(entry, { ...drag.out[0], a: 0.4 }, null, false);
+    } else if (Sel.crop && pic) cropGhost(entry, drag.out[0], drag.PS, false);
+    else for (const it of drag.out) { if (other) drawLiveItem(other, toOtherPage(entry, other, it), null, false); else drawLiveItem(entry, it, null, false); }
+    if (Sel.el) Sel.el.style.visibility = other || into >= 0 ? 'hidden' : '';
     let bb = null; for (const it of drag.out) { const q = itemBounds(it); bb = bb ? { x0: Math.min(bb.x0, q.x0), y0: Math.min(bb.y0, q.y0), x1: Math.max(bb.x1, q.x1), y1: Math.max(bb.y1, q.y1) } : q; }
     Sel.box = bb; if (drag.f0 && drag.out.length === 1) Sel.fr = frameOf(drag.out[0]);
     placeSelection();
@@ -4338,6 +4371,11 @@ function makeSelection(entry, idx) {
   };
   box.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    if (drag.ids && drag.ids.has(e.pointerId)) drag.ids.set(e.pointerId, [e.clientX, e.clientY]);
+    if (drag.mode === 'pz') {
+      const [a, b] = [...drag.ids.values()]; drag.k = Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.dist0;
+      drag.moved = true; drag.P = drag.p0; Sel.dragging = true; if (!raf) raf = requestAnimationFrame(frame); return;
+    }
     drag.cx = e.clientX; drag.cy = e.clientY;
     const P = pagePx(e, drag.r);
     if (Math.hypot(P[0] - drag.p0[0], P[1] - drag.p0[1]) > 2) drag.moved = true;
@@ -4354,6 +4392,18 @@ function makeSelection(entry, idx) {
       Sel.box = d.b0; if (d.f0) Sel.fr = d.f0; placeSelection(); entry.layer.redraw();
       // a tap on a chosen text box: write in it
       if (d.mode === 'move' && tb && NBK() && Sel.idx.length === 1) { const i = Sel.idx[0]; clearSelection(); startTextBox(entry, null, i); }
+      // a double tap on a photo: crop it (move and zoom it inside its frame), as in Canva
+      if ((d.mode === 'move' || d.mode === 'pan') && pic && pic.id) { if (performance.now() - (Sel.tapT || 0) < 400) { Sel.tapT = 0; setCrop(!Sel.crop); } else Sel.tapT = performance.now(); }
+      if (Sel.crop && pic) cropGhost(entry, entry.layer.items[Sel.idx[0]], pageSize(entry.inner.getBoundingClientRect()));
+      return;
+    }
+    if (d.into >= 0) {
+      // dropped on a frame: the frame takes the photo (cropped to fill it) and the photo goes
+      const before = entry.layer.items.slice(), filled = fillFrame(before[d.into], d.out[0], d.PS);
+      const after = before.map((x, i) => (i === d.into ? filled : x)).filter((_, i) => !Sel.idx.includes(i));
+      entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
+      makeSelection(entry, [after.indexOf(filled)]);
+      inkHint('The photo is in the frame. Double-tap it to move or zoom the photo inside.', 3200);
       return;
     }
     if (d.to && d.to.layer && d.to.layer.ready) {
@@ -4371,6 +4421,7 @@ function makeSelection(entry, idx) {
     const after = before.slice(); Sel.idx.forEach((i, k) => { after[i] = d.out[k]; });
     entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
     Sel.box = selectionBox(entry, Sel.idx); if (Sel.idx.length === 1) Sel.fr = frameOf(after[Sel.idx[0]]); placeSelection();
+    if (Sel.crop && pic) cropGhost(entry, after[Sel.idx[0]], d.PS);
   };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
 }
@@ -4445,7 +4496,7 @@ const SEL_ICONS = {
 // frame). Double-tapping a photo does the same, as in Canva and Keynote.
 function setCrop(on) {
   if (!Sel.entry) return;
-  if (on) inkHint('Drag to move the photo inside its frame. Pinch, or use the slider, to zoom. Corners trim the frame.', 3600);
+  if (on) inkHint('Drag the photo to place it in its frame. Pinch or slide to zoom.', 3600);
   Sel.keepCrop = !!on; makeSelection(Sel.entry, Sel.idx.slice());
 }
 // The selection in units that move as one: a group is one unit, anything else on its own
@@ -4495,6 +4546,57 @@ function freshGroups(items) {
 }
 // Layers: to the very front or back, or one step past the next thing it overlaps (as in Keynote);
 // the page's background always stays under everything
+// Cropping moves the photo inside its frame: the frame stays, the part of the photo shown moves
+// with the finger (never past the photo's own edges). Page pixels; the photo's turn and flips kept.
+function panPicture(s, dxp, dyp, PS) {
+  const rot = s.rot || 0, co = Math.cos(-rot), si = Math.sin(-rot);
+  let lx = dxp * co - dyp * si, ly = dxp * si + dyp * co;
+  if (s.fx) lx = -lx; if (s.fy) ly = -ly;
+  const cr = s.cr || [0, 0, 1, 1], cw = cr[2] - cr[0], ch = cr[3] - cr[1];
+  const u = clamp(cr[0] - (lx / (s.w * PS[0])) * cw, 0, 1 - cw), v = clamp(cr[1] - (ly / (s.h * PS[1])) * ch, 0, 1 - ch);
+  return { ...s, cr: [u, v, u + cw, v + ch].map((x) => +x.toFixed(5)) };
+}
+// Zoom the photo inside its frame by k (more than 1: closer), about the middle of what shows; never
+// further out than the whole photo, which keeps its shape
+function zoomPicture(s, k) {
+  const cr = s.cr || [0, 0, 1, 1]; let cw = (cr[2] - cr[0]) / k, ch = (cr[3] - cr[1]) / k;
+  const big = Math.max(cw, ch); if (big > 1) { cw /= big; ch /= big; }
+  const small = Math.min(cw, ch); if (small < 0.04) { cw *= 0.04 / small; ch *= 0.04 / small; }
+  const cx = clamp((cr[0] + cr[2]) / 2, cw / 2, 1 - cw / 2), cy = clamp((cr[1] + cr[3]) / 2, ch / 2, 1 - ch / 2);
+  return { ...s, cr: [cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2].map((x) => +x.toFixed(5)) };
+}
+// The crop that fills a frame (box w × h of the page) with a photo of iw × ih, centred (cover)
+function coverCrop(s, iw, ih, PS) {
+  const want = (s.w * PS[0]) / (s.h * PS[1]), have = iw / ih;
+  if (have > want) { const k = want / have; return [(1 - k) / 2, 0, (1 + k) / 2, 1].map((x) => +x.toFixed(5)); }
+  const k = have / want; return [0, (1 - k) / 2, 1, (1 + k) / 2].map((x) => +x.toFixed(5));
+}
+// A frame given a photo: its place, shape and style stay; the photo (and its look) fills it
+function fillFrame(frame, photo, PS) {
+  const n = picSize(photo.id) || [1, 1];
+  const { pop, ...rest } = frame;   // (a pop-out painted for another photo would not fit this one)
+  return { ...rest, id: photo.id, cr: coverCrop(frame, n[0], n[1], PS), ...(photo.f ? { f: photo.f } : {}) };
+}
+// The topmost frame under a point (page fractions) that a dragged photo could drop into: an empty
+// photo place, or a photo in a shape or word (never a plain photo: photos may overlap freely)
+function frameAt(entry, x, y, skip) {
+  const its = entry.layer.items;
+  for (let i = its.length - 1; i >= 0; i--) {
+    const s = its[i]; if (i === skip || s.t !== 'img' || s.lock || isHiddenItem(s)) continue;
+    if ((!s.id || s.mask) && itemHit(s, x, y, 0.002, 1, 1)) return i;
+  }
+  return -1;
+}
+// While cropping: the whole photo, faint, where it is beyond the frame, then the frame as it is
+function cropGhost(entry, s, PS, clear = true) {
+  if (!s || !s.id) return;
+  const W = PS[0], H = PS[1], cr = s.cr || [0, 0, 1, 1], FW = (s.w * W) / (cr[2] - cr[0]), FH = (s.h * H) / (cr[3] - cr[1]);
+  let ox = (0.5 - (cr[0] + cr[2]) / 2) * FW, oy = (0.5 - (cr[1] + cr[3]) / 2) * FH; if (s.fx) ox = -ox; if (s.fy) oy = -oy;
+  const rot = s.rot || 0, c = Math.cos(rot), sn = Math.sin(rot);
+  const g = { t: 'img', id: s.id, x: (s.x * W + ox * c - oy * sn) / W, y: (s.y * H + ox * sn + oy * c) / H, w: FW / W, h: FH / H, rot, fx: s.fx, fy: s.fy, cr: [0, 0, 1, 1], f: s.f, a: 0.38, fr: '', rr: 0 };
+  if (clear) clearLive();
+  drawLiveItem(entry, g, null, false); drawLiveItem(entry, s, null, false);
+}
 function reorderSelection(dir) {
   const entry = Sel.entry; if (!entry) return;
   const before = entry.layer.items.slice();
@@ -4695,6 +4797,9 @@ function centreEntry() {
 async function insertPictures(files, at) {
   const imgs = [...files].filter((f) => f && /^image\//.test(f.type));
   if (!imgs.length) return false;
+  // an empty photo place (or a frame) chosen: the photo goes into it, as in Canva
+  { const fr = !at && imgs.length === 1 && Sel.entry && Sel.idx.length === 1 ? Sel.entry.layer.items[Sel.idx[0]] : null;
+    if (fr && fr.t === 'img' && !fr.id) { placeFor = { entry: Sel.entry, i: Sel.idx[0] }; return placePicture(imgs[0]); } }
   const entry = at ? at.entry : centreEntry(); if (!entry || !entry.layer) return false;
   await entry.layer.loaded;
   if (!V.inking) setInking(true);
@@ -6603,19 +6708,20 @@ async function drawLayoutThumbs() {
 }
 // a photo place from a layout: choose the photo for it
 let placeFor = null;
-$('#insPlace').addEventListener('change', async (e) => {
-  const f = e.target.files[0]; e.target.value = ''; const P = placeFor; placeFor = null;
-  if (!f || !P) return;
+$('#insPlace').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; placePicture(f); });
+async function placePicture(f) {
+  const P = placeFor; placeFor = null;
+  if (!f || !P) return false;
   const pic = await putPicture(f);
   const L = P.entry.layer, before = L.items.slice(), s0 = before[P.i]; if (!s0 || s0.t !== 'img') return;
   // fill the place: crop the photo to its shape
   const r = P.entry.inner.getBoundingClientRect(), PS = pageSize(r);
-  const want = (s0.w * PS[0]) / (s0.h * PS[1]), have = pic.w / pic.h;
-  let cr = [0, 0, 1, 1];
-  if (have > want) { const k = want / have; cr = [(1 - k) / 2, 0, (1 + k) / 2, 1]; } else { const k = have / want; cr = [0, (1 - k) / 2, 1, (1 + k) / 2]; }
-  const after = before.slice(); after[P.i] = { ...s0, id: pic.id, cr };
+  const cr = coverCrop(s0, pic.w, pic.h, PS);
+  const { pop, ...keep } = s0;   // (a pop-out painted for the old photo would not fit the new one)
+  const after = before.slice(); after[P.i] = { ...keep, id: pic.id, cr };
   L.setItems(after); pushUndo(L.key, before, after.slice()); makeSelection(P.entry, [P.i]);
-});
+  return true;
+}
 $('#insPhoto').addEventListener('click', () => { closeInkPops(); $('#insFile').click(); });
 // a place for a photo that shows through big letters and stripes; then choose the photo
 $('#insWord').addEventListener('click', () => {

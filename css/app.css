@@ -2758,3 +2758,10 @@ body:not(.phone) .dock .media-pill { min-width: 280px; }
 .pos-btn:active { background: var(--accent); color: #fff; }
 /* on the iPhone the Position panel is a sheet at the bottom, leaving the chosen thing in sight */
 @media (max-width: 600px) { .pos-pop { top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); max-height: 58vh; gap: 8px; padding: 12px; } .pos-btn { min-height: 52px; } }
+/* cropping: a Zoom slider at the start of the bar */
+.sel-zoom { display: inline-flex; flex-direction: column; justify-content: center; gap: 2px; padding: 4px 10px 4px 8px; min-height: 48px; color: var(--bg); font: 600 11px var(--font); }
+.sel-zoom input { width: 130px; accent-color: #fff; height: 28px; margin: 0; }
+@media (max-width: 600px) { .sel-zoom input { width: 96px; } }
+/* (a longer hint wraps on a narrow screen rather than running off it) */
+@media (max-width: 600px) { .ink-hint { white-space: normal; width: max-content; max-width: calc(100vw - 32px); text-align: center; } }
+.sel-box.cropping .sel-rot, .sel-box.cropping .sel-side { display: none; }
