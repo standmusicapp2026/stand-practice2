@@ -3,6 +3,7 @@
 // for titles and notes. Everything is in page fractions, like the other markings.
 import { db } from './db.js';
 import { drawElement, ELEMENT_BY_KEY } from './elements.js';
+import { drawMusic } from './engrave.js';
 
 export const PEN_KINDS = [
   { k: 'fountain', label: 'Fountain pen', g: 'Pens' },
@@ -851,11 +852,18 @@ function fillStyleOf(ctx, s, w, h) {
   if (s.g && s.g2) { const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2); g.addColorStop(0, s.f || '#ffffff'); g.addColorStop(1, s.g2); return g; }
   return s.f;
 }
+let musWait = null;
 export function drawShape(ctx, s, W, H) {
   const w = s.w * W, h = s.h * H;
   ctx.translate(s.x * W, s.y * H); if (s.rot) ctx.rotate(s.rot); if (s.fx || s.fy) ctx.scale(s.fx ? -1 : 1, s.fy ? -1 : 1);
   ctx.globalAlpha = s.a ?? 1;
   if (s.k === 'glass') { drawGlass(ctx, s, w, h); return; }
+  // engraved music (a scale, a worksheet's examples): drawn with the music font, once it is here
+  if (s.k === 'mus') {
+    if (document.fonts && !document.fonts.check('12px Bravura')) { if (!musWait) musWait = document.fonts.load('40px Bravura').then(() => { musWait = null; onReady && onReady(); }).catch(() => {}); }
+    if (s.m) drawMusic(ctx, s.m, w, h, s.f || '#16181d');
+    return;
+  }
   if (s.k && s.k.startsWith('e:')) { drawElement(ctx, s.k.slice(2), w, h, fillStyleOf(ctx, s, w, h) || s.lc || '#16181d', s.lw ? s.lw * W : 0, s.lc && s.lw ? s.lc : '', s.sh); return; }
   shapePath(ctx, s.k, w, h);
   if (s.sh) { ctx.shadowColor = 'rgba(0,0,0,.28)'; ctx.shadowBlur = Math.min(w, h) * 0.08; ctx.shadowOffsetY = Math.min(w, h) * 0.03; }

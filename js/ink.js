@@ -468,7 +468,7 @@ export class InkLayer {
     const stored = live2 ? live2.items.slice() : rec ? (rec.items || rec.strokes || []).map(normalise) : [];
     // anything added while loading is kept on top of what was stored
     this.items = this.touched ? [...stored, ...this.items] : stored;
-    if (this.items.some((s) => s.t === 'stamp')) await loadMusicFont();
+    if (this.items.some((s) => s.t === 'stamp' || (s.t === 'shape' && s.k === 'mus'))) await loadMusicFont();
     this.ready = true;
     // (pages coming in while the pages are moved quickly: their markings are drawn one page a frame)
     if (this.items.length && inkHooks.defer && inkHooks.defer(this)) return;

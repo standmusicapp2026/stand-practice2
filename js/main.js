@@ -17,6 +17,8 @@ import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInf
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PEN_PRESSURE, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath, tbIndent, tbCssBaseline, tbPad } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
+import { engrave } from './engrave.js';
+import { openScaleDialog, scaleItemMusic, autoOctave } from './scaledlg.js';
 import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
 import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
@@ -4167,6 +4169,11 @@ function makeSelection(entry, idx) {
       mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'),
       ...more(mk('Flip', () => flipSelection()), ...arrange()),
     );
+  } else if (shp && shp.k === 'mus') {
+    // engraved music: a scale opens its chooser again; nothing here would mirror or restyle the notes
+    bar.append(...(shp.sc ? [mk('Edit scale', () => editScale(entry, idx[0]), 'accent')] : []),
+      mk('Colour', () => editSelection((s) => ({ ...s, f: penColor() }))),
+      mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'), ...more(...arrange()));
   } else if (shp) {
     bar.append(mk('Style', () => openShapePop()), mk('Colour', () => editSelection((s) => (s.k === 'line' ? { ...s, lc: penColor() } : { ...s, f: penColor(), metal: undefined }))),
       mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'),
@@ -4648,6 +4655,35 @@ function addElement(it0) {
   addItems([it]);
 }
 buildShapes();
+// ---------- an engraved scale on the page ----------
+// (its height follows from its shape and the page's: the music is never stretched)
+function musHeight(entry, w, m) {
+  const r = entry.inner.getBoundingClientRect(), PS = pageSize(r), L = engrave(m);
+  return (w * L.hs / L.ws) * (PS[0] / PS[1]);
+}
+async function insertScale() {
+  closeInkPops();
+  const sc = await openScaleDialog();
+  const entry = sc && centreEntry(); if (!entry || !entry.layer) return;
+  await entry.layer.loaded;
+  const m = scaleItemMusic(sc), w = 0.84, h = musHeight(entry, w, m);
+  // (one scale under another, as in a scale book, while the page has room; else near the top)
+  const low = Math.max(0, ...entry.layer.items.filter((s) => s.t === 'shape' && s.k === 'mus').map((s) => s.y + s.h / 2));
+  const y = low && low + 0.02 + h <= 0.97 ? low + 0.02 + h / 2 : 0.32;
+  addItems([{ t: 'shape', k: 'mus', m, sc, x: 0.5, y: +clamp(y, h / 2, 1 - h / 2).toFixed(5), w, h: +h.toFixed(5), f: '#1d1d1f', a: 1, rot: 0 }]);
+  inkHint('Drag to move it, a corner to make it bigger. Tap it to change the scale.', 3000);
+}
+async function editScale(entry, i) {
+  const it0 = entry.layer.items[i]; if (!it0 || !it0.sc) return;
+  const sc = await openScaleDialog(it0.sc, { editing: true }); if (!sc) return;
+  const L = entry.layer, before = L.items.slice(), s0 = before[i]; if (!s0 || s0.k !== 'mus') return;
+  // (it keeps its width and its top edge; the height is the new music's)
+  const m = scaleItemMusic(sc), h = musHeight(entry, s0.w, m), top = s0.y - s0.h / 2;
+  const after = before.slice(); after[i] = { ...s0, m, sc, h: +h.toFixed(5), y: +(top + h / 2).toFixed(5) };
+  L.setItems(after); pushUndo(L.key, before, after.slice()); makeSelection(entry, [i]);
+}
+$('#insScale').addEventListener('click', insertScale);
+window.__insertScale = insertScale;   // (tests)
 // music stickers, drawn with the music font
 (function buildMusicStickers() {
   const G = [['\uE050', 'Treble clef'], ['\uE062', 'Bass clef'], ['\uE05C', 'Alto clef'], ['\uE1D2', 'Whole note'], ['\uE1D3', 'Half note'], ['\uE1D5', 'Crotchet'], ['\uE1D7', 'Quaver'], ['\uE4C0', 'Fermata'], ['\uE047', 'Segno'], ['\uE048', 'Coda'], ['\uE522', 'Forte'], ['\uE520', 'Piano'], ['\uE4E5', 'Rest'], ['\uE08A', 'Common time'], ['\uE262', 'Sharp'], ['\uE260', 'Flat']];
@@ -4703,6 +4739,48 @@ const vrule = (x, y0, len, col, land) => ({ t: 'shape', k: 'line', x, y: y0 + le
 const photo = (x, y, w, h, mask = '', extra = {}) => ({ t: 'img', id: null, x, y, w, h, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask, ...extra });
 const box = (x, y, w, h, f, extra = {}) => ({ t: 'shape', k: 'rect', x: x + w / 2, y: y + h / 2, w, h, f, a: 1, rot: 0, ...extra });
 const rbox = (x, y, w, h, f, extra = {}) => ({ t: 'shape', k: 'round', x: x + w / 2, y: y + h / 2, w, h, f, a: 1, rot: 0, ...extra });
+// ---------- engraved music on the layouts (the theory pages) ----------
+// The theory pages share one look: warm white paper, deep blue ink, a terracotta accent, and soft
+// blue-grey boxes for the answers.
+const TH = { paper: '#fbfaf7', ink: '#22304a', soft: '#646c7c', acc: '#b4613d', tint: '#eef2f6', tint2: '#f6efe8', line: '#c8d1db', rule: '#dde3ea' };
+// music placed by its top-left corner, w wide; its height follows from its shape (pages are 1000 × 1414)
+function mus(x, y, w, m, extra = {}, land = false) {
+  const L = engrave(m), h = (w * L.hs / L.ws) * (land ? 1.414 : 1 / 1.414);
+  return { t: 'shape', k: 'mus', m, x: +(x + w / 2).toFixed(5), y: +(y + h / 2).toFixed(5), w, h: +h.toFixed(5), f: TH.ink, a: 1, rot: 0, ...extra };
+}
+// a scale the way the chooser makes it, so tapping it opens the chooser again
+const scaleAt = (x, y, w, sc, extra = {}) => { const s = { inst: 'cello', clef: 'bass', octaves: 2, dir: 'updown', ks: true, names: false, title: true, ...sc }; if (s.o == null) s.o = autoOctave(s); return mus(x, y, w, scaleItemMusic(s, 'en'), { sc: s, ...extra }); };
+const musBottom = (it) => it.y + it.h / 2;
+// the middle of each bar of a piece of music, as page x (for the answer boxes under the bars)
+function barMids(it, sys = 0) {
+  const L = engrave(it.m), x0 = it.x - it.w / 2, cols = L.systems[sys].cols, out = [];
+  let notes = [];
+  for (const c of cols) { if (c.kind === 'bar') { if (notes.length) out.push(notes.reduce((s, q) => s + q, 0) / notes.length); notes = []; } else notes.push(c.x); }
+  if (notes.length) out.push(notes.reduce((s, q) => s + q, 0) / notes.length);
+  return out.map((x) => x0 + (x / L.ws) * it.w);
+}
+// each note of a piece of music, as page x
+const noteXs = (it, sys = 0) => { const L = engrave(it.m), x0 = it.x - it.w / 2; return L.systems[sys].cols.filter((c) => c.kind === 'note').map((c) => x0 + (c.x / L.ws) * it.w); };
+// a box to write an answer in
+const ansBox = (cx, y, w = 0.075, h = 0.036, extra = {}) => rbox(cx - w / 2, y, w, h, '#ffffff', { lc: TH.line, lw: 0.0012, ...extra });
+// a number in a ring, for each question
+const qBadge = (T, x, y, n, col = TH.acc) => [{ t: 'shape', k: 'circle', x: x + 0.019, y: y + 0.0135, w: 0.038, h: 0.038 / 1.414, f: col, a: 1, rot: 0 }, T('heading', x, y + 0.0035, String(n), { w: 0.038, al: 'center', fs: 0.017, c: '#ffffff', ff: 'avenir' })];
+// the top of a worksheet: a small spaced word, the title, and lines for the name and the date
+function sheetHead(T, kicker, title, sub = '') {
+  const out = [T('spaced', 0.07, 0.045, kicker, { w: 0.5, al: 'left', c: TH.acc, fs: 0.0145 }),
+    T('heading', 0.07, 0.066, title, { w: 0.54, ff: 'baskerville', b: 0, fs: 0.044, c: TH.ink })];
+  if (sub) out.push(T('body', 0.07, 0.123, sub, { w: 0.54, i: 1, fs: 0.0165, c: TH.soft }));
+  for (const [lab, y] of [['Name', 0.062], ['Date', 0.104]]) out.push(T('body', 0.64, y, lab, { w: 0.08, fs: 0.0145, c: TH.soft, ff: 'avenir' }), rule(0.72, y + 0.022, 0.21, TH.line, 0.0012));
+  out.push(rule(0.07, 0.162, 0.86, TH.rule, 0.0012));
+  return out;
+}
+// a question: its number, its words and its marks
+const question = (T, y, n, txt, marks = '') => [...qBadge(T, 0.07, y, n), T('heading', 0.125, y + 0.002, txt, { w: marks ? 0.68 : 0.8, fs: 0.0185, c: TH.ink, ff: 'avenir', b: 1 }), ...(marks ? [T('note', 0.8, y - 0.002, '/ ' + marks, { w: 0.13, al: 'right', fs: 0.024, c: TH.acc })] : [])];
+// a note, a chord (several notes at once) or two notes one after the other in a bar
+const W1 = (p) => ({ p, d: 'w' });
+const BAR = { bar: '|' }, END = { bar: '|.' };
+// bars of music from a list of bars, each a list of notes
+const bars = (list) => { const out = []; list.forEach((b, i) => { out.push(...b); out.push(i === list.length - 1 ? END : BAR); }); return out; };
 // the music of one concert, for the programme pages
 const PROG = [
   { who: 'Johann Sebastian Bach', d: '1685–1750', what: 'Suite No. 3 in C major, BWV 1009', parts: 'Prélude · Allemande · Courante · Sarabande · Bourrées I & II · Gigue', min: '22′' },
@@ -5389,6 +5467,243 @@ const LAYOUTS = [
     { t: 'shape', k: 'round', x: 0.5, y: 0.8, w: 0.84, h: 0.16, f: '#5d0d18', a: 1, rot: 0 },
     tb('elegant', 0.12, 0.755, 'answers next lesson', { w: 0.76, c: '#f3ece6', fs: 0.036 }),
   ] },
+  // ---- music theory: worksheets and exams with real, engraved examples
+  { k: 'th-scales', cat: 'theory', label: 'Scales', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 },
+      T('spaced', 0.1, 0.045, 'Scales for this term', { w: 0.8, c: TH.acc, fs: 0.015 }),
+      T('heading', 0.1, 0.068, 'Two octaves, up and down', { w: 0.8, al: 'center', ff: 'baskerville', b: 0, fs: 0.038, c: TH.ink }),
+      T('body', 0.1, 0.118, 'Tap a scale to choose another key, clef or instrument.', { w: 0.8, al: 'center', i: 1, fs: 0.016, c: TH.soft }),
+      ornament(0.5, 0.155, 0.26, TH.acc)];
+    let y = 0.172;
+    for (const sc of [{ L: 0, a: 0, type: 'major' }, { L: 4, a: 0, type: 'major' }, { L: 1, a: 0, type: 'major' }, { L: 1, a: 0, type: 'harmonic' }]) {
+      const it = scaleAt(0.13, y, 0.74, sc);
+      out.push(it);
+      const yb = musBottom(it) + 0.002;
+      out.push(T('body', 0.13, yb, 'tempo ……   bowing ……………', { w: 0.5, fs: 0.0145, c: TH.soft, ff: 'avenir' }));
+      for (let d = 0; d < 5; d++) out.push({ t: 'shape', k: 'round', x: 0.75 + d * 0.03, y: yb + 0.011, w: 0.02, h: 0.02 / 1.414, f: '#ffffff', lc: TH.line, lw: 0.0012, a: 1, rot: 0 });
+      y = yb + 0.03;
+    }
+    return out;
+  } },
+  { k: 'th-intervals', cat: 'theory', label: 'Intervals worksheet', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 }, ...sheetHead(T, 'Music theory · Worksheet', 'Intervals', 'Count the letters, then the semitones.')];
+    out.push(...question(T, 0.185, 1, 'Name each interval: its quality and number (M3, P5, m6 …).', '16'));
+    const tre = mus(0.07, 0.225, 0.86, { clef: 'treble', key: null, ws: 92, even: 1, notes: bars([[W1(['C4', 'E4'])], [W1(['D4', 'A4'])], [W1('E4'), W1('C5')], [W1(['F4', 'B4'])], [W1('G4'), W1('F5')], [W1(['A4', 'C5'])], [W1(['Bb4', 'Eb5'])], [W1(['E4', 'D#5'])]]) });
+    const bas = mus(0.07, musBottom(tre) + 0.055, 0.86, { clef: 'bass', key: null, ws: 92, even: 1, notes: bars([[W1(['G2', 'B2'])], [W1(['C3', 'G3'])], [W1('A2'), W1('F3')], [W1(['D3', 'Ab3'])], [W1(['Eb3', 'C4'])], [W1('B2'), W1('A3')], [W1(['F2', 'E3'])], [W1(['Bb2', 'D3'])]]) });
+    for (const st of [tre, bas]) { out.push(st); for (const cx of barMids(st)) out.push(ansBox(cx, musBottom(st) + 0.004)); }
+    let y = musBottom(bas) + 0.07;
+    out.push(...question(T, y, 2, 'Write the note above, to make the interval named.', '8'));
+    const up = mus(0.07, y + 0.04, 0.86, { clef: 'treble', key: null, ws: 92, even: 1, notes: bars([[{ p: 'D4', lab: 'M3' }], [{ p: 'F4', lab: 'P5' }], [{ p: 'A4', lab: 'm3' }], [{ p: 'G4', lab: 'M6' }], [{ p: 'E4', lab: 'P4' }], [{ p: 'Bb4', lab: 'M2' }], [{ p: 'C4', lab: 'm7' }], [{ p: 'F#4', lab: 'P8' }]]) });
+    out.push(up);
+    y = musBottom(up) + 0.05;
+    out.push(...question(T, y, 3, 'Tone or semitone? Write T or S under each pair.', '6'));
+    const ts = mus(0.07, y + 0.04, 0.86, { clef: 'treble', key: null, ws: 92, even: 1, notes: bars([['E4', 'F4'], ['F4', 'G4'], ['B4', 'C5'], ['C#5', 'D5'], ['Bb4', 'C5'], ['G#4', 'A4']].map(([a, b]) => [W1(a), W1(b)])) });
+    out.push(ts); for (const cx of barMids(ts)) out.push(ansBox(cx, musBottom(ts) + 0.004, 0.05, 0.034));
+    y = musBottom(ts) + 0.05;
+    out.push(rbox(0.07, y, 0.86, 0.09, TH.tint2), T('heading', 0.1, y + 0.018, 'Remember', { w: 0.3, fs: 0.017, c: TH.acc, ff: 'avenir' }),
+      T('body', 0.1, y + 0.045, 'Unisons, 4ths, 5ths and octaves are perfect; 2nds, 3rds, 6ths and 7ths are major or minor. One semitone wider: augmented. One narrower: diminished.', { w: 0.8, fs: 0.0155, c: TH.ink, lh: 1.4 }));
+    out.push(T('note', 0.6, Math.max(0.94, y + 0.1), 'score: …… / 30', { w: 0.33, al: 'right', fs: 0.026, c: TH.acc }));
+    return out;
+  } },
+  { k: 'th-keys', cat: 'theory', label: 'Key signatures', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 }, ...sheetHead(T, 'Music theory · Worksheet', 'Key signatures', 'Name the major key and its relative minor.')];
+    const keys = [['treble', 2], ['bass', -3], ['treble', -5], ['bass', 4], ['alto', 3], ['tenor', -2], ['treble', 6], ['bass', -6]];
+    keys.forEach(([clef, k], i) => {
+      const col = i % 2, row = Math.floor(i / 2), x = 0.07 + col * 0.44, y = 0.19 + row * 0.18;
+      out.push(rbox(x, y, 0.42, 0.16, i % 3 === 1 ? TH.tint2 : TH.tint));
+      out.push(T('spaced', x + 0.025, y + 0.016, String(i + 1).padStart(2, '0') + ' · ' + clef + ' clef', { w: 0.3, al: 'left', c: TH.acc, fs: 0.0115 }));
+      out.push(mus(x + 0.02, y + 0.035, 0.16, { clef, key: k, ws: 18, notes: [{ bar: '||' }] }));
+      for (const [lab, yy] of [['Major', 0.055], ['minor', 0.105]]) out.push(T('body', x + 0.205, y + yy, lab, { w: 0.08, fs: 0.0145, c: TH.soft, ff: 'avenir' }), rule(x + 0.27, y + yy + 0.026, 0.12, TH.line, 0.0012));
+    });
+    out.push(rbox(0.07, 0.92, 0.86, 0.045, '#ffffff', { lc: TH.rule, lw: 0.001 }), T('body', 0.09, 0.931, 'Sharps: Father Charles Goes Down And Ends Battle · Flats: the same, backwards', { w: 0.82, al: 'center', i: 1, fs: 0.0145, c: TH.soft }));
+    return out;
+  } },
+  { k: 'th-chords', cat: 'theory', label: 'Triads', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 }, ...sheetHead(T, 'Music theory · Worksheet', 'Triads', 'Major, minor, diminished, augmented; root position and inversions.')];
+    out.push(...question(T, 0.185, 1, 'Name each triad: its root, its quality and its position.', '16'));
+    const ch = mus(0.07, 0.225, 0.86, { clef: 'treble', key: null, ws: 92, even: 1, notes: bars([[W1(['C4', 'E4', 'G4'])], [W1(['A4', 'C5', 'E5'])], [W1(['B4', 'D5', 'F5'])], [W1(['Eb4', 'G4', 'B4'])], [W1(['B3', 'D4', 'G4'])], [W1(['A4', 'D5', 'F5'])], [W1(['F4', 'A4', 'C5'])], [W1(['E4', 'G#4', 'B4'])]]) });
+    out.push(ch);
+    for (const cx of barMids(ch)) out.push(ansBox(cx, musBottom(ch) + 0.004, 0.08, 0.034), ansBox(cx, musBottom(ch) + 0.044, 0.08, 0.034, { f: TH.tint }));
+    out.push(T('body', 0.07, musBottom(ch) + 0.085, 'top: root and quality (e.g. G major) · below: root, 1st or 2nd inversion', { w: 0.86, al: 'center', i: 1, fs: 0.014, c: TH.soft }));
+    let y = musBottom(ch) + 0.14;
+    out.push(...question(T, y, 2, 'Write these triads in root position, in the bass clef.', '8'));
+    const wr = mus(0.07, y + 0.04, 0.86, { clef: 'bass', key: null, ws: 92, even: 1, notes: bars(['D major', 'G minor', 'B♭ major', 'F♯ minor'].map((lab) => [{ r: 'w', hide: 1, lab }])) });
+    out.push(wr);
+    y = musBottom(wr) + 0.06;
+    out.push(...question(T, y, 3, 'Name the key and write I, IV and V in it.', '6'));
+    const k3 = mus(0.07, y + 0.04, 0.86, { clef: 'treble', key: 1, ws: 92, even: 1, notes: bars([[{ r: 'w', lab: 'I', hide: 1 }], [{ r: 'w', lab: 'IV', hide: 1 }], [{ r: 'w', lab: 'V', hide: 1 }]]) });
+    out.push(k3, T('body', 0.07, musBottom(k3) + 0.01, 'Key: ……………', { w: 0.4, fs: 0.016, c: TH.soft, ff: 'avenir' }));
+    y = musBottom(k3) + 0.07;
+    out.push(rbox(0.07, y, 0.86, 0.11, TH.tint2), T('heading', 0.1, y + 0.018, 'Remember', { w: 0.3, fs: 0.017, c: TH.acc, ff: 'avenir' }),
+      T('body', 0.1, y + 0.045, 'Root position: the root in the bass, the notes stacked in thirds. First inversion: the third in the bass. Second inversion: the fifth in the bass.', { w: 0.8, fs: 0.0155, c: TH.ink, lh: 1.4 }));
+    out.push(T('note', 0.6, 0.94, 'score: …… / 30', { w: 0.33, al: 'right', fs: 0.026, c: TH.acc }));
+    return out;
+  } },
+  { k: 'th-notes', cat: 'theory', label: 'Name the notes', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#fffaf2', pat: '', a: 1 },
+      T('poster', 0.07, 0.045, 'Name the notes', { w: 0.62, al: 'left', ff: 'round', caps: 0, fs: 0.05, c: '#2f5d8a' }),
+      T('body', 0.07, 0.11, 'Write the letter name in the circle under each note.', { w: 0.6, fs: 0.017, c: '#6b6256' }),
+      T('note', 0.66, 0.06, 'name …', { w: 0.27, al: 'right', fs: 0.03, c: '#d07a3c' })];
+    const tre = mus(0.07, 0.165, 0.86, { clef: 'treble', key: null, ws: 70, notes: [...['C4', 'G4', 'B4', 'F5', 'D4', 'A5', 'E4', 'C5', 'G5', 'F4'].map((p) => W1(p)), END] });
+    const bas = mus(0.07, musBottom(tre) + 0.07, 0.86, { clef: 'bass', key: null, ws: 70, notes: [...['G2', 'C3', 'F3', 'A3', 'E2', 'D3', 'B2', 'C4', 'A2', 'E3'].map((p) => W1(p)), END] });
+    for (const [st, col] of [[tre, '#f3a65a'], [bas, '#6fa8d6']]) {
+      out.push(st);
+      for (const cx of noteXs(st)) out.push({ t: 'shape', k: 'circle', x: cx, y: musBottom(st) + 0.025, w: 0.05, h: 0.05 / 1.414, f: '#ffffff', lc: col, lw: 0.0022, a: 1, rot: 0 });
+    }
+    let y = musBottom(bas) + 0.085;
+    out.push(rbox(0.07, y, 0.86, 0.39, '#f4ede2'), T('heading', 0.1, y + 0.022, 'Secret words', { w: 0.5, fs: 0.026, ff: 'round', c: '#8a5a2b' }),
+      T('body', 0.1, y + 0.06, 'Every note is a letter. Which words are hiding in the music?', { w: 0.8, fs: 0.016, c: '#6b6256' }));
+    [['treble', ['C5', 'A4', 'F4', 'E4']], ['treble', ['B4', 'A4', 'D4', 'G4', 'E4']], ['bass', ['F3', 'A3', 'C3', 'E3']], ['bass', ['B2', 'E3', 'A2', 'D3']]].forEach(([clef, ps], i) => {
+      const x = 0.1 + (i % 2) * 0.42, yy = y + 0.1 + Math.floor(i / 2) * 0.145;
+      const st = mus(x, yy, 0.38, { clef, key: null, ws: 34, notes: [...ps.map((p) => W1(p)), { bar: '||' }] });
+      out.push(st);
+      for (const cx of noteXs(st)) out.push(rule(cx - 0.014, musBottom(st) + 0.022, 0.028, '#8a5a2b', 0.0015));
+    });
+    return out;
+  } },
+  { k: 'th-writescale', cat: 'theory', label: 'Write the scales', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 }, ...sheetHead(T, 'Music theory · Worksheet', 'Write the scales', 'Whole notes, one letter for every step.')];
+    const tasks = [['treble', 'D major, one octave up, with its key signature.'], ['bass', 'G harmonic minor, up and down, with accidentals (no key signature).'], ['alto', 'B♭ major, one octave up, with its key signature.'], ['tenor', 'E melodic minor, up and down, with its key signature.'], ['bass', 'F major, one octave down, with its key signature. Mark the semitones with a slur.']];
+    let y = 0.185;
+    tasks.forEach(([clef, txt], i) => {
+      out.push(...question(T, y, i + 1, txt, '4'));
+      const st = mus(0.07, y + 0.034, 0.86, { clef, key: null, ws: 92, notes: [{ sp: 60 }, END] });
+      out.push(st); y = musBottom(st) + 0.022;
+    });
+    out.push(T('sticky', 0.07, Math.min(0.89, y + 0.005), 'Tip: write the letters first, C D E F G A B C, then add the sharps or flats.', { w: 0.5, fs: 0.019 }));
+    out.push(T('note', 0.6, 0.94, 'score: …… / 20', { w: 0.33, al: 'right', fs: 0.026, c: TH.acc }));
+    return out;
+  } },
+  { k: 'th-rhythm', cat: 'theory', label: 'Rhythm dictation', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 }, ...sheetHead(T, 'Ear training', 'Rhythm dictation', 'Listen, tap along, then write what you heard.')];
+    out.push(rbox(0.07, 0.185, 0.86, 0.15, TH.tint), T('spaced', 0.1, 0.2, 'Example', { w: 0.3, al: 'left', c: TH.acc, fs: 0.013 }));
+    const q = { p: 'B4', d: 'q' }, h = { p: 'B4', d: 'h' }, e1 = { p: 'B4', d: '8', b: '[' }, e2 = { p: 'B4', d: '8', b: ']' };
+    out.push(mus(0.1, 0.228, 0.8, { staff: 1, time: '4/4', ws: 64, notes: [q, q, e1, e2, q, BAR, h, q, { r: 'q' }, BAR, { p: 'B4', d: 'q', dot: 1 }, { p: 'B4', d: '8' }, h, BAR, e1, { p: 'B4', d: '8' }, { p: 'B4', d: '8' }, e2, h, END] }));
+    let y = 0.375;
+    [['4/4', 'Played three times. Clap it back first.'], ['3/4', 'A waltz: feel one big beat in each bar.'], ['2/4', 'A march, with quavers.'], ['6/8', 'Two beats in a bar, each of three quavers.']].forEach(([time, hint], i) => {
+      out.push(...qBadge(T, 0.07, y, i + 1), T('heading', 0.125, y + 0.002, time + ' time', { w: 0.3, fs: 0.0185, c: TH.ink, ff: 'avenir' }), T('body', 0.4, y + 0.004, hint, { w: 0.53, al: 'right', i: 1, fs: 0.015, c: TH.soft }));
+      const st = mus(0.07, y + 0.04, 0.86, { staff: 1, time, ws: 70, even: 1, notes: [BAR, BAR, BAR, END] });
+      out.push(st); y = musBottom(st) + 0.044;
+    });
+    out.push(T('note', 0.6, 0.94, 'score: …… / 16', { w: 0.33, al: 'right', fs: 0.026, c: TH.acc }));
+    return out;
+  } },
+  { k: 'th-circle', cat: 'theory', label: 'Circle of fifths', make: () => {
+    const T = tbP(false), cx = 0.5, cy = 0.5, out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 },
+      T('spaced', 0.1, 0.05, 'Music theory', { w: 0.8, c: LC.gold, fs: 0.016 }),
+      T('elegant', 0.1, 0.075, 'The circle of fifths', { w: 0.8, c: LC.ink, fs: 0.048 }),
+      { t: 'shape', k: 'circle', x: cx, y: cy, w: 0.62, h: 0.62 / 1.414, f: '#ffffff', lc: LC.rule, lw: 0.0015, a: 1, rot: 0 },
+      { t: 'shape', k: 'circle', x: cx, y: cy, w: 0.42, h: 0.42 / 1.414, f: '#f4eee3', a: 1, rot: 0 },
+      { t: 'shape', k: 'circle', x: cx, y: cy, w: 0.2, h: 0.2 / 1.414, f: LC.navy, a: 1, rot: 0 },
+      T('spaced', cx - 0.09, cy - 0.022, 'Major', { w: 0.18, c: LC.gold2, fs: 0.012 }), T('elegant', cx - 0.09, cy - 0.004, 'minor', { w: 0.18, c: '#f3ead8', fs: 0.022 })];
+    const maj = ['C', 'G', 'D', 'A', 'E', 'B', 'F♯ / G♭', 'D♭', 'A♭', 'E♭', 'B♭', 'F'], min = ['a', 'e', 'b', 'f♯', 'c♯', 'g♯', 'd♯ / e♭', 'b♭', 'f', 'c', 'g', 'd'];
+    const ks = [0, 1, 2, 3, 4, 5, 6, -5, -4, -3, -2, -1];
+    for (let i = 0; i < 12; i++) {
+      const th = -Math.PI / 2 + (i * Math.PI) / 6, c = Math.cos(th), s = Math.sin(th) / 1.414;
+      const ws = 7 + Math.abs(ks[i]) * 1.1, w = ws * 0.0095;
+      const st = mus(0, 0, w, { clef: 'treble', key: ks[i], ws, notes: [] }, { f: LC.ink });
+      st.x = +(cx + 0.41 * c).toFixed(5); st.y = +(cy + 0.43 * s).toFixed(5);
+      out.push(st);
+      out.push(T('heading', cx + 0.255 * c - 0.07, cy + 0.255 * s - 0.016, maj[i], { w: 0.14, al: 'center', ff: 'baskerville', b: 0, fs: maj[i].length > 2 ? 0.02 : 0.03, c: LC.ink }));
+      out.push(T('body', cx + 0.155 * c - 0.05, cy + 0.155 * s - 0.012, min[i], { w: 0.1, al: 'center', i: 1, fs: min[i].length > 2 ? 0.015 : 0.02, c: LC.gold }));
+    }
+    out.push(T('body', 0.1, 0.875, 'Clockwise, each key has one sharp more (or one flat fewer). The minor key inside shares the major key’s signature.', { w: 0.8, al: 'center', i: 1, fs: 0.016, c: LC.soft }));
+    return out;
+  } },
+  { k: 'th-terms', cat: 'theory', label: 'Signs and terms', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 }, ...sheetHead(T, 'Music theory · Worksheet', 'Signs and terms', 'Draw a line from each sign to what it means.')];
+    const signs = [['\uE522', 'mus'], ['\uE520', 'mus'], ['\uE521\uE522', 'mus'], ['', 'cresc'], ['\uE4C0', 'mus'], ['\uE4A0', 'mus'], ['\uE047', 'mus'], ['\uE048', 'mus']];
+    const means = ['hold the note longer: a pause', 'gradually louder', 'loud', 'go back to the sign', 'soft', 'play this note with an accent', 'moderately loud', 'jump to the ending (coda)'];
+    signs.forEach(([g, k], i) => {
+      const y = 0.195 + i * 0.062;
+      out.push(rbox(0.07, y, 0.17, 0.048, i % 2 ? TH.tint : TH.tint2));
+      out.push(k === 'cresc' ? { t: 'stamp', k: 'cresc', x: 0.155, y: y + 0.024, s: 0.022, c: TH.ink, a: 1 } : { t: 'stamp', k: 'mus', e: g, x: 0.155, y: y + 0.024, s: 0.03, c: TH.ink, a: 1 });
+      out.push({ t: 'shape', k: 'circle', x: 0.262, y: y + 0.024, w: 0.012, h: 0.012 / 1.414, f: TH.acc, a: 1, rot: 0 });
+      out.push({ t: 'shape', k: 'circle', x: 0.548, y: y + 0.024, w: 0.012, h: 0.012 / 1.414, f: TH.acc, a: 1, rot: 0 });
+      out.push(rbox(0.57, y, 0.36, 0.048, '#ffffff', { lc: TH.rule, lw: 0.0012 }), T('body', 0.59, y + 0.012, means[i], { w: 0.33, fs: 0.0165, c: TH.ink, ff: 'avenir' }));
+    });
+    let y = 0.7;
+    out.push(...question(T, y, 2, 'What do these words tell the player?', '8'));
+    ['Allegro', 'Andante', 'Adagio', 'Moderato', 'rit.', 'a tempo', 'dolce', 'legato'].forEach((w, i) => {
+      const col = i % 2, row = Math.floor(i / 2), x = 0.07 + col * 0.44, yy = y + 0.05 + row * 0.055;
+      out.push(T('body', x, yy, w, { w: 0.14, i: 1, b: 1, fs: 0.019, c: TH.ink, ff: 'baskerville' }), rule(x + 0.15, yy + 0.03, 0.26, TH.line, 0.0012));
+    });
+    return out;
+  } },
+  { k: 'th-exam', cat: 'theory', label: 'Theory exam', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, box(0, 0, 1, 0.15, TH.ink),
+      T('spaced', 0.07, 0.035, 'Music theory · Grade 2', { w: 0.6, al: 'left', c: '#e9b48f', fs: 0.0145 }),
+      T('heading', 0.07, 0.058, 'Theory examination', { w: 0.62, ff: 'baskerville', b: 0, fs: 0.046, c: '#ffffff' }),
+      T('body', 0.07, 0.112, 'Time allowed: 45 minutes · answer every question', { w: 0.62, i: 1, fs: 0.0155, c: '#c4ccd8' }),
+      { t: 'shape', k: 'circle', x: 0.85, y: 0.075, w: 0.15, h: 0.15 / 1.414, f: '#ffffff', a: 1, rot: 0 },
+      T('spaced', 0.775, 0.045, 'Score', { w: 0.15, c: TH.acc, fs: 0.011 }), T('heading', 0.775, 0.083, '/ 50', { w: 0.15, al: 'center', ff: 'baskerville', b: 0, fs: 0.024, c: TH.ink })];
+    [['Name', 0.07, 0.3], ['Candidate number', 0.4, 0.22], ['Date', 0.65, 0.28]].forEach(([lab, x, w]) => out.push(T('spaced', x, 0.168, lab, { w, al: 'left', c: TH.soft, fs: 0.0105 }), rule(x, 0.212, w - 0.02, TH.line, 0.0012)));
+    // the questions, each with its marks
+    let y = 0.24;
+    out.push(...question(T, y, 1, 'Name these notes.', '10'));
+    const q1 = mus(0.07, y + 0.035, 0.55, { clef: 'treble', key: null, ws: 54, notes: [...['F4', 'C5', 'A3', 'E5', 'B4'].map((p) => W1(p)), END] });
+    const q1b = mus(0.64, y + 0.035, 0.29, { clef: 'bass', key: null, ws: 30, notes: [...['A2', 'D3', 'E4'].map((p) => W1(p)), END] });
+    for (const st of [q1, q1b]) { out.push(st); for (const cx of noteXs(st)) out.push(ansBox(cx, musBottom(st) + 0.002, 0.05, 0.03)); }
+    y = musBottom(q1) + 0.055;
+    out.push(...question(T, y, 2, 'Name the major key of each key signature.', '10'));
+    [['treble', 3], ['bass', -2], ['alto', -4], ['treble', 5]].forEach(([clef, k], i) => {
+      const st = mus(0.07 + i * 0.22, y + 0.035, 0.15, { clef, key: k, ws: 17, notes: [{ bar: '||' }] });
+      out.push(st, rule(0.07 + i * 0.22, musBottom(st) + 0.03, 0.15, TH.line, 0.0012));
+    });
+    y += 0.165;
+    out.push(...question(T, y, 3, 'Name each interval (quality and number).', '10'));
+    const q3 = mus(0.07, y + 0.035, 0.86, { clef: 'bass', key: null, ws: 92, even: 1, notes: bars([[W1(['C3', 'E3'])], [W1('G2'), W1('D3')], [W1(['F3', 'Bb3'])], [W1('A2'), W1('F#3')], [W1(['D3', 'C4'])]]) });
+    out.push(q3); for (const cx of barMids(q3)) out.push(ansBox(cx, musBottom(q3) + 0.004));
+    y = musBottom(q3) + 0.06;
+    out.push(...question(T, y, 4, 'Add the time signature and the missing bar lines.', '10'));
+    const q = { p: 'B4', d: 'q' }, h = { p: 'B4', d: 'h' };
+    const q4 = mus(0.07, y + 0.035, 0.86, { staff: 1, ws: 92, notes: [q, q, q, h, q, q, { p: 'B4', d: '8', b: '[' }, { p: 'B4', d: '8', b: ']' }, q, { p: 'B4', d: 'h', dot: 1 }, END] });
+    out.push(q4);
+    y = musBottom(q4) + 0.045;
+    out.push(...question(T, y, 5, 'Write the scale of G major, one octave up, with its key signature.', '10'));
+    out.push(mus(0.07, y + 0.035, 0.86, { clef: 'bass', key: null, ws: 92, notes: [{ sp: 60 }, END] }));
+    return out;
+  } },
+  { k: 'th-class', cat: 'theory', label: 'Theory class plan', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: TH.paper, pat: '', a: 1 },
+      T('spaced', 0.07, 0.045, 'Theory class', { w: 0.5, al: 'left', c: TH.acc, fs: 0.0145 }),
+      T('heading', 0.07, 0.066, 'Inversions of a triad', { w: 0.6, ff: 'baskerville', b: 0, fs: 0.044, c: TH.ink }),
+      T('note', 0.66, 0.07, 'group · date', { w: 0.27, al: 'right', fs: 0.024, c: TH.acc }),
+      rbox(0.07, 0.135, 0.86, 0.07, TH.tint2), T('heading', 0.1, 0.146, 'By the end of the class, everyone can …', { w: 0.8, fs: 0.017, c: TH.acc, ff: 'avenir' }),
+      T('body', 0.1, 0.173, 'hear, name and write a triad in root position, first and second inversion.', { w: 0.8, i: 1, fs: 0.016, c: TH.ink })];
+    // the example on the board
+    out.push(T('spaced', 0.07, 0.235, 'On the board', { w: 0.4, al: 'left', c: TH.soft, fs: 0.012 }));
+    const ex = mus(0.07, 0.255, 0.86, { clef: 'treble', key: null, ws: 92, even: 1, notes: bars([[{ p: ['C4', 'E4', 'G4'], lab: 'root position' }], [{ p: ['E4', 'G4', 'C5'], lab: '1st inversion' }], [{ p: ['G4', 'C5', 'E5'], lab: '2nd inversion' }], [{ p: ['F4', 'A4', 'C5'], lab: 'F: root' }], [{ p: ['A4', 'C5', 'F5'], lab: '1st' }], [{ p: ['C5', 'F5', 'A5'], lab: '2nd' }]]) });
+    out.push(ex);
+    let y = musBottom(ex) + 0.03;
+    [['10′', 'Listen', 'Play the three positions; which one sounds most “at rest”?'], ['15′', 'Learn', 'The lowest note decides the position. Bass note = root, third or fifth.'], ['15′', 'Practise', 'Worksheet: name ten triads, then write five.'], ['10′', 'Play', 'Everyone plays one note of the chord: move to the next position together.']].forEach(([t, h, sub], i) => {
+      out.push(T('note', 0.07, y + 0.016, t, { w: 0.08, fs: 0.024, c: TH.soft }), rbox(0.16, y, 0.77, 0.085, i % 2 ? TH.tint : '#ffffff', { lc: i % 2 ? '' : TH.rule, lw: i % 2 ? 0 : 0.0012 }),
+        T('heading', 0.19, y + 0.015, h, { w: 0.3, fs: 0.019, c: TH.ink, ff: 'avenir' }), T('body', 0.19, y + 0.045, sub, { w: 0.71, fs: 0.0155, c: TH.soft }));
+      y += 0.1;
+    });
+    out.push(T('heading', 0.07, y + 0.01, 'Homework', { w: 0.4, fs: 0.019, c: TH.acc, ff: 'avenir' }), T('checklist', 0.07, y + 0.045, 'Worksheet, both sides\nFind a triad in your own piece\nPlay I, IV and V in G major', { w: 0.86, fs: 0.017, lh: 1.7, c: TH.ink }));
+    return out;
+  } },
+  // ---- teaching, more
+  { k: 'student', cat: 'teach', label: 'Student card', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 },
+      photo(0.21, 0.135, 0.24, 0.24 / 1.414, 'circle'),
+      T('spaced', 0.38, 0.07, 'My student', { w: 0.5, al: 'left', c: LC.gold, fs: 0.015 }),
+      T('heading', 0.38, 0.092, 'Student’s Name', { w: 0.55, ff: 'baskerville', b: 0, fs: 0.044, c: LC.ink }),
+      T('body', 0.38, 0.152, 'Cello · since September · Book 2', { w: 0.55, i: 1, fs: 0.018, c: LC.soft }), rule(0.07, 0.235, 0.86, LC.rule)];
+    [['Lesson', 'Tuesday, 16.30 · 45 min'], ['Age · level', '11 · intermediate (up to 4th position)'], ['Parents', 'Name · phone'], ['Email', '…'], ['Instrument', 'size ¾ · own / rented']].forEach(([h, v], i) => {
+      const y = 0.255 + i * 0.048;
+      out.push(T('spaced', 0.07, y + 0.006, h, { w: 0.22, al: 'left', c: LC.gold, fs: 0.0115 }), T('body', 0.3, y, v, { w: 0.63, fs: 0.018, c: LC.ink }), rule(0.3, y + 0.037, 0.63, LC.rule, 0.001));
+    });
+    const y = 0.51;
+    [[0.07, 'Pieces', 'Breval: Sonata in C, 1st mvt.\nSaint-Saëns: The Swan\nA study by Dotzauer'], [0.51, 'Technique', 'Shifting to 4th position\nVibrato, slow and even\nScales: C, G, D, two octaves']].forEach(([x, h, list]) => {
+      out.push(rbox(x, y, 0.42, 0.22, '#ffffff', { lc: LC.rule, lw: 0.0012 }), T('heading', x + 0.03, y + 0.02, h, { w: 0.36, ff: 'baskerville', b: 0, fs: 0.024, c: LC.ink }), T('checklist', x + 0.03, y + 0.065, list, { w: 0.37, fs: 0.016, lh: 1.75, c: LC.soft }));
+    });
+    out.push(T('heading', 0.07, 0.76, 'Goals for this year', { w: 0.86, ff: 'baskerville', b: 0, fs: 0.024, c: LC.ink }),
+      ...Array.from({ length: 3 }, (_, i) => rule(0.07, 0.83 + i * 0.042, 0.86, LC.rule, 0.001)),
+      ornament(0.5, 0.95, 0.2, LC.gold));
+    return out;
+  } },
   // ---- for sharing
   { k: 'polaroids', cat: 'social', label: 'Polaroid wall', make: () => [
     { t: 'bg', c: '#f1ece4', pat: 'dots', a: 1 },
@@ -5423,7 +5738,7 @@ const LAYOUTS = [
   ] },
 ];
 function tb(style, x, y, txt, extra = {}) { return measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }); }
-const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['teach', 'Teaching'], ['ensemble', 'Ensembles and gigs'], ['social', 'For sharing']];
+const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['teach', 'Teaching'], ['theory', 'Music theory'], ['ensemble', 'Ensembles and gigs'], ['social', 'For sharing']];
 // Every layout in other colours: the same design, its paper, ink and accent moved together to another
 // family (or turned to dark paper). nh/ns: the hue and strength the neutral colours (paper, ink,
 // rules) take; ah/as: the hue and strength of the accents; inv: light ink on dark paper.
