@@ -1694,65 +1694,82 @@ function readStaff(s, ctx, header) {
   // accidentals that touch their note (close engraving, small print, blur): look in a window just
   // before each head instead of at whole shapes
   const slurAcc = globalThis.__slurAcc ?? 1;
-  for (const hd of heads) {
-    if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp * 3 && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * (globalThis.__accWinY ?? 3)) globalThis.__accWin.push(['HEAD', Math.round(hd.cx), Math.round(hd.cy), Math.round(hd.left), hd.acc, hd.stem ? [Math.round(hd.stem.x), Math.round(hd.stem.top), Math.round(hd.stem.bot), hd.stem.up] : null, Math.round(hd.right ?? -1)]);
-    if (hd.acc !== undefined || hd.left < startX) continue;
-    let bestK = null;
-    for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ...(globalThis.__wideSharp ?? 1 ? [['sharp', 1.25, 1.9, 1.9]] : []), ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8], ...(globalThis.__tallFlat ?? 1 ? [['flat', 1.0, 2.7, 0.8]] : [])]) {
-      const ya = Math.round(hd.cy - up * sp), yb = Math.round(hd.cy + dn * sp);
-      for (let x = Math.round(hd.left - sp * 2.2); x <= Math.round(hd.left - sp * (W + 0.03)); x++) {
-        const xb = Math.min(Math.round(x + W * sp), Math.round(hd.left - sp * 0.04));
-        const boxIn = (I) => {
-          let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
-          for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (I[y * w + xx]) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-          return [x0, x1, y0, y1];
-        };
-        let [x0, x1, y0, y1] = boxIn(C);
-        // (a slur or tie run into the sign: its box without the thin curves)
-        if (x1 >= 0 && (y0 <= ya || y1 >= yb) && slurAcc) { const b = boxIn(ctx.D); if (b[1] >= 0 && b[2] > ya && b[3] < yb) [x0, x1, y0, y1] = b; }
-        if (x1 < 0 || x0 > x + sp * 0.2 || (y1 - y0) < sp * (cls === 'flat' ? 1.8 : 2.0) || x1 - x0 < sp * 0.35) continue;
-        // (the key signature's last sign, just before the line's first note, is no accidental of it)
-        if ((globalThis.__accKeyEnd ?? 1) && x0 < startX - sp * 0.2) continue;
-        // not cut off at the edges of the window (then it is part of something bigger)
-        let cutK = false;
-        if (y0 <= ya || y1 >= yb) { if (!(globalThis.__cutSign ?? 1) || cls === 'flat' || (y0 <= ya && y1 >= yb)) continue; cutK = true; }
-        const se = globalThis.__stemEdge ?? 1;
-        // (a 'note' sitting at the sign itself, its stroke read as a stem, is part of the sign)
-        const atSign = (q) => (globalThis.__atSign ?? 1) && q.cy > y0 && q.cy < y1 && (((q.hollow || !q.stem) && q.cx > x0 - sp * 0.4 && q.cx < x1) || (q.cx > x0 + sp * 0.15 && q.cx < x1 - sp * 0.15));
-        if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -Math.max(1, sp * (globalThis.__stemEdgeSp ?? 0.15)) : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
-        // (nor starting inside the head of the note before: its edge, and a slur or stem by it, can look like a sign)
-        if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * (globalThis.__winHeadIn ?? -0.2) && q.cy < y1 - sp * (globalThis.__winHeadIn ?? -0.2))) continue;
-        // (nor the flag of the note just before, hanging off its stem)
-        // (a beamed note has no flag: there, only a box reaching up or down to its beam)
-        if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
-        let k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
-        if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2), x0, x1, y0, y1]);
-        // (a slur crossing the top of a flat's stem, or the top of a sharp — its box then cut at the
-        // window's top: the sign is the box without the slur's band on top)
-        const trimF = cls === 'flat' && !(k.cls === cls && k.d < 0.34) && y1 - y0 > sp * 2.6;
-        const trimS = cls === 'sharp' && cutK && y0 <= ya && y1 < yb && !(k.cls === cls && k.d < (globalThis.__cutD ?? 0.22));
-        if ((globalThis.__accTrim ?? 1) && (trimF || trimS)) {
-          for (let t = Math.round(sp * 0.15); t <= Math.round(sp * 0.8) && y1 - y0 - t >= sp * (cls === 'flat' ? 2.2 : 2.3); t += Math.max(1, Math.round(sp * 0.1))) {
-            let a0 = Infinity, a1 = -1;
-            for (let y = y0 + t; y <= y1; y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (C[y * w + xx]) { if (xx < a0) a0 = xx; if (xx > a1) a1 = xx; }
-            if (a1 - a0 < sp * 0.35) continue;
-            // (no other note's head or stem in what is left: a note and its stem make a 'flat' too)
-            if (heads.some((q) => q !== hd && ((q.cx > a0 - sp * 0.3 && q.cx < a1 + sp * 0.3 && q.cy > y0 + t - sp * 0.3 && q.cy < y1 + sp * 0.3) || (q.stem && q.stem.x >= a0 - 2 && q.stem.x <= a1 + 2 && q.stem.top < y1 && q.stem.bot > y0 + t)))) continue;
-            const k2 = classify(shapeOf(C, w, a0, y0 + t, a1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
-            if (k2.cls === cls && k2.d < (cls === 'flat' ? (globalThis.__accTrimD ?? 0.25) : 0.3) && (k.cls !== cls || k2.d < k.d || cutK)) k = { ...k2, box: [a0, a1, y0 + t, y1] };
+  const looseSeen = new Map();
+  const winPass = (loose) => {
+    for (const hd of heads) {
+      if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp * 3 && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * (globalThis.__accWinY ?? 3)) globalThis.__accWin.push(['HEAD', Math.round(hd.cx), Math.round(hd.cy), Math.round(hd.left), hd.acc, hd.stem ? [Math.round(hd.stem.x), Math.round(hd.stem.top), Math.round(hd.stem.bot), hd.stem.up] : null, Math.round(hd.right ?? -1)]);
+      if (hd.acc !== undefined || hd.left < startX) continue;
+      let bestK = null;
+      for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ...(globalThis.__wideSharp ?? 1 ? [['sharp', 1.25, 1.9, 1.9]] : []), ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8], ...(globalThis.__tallFlat ?? 1 ? [['flat', 1.0, 2.7, 0.8]] : [])]) {
+        const ya = Math.round(hd.cy - up * sp), yb = Math.round(hd.cy + dn * sp);
+        for (let x = Math.round(hd.left - sp * 2.2); x <= Math.round(hd.left - sp * (W + 0.03)); x++) {
+          const xb = Math.min(Math.round(x + W * sp), Math.round(hd.left - sp * 0.04));
+          const boxIn = (I) => {
+            let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
+            for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (I[y * w + xx]) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+            return [x0, x1, y0, y1];
+          };
+          let [x0, x1, y0, y1] = boxIn(C);
+          // (a slur or tie run into the sign: its box without the thin curves)
+          if (x1 >= 0 && (y0 <= ya || y1 >= yb) && slurAcc) { const b = boxIn(ctx.D); if (b[1] >= 0 && b[2] > ya && b[3] < yb) [x0, x1, y0, y1] = b; }
+          if (x1 < 0 || x0 > x + sp * 0.2 || (y1 - y0) < sp * (cls === 'flat' ? 1.8 : 2.0) || x1 - x0 < sp * 0.35) continue;
+          // (the key signature's last sign, just before the line's first note, is no accidental of it)
+          if ((globalThis.__accKeyEnd ?? 1) && x0 < startX - sp * 0.2) continue;
+          // not cut off at the edges of the window (then it is part of something bigger)
+          let cutK = false;
+          if (y0 <= ya || y1 >= yb) { if (!(globalThis.__cutSign ?? 1) || cls === 'flat' || (y0 <= ya && y1 >= yb)) continue; cutK = true; }
+          const se = globalThis.__stemEdge ?? 1;
+          // (a 'note' sitting at the sign itself, its stroke read as a stem, is part of the sign)
+          const atSign = (q) => (globalThis.__atSign ?? 1) && q.cy > y0 && q.cy < y1 && (((q.hollow || !q.stem) && q.cx > x0 - sp * 0.4 && q.cx < x1) || (q.cx > x0 + sp * 0.15 && q.cx < x1 - sp * 0.15));
+          if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -Math.max(1, sp * (globalThis.__stemEdgeSp ?? 0.15)) : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
+          // (nor starting inside the head of the note before: its edge, and a slur or stem by it, can look like a sign)
+          if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * (globalThis.__winHeadIn ?? -0.2) && q.cy < y1 - sp * (globalThis.__winHeadIn ?? -0.2))) continue;
+          // (nor the flag of the note just before, hanging off its stem)
+          // (a beamed note has no flag: there, only a box reaching up or down to its beam)
+          if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
+          let k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+          if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2), x0, x1, y0, y1]);
+          // (a slur crossing the top of a flat's stem, or the top of a sharp — its box then cut at the
+          // window's top: the sign is the box without the slur's band on top)
+          const trimF = cls === 'flat' && !(k.cls === cls && k.d < 0.34) && y1 - y0 > sp * 2.6;
+          const trimS = cls === 'sharp' && cutK && y0 <= ya && y1 < yb && !(k.cls === cls && k.d < (globalThis.__cutD ?? 0.22));
+          if ((globalThis.__accTrim ?? 1) && (trimF || trimS)) {
+            for (let t = Math.round(sp * 0.15); t <= Math.round(sp * 0.8) && y1 - y0 - t >= sp * (cls === 'flat' ? 2.2 : 2.3); t += Math.max(1, Math.round(sp * 0.1))) {
+              let a0 = Infinity, a1 = -1;
+              for (let y = y0 + t; y <= y1; y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (C[y * w + xx]) { if (xx < a0) a0 = xx; if (xx > a1) a1 = xx; }
+              if (a1 - a0 < sp * 0.35) continue;
+              // (no other note's head or stem in what is left: a note and its stem make a 'flat' too)
+              if (heads.some((q) => q !== hd && ((q.cx > a0 - sp * 0.3 && q.cx < a1 + sp * 0.3 && q.cy > y0 + t - sp * 0.3 && q.cy < y1 + sp * 0.3) || (q.stem && q.stem.x >= a0 - 2 && q.stem.x <= a1 + 2 && q.stem.top < y1 && q.stem.bot > y0 + t)))) continue;
+              const k2 = classify(shapeOf(C, w, a0, y0 + t, a1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+              if (k2.cls === cls && k2.d < (cls === 'flat' ? (globalThis.__accTrimD ?? 0.25) : 0.3) && (k.cls !== cls || k2.d < k.d || cutK)) k = { ...k2, box: [a0, a1, y0 + t, y1] };
+            }
+            if (k.box) { [x0, x1, y0, y1] = k.box; cutK = false; }
           }
-          if (k.box) { [x0, x1, y0, y1] = k.box; cutK = false; }
+          if (!loose && k.cls === cls && k.d < (cutK ? (globalThis.__cutD ?? 0.22) : cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
+          // (blurred: the strokes swelled, the sign read by its outline instead, tolerant of their thickness —
+          // clearly this sign and nothing else that stands before a note)
+          if (loose && !cutK && k.d < (globalThis.__looseK ?? 0.52)) {
+            const key = x0 + ',' + x1 + ',' + y0 + ',' + y1;
+            let L = looseSeen.get(key);
+            if (L === undefined) { L = classifyLoose(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']); looseSeen.set(key, L); }
+            if (L.length > 1 && ['sharp', 'natural', 'flat'].includes(L[0].cls) && L[0].d < (globalThis.__looseD ?? 0.09) && L[1].d - L[0].d > (globalThis.__looseM ?? 0.015)) {
+              const d = L[0].d - (L[1].d - L[0].d);
+              if (!bestK || d < bestK.d) bestK = { cls: L[0].cls, d, x0, x1, y0, y1 };
+            }
+          }
         }
-        if (k.cls === cls && k.d < (cutK ? (globalThis.__cutD ?? 0.22) : cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
       }
+      if (!bestK) continue;
+      // centred on this note (a flat's bowl on it)
+      const want = bestK.cls === 'flat' ? bestK.y1 - sp * 0.55 : (bestK.y0 + bestK.y1) / 2;
+      if (Math.abs(want - hd.cy) > sp * 0.45) continue;
+      hd.acc = { sharp: 1, natural: 0, flat: -1 }[bestK.cls];
+      accBoxesW.push(bestK);
     }
-    if (!bestK) continue;
-    // centred on this note (a flat's bowl on it)
-    const want = bestK.cls === 'flat' ? bestK.y1 - sp * 0.55 : (bestK.y0 + bestK.y1) / 2;
-    if (Math.abs(want - hd.cy) > sp * 0.45) continue;
-    hd.acc = { sharp: 1, natural: 0, flat: -1 }[bestK.cls];
-    accBoxesW.push(bestK);
-  }
+  };
+  winPass(false);
+  // (a soft photo: a note still without a sign, its window looked at again by the outline of what is there)
+  if ((globalThis.__looseAcc ?? 1) && ctx.soft > (globalThis.__looseSoft ?? 1.9)) winPass(true);
   // double sharps: a small x just before the head
   for (const hd of heads) {
     if (hd.acc !== undefined || hd.left < startX) continue;
@@ -3311,6 +3328,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
   let G = grayAt(canvas, f);
   let norm = flatten(G, SP * 2.6);
   if (softNext === null) { let mid = 0, ink = 0; for (let i = 0; i < norm.length; i += 3) { const q = norm[i]; if (q < 90) ink++; else if (q < 215) mid++; } softNext = mid / Math.max(1, ink); }
+  const softNow = softNext ?? 0;
   const shK = globalThis.__sharpK ?? sharpNext;
   if (shK) norm = sharpen(norm, G.w, G.h, globalThis.__sharpR ?? 2, shK);
   let B = binarize(norm, G.w, G.h, true);
@@ -3517,7 +3535,7 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
   // tinted part of the page
   let liteC = null;
   const lite = () => { if (!liteC) { const G2 = B.gray, tl = B.th + (250 - B.th) * 0.35, Bl = new Uint8Array(w * h); for (let i = 0; i < Bl.length; i++) Bl[i] = B[i] || G2[i] < tl ? 1 : 0; liteC = removeLines(Bl, w, h, staves, T); } return liteC; };
-  const ctx = { lite, f, dbg, best, B, C, Cb, D, compsD: LD.comps, labD: LD.lab, thinComps: LT.comps, thinLab: LT.lab, F, O, Os, holes, holeComps, holeLab: HL.lab, w, h, T, compsC: groups, rawC: LC.comps, labC: LC.lab, groupOf, staffOf, staffBelow: (s) => staves[staves.indexOf(s) + 1], staffAbove: (s) => staves[staves.indexOf(s) - 1] };
+  const ctx = { soft: softNow, lite, f, dbg, best, B, C, Cb, D, compsD: LD.comps, labD: LD.lab, thinComps: LT.comps, thinLab: LT.lab, F, O, Os, holes, holeComps, holeLab: HL.lab, w, h, T, compsC: groups, rawC: LC.comps, labC: LC.lab, groupOf, staffOf, staffBelow: (s) => staves[staves.indexOf(s) + 1], staffAbove: (s) => staves[staves.indexOf(s) - 1] };
   // the music's signs as the PDF wrote them (a page made by a notation program: each head, clef,
   // accidental, rest… a character of a music font at its exact place), into this picture's frame,
   // each with the staff it is nearest
@@ -4205,6 +4223,10 @@ export const _dbg = { grayAt, flatten, binarize, findStaves, removeLines, holeMa
 // Read a picture twice, as it is and with its paper evened out and its ink darkened, and keep the
 // reading whose bars add up best (photos and pale copies often read better the second way).
 export async function recogniseBest(canvas, opts = {}) {
+  // (how soft the picture is holds for its own readings only: a page read after it starts afresh)
+  try { return await recogniseBest0(canvas, opts); } finally { softNext = 0; }
+}
+async function recogniseBest0(canvas, opts = {}) {
   softNext = null;
   const a = await recognise(canvas, opts);
   // (a page whose signs the PDF gave: nothing to read better from a cleaned copy of its picture)
