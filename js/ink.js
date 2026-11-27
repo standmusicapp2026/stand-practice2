@@ -576,6 +576,7 @@ export class InkLayer {
         // (cut back by half the line's width beyond the eraser: the round end of what is left would
         // otherwise reach back over the hole — a highlighter, a wide line, looked barely rubbed out,
         // then gave way in jumps)
+        CUTW = s.s || 0;
         for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * (globalThis.__eraseCap ?? 0.5), W, H)) out.push({ ...s, p: part });
       }
       if (hit) { items = out; changed = true; }
@@ -629,6 +630,7 @@ export class InkLayer {
 
 // Remove the part of a stroke inside a circle; returns the pieces that remain.
 const SBOX = new WeakMap();
+let CUTW = 0;   // (the width of the line being cut, for cutStroke)
 function cutStroke(pts, x, y, r, W, H) {
   // add points along long segments so a quick stroke can be cut in its middle
   const dense = [pts[0]];
@@ -645,7 +647,10 @@ function cutStroke(pts, x, y, r, W, H) {
     else cur.push([+p[0].toFixed(5), +p[1].toFixed(5), p[2]]);
   }
   if (cur.length > 1) parts.push(cur);
-  return parts;
+  // (a crumb left at the end of a line — shorter than the line is wide — goes too: drawn alone it made a
+  // round dot, darker on a highlighter, where the line had been rubbed out)
+  const len = (q) => { let L = 0; for (let i = 1; i < q.length; i++) L += Math.hypot((q[i][0] - q[i - 1][0]) * W, (q[i][1] - q[i - 1][1]) * H); return L / W; };
+  return parts.filter((q) => len(q) >= (globalThis.__crumb ?? 1) * Math.max(r * 0.6, (CUTW || 0) * 0.9));
 }
 
 export async function loadItems(key) {

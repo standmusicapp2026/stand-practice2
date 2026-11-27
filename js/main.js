@@ -6846,9 +6846,9 @@ function pasteAt(entry, at) {
   INK.tool = 'select'; syncInkBar(); lastEntry = entry;
   makeSelection(entry, moved.map((_, i) => before.length + i));
 }
-// The hand comes down a moment before the Pencil: whatever it began — the page moved, zoomed, slid
-// towards the next — was the hand, not a finger. The Pencil coming down puts the page back where it
-// was and the hand's touch counts no more. (Before, a page zoomed in moved, or slid, under the hand.)
+// The hand comes down a moment before the Pencil: whatever it began — the page moving, zooming, sliding
+// towards the next — was the hand, not a finger. The Pencil coming down stops it there, and the hand's
+// touch counts no more.
 function palmUndo() {
   if (!GS || (globalThis.__palmUndo ?? 1) === 0) return;
   const g = GS, young = now() - (g.t0 || 0) < 1500;
@@ -6857,8 +6857,10 @@ function palmUndo() {
   if (g.kind === 'nav' && (PT.get(g.id) || {}).type !== 'touch') return;
   if (g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; }
   clearTimeout(g.holdT);
-  if (g.kind === 'nav') { Z.x = g.zx; Z.y = g.zy; }
-  else if (g.base) { Z.s = g.base.s; Z.x = g.base.x; Z.y = g.base.y; }
+  // (stopped where it is: put back, the page moved under the Pencil just as it came down — the
+  // place the writer aimed at went away)
+  if ((globalThis.__palmBack ?? 0) && g.kind === 'nav') { Z.x = g.zx; Z.y = g.zy; }
+  else if ((globalThis.__palmBack ?? 0) && g.base) { Z.s = g.base.s; Z.x = g.base.x; Z.y = g.base.y; }
   SC.rubber = false;
   applyZoom();
   GS = null;
@@ -6904,7 +6906,9 @@ stage.addEventListener('pointerdown', (e) => {
   // fingers for the hand, so pages did not turn and the finger could not draw.)
   const big = Math.max(e.width || 0, e.height || 0) > 110;
   info.t = t; info.small = !big;
-  if (penDown || t - lastPenUp < (V.inking ? 500 : 350) || (big && t - lastPenUp < 1500)) {
+  // (with the markings open, a contact as big as the side of the hand never moves the page, however long
+  // after writing — it rests there to write; and for most of a second after the Pencil lifts, no touch does)
+  if (penDown || t - lastPenUp < (V.inking ? 800 : 350) || (big && (V.inking || t - lastPenUp < 1500))) {
     // two fingers put down together just after writing are a pinch to zoom, not the hand: the first
     // was set aside only because the Pencil had just lifted (with the Pencil down, it stays the hand)
     const other = !penDown && !big && [...PT.values()].find((q) => q !== info && q.type === 'touch' && q.palm && q.soon && q.small && t - q.t < 250);
@@ -9283,7 +9287,6 @@ function fillKeySelects() {
   $('#keySel').value = S.key; $('#sysSel').value = S.system;
 }
 function updateTunerSetup() {
-  { const c = $('#refChipVal'); if (c) c.textContent = String(S.ref); }
   tuner.ref = S.ref; tuner.key = S.key; tuner.system = S.system; tuner.long = S.instrument === 'bass';
   drone.ref = S.ref; drone.refresh();
   scale.ref = S.ref;
@@ -9308,8 +9311,6 @@ function updateTunerSetup() {
   }
 }
 holdRepeat($('#refUp'), () => { S.ref = clamp(S.ref + 1, 400, 466); updateTunerSetup(); saveSettings(); });
-// (the iPhone on its side: the reference A as one chip — each tap the next usual one: 440, 441, 442, 443, 415)
-$('#refChip').addEventListener('click', () => { const seq = [440, 441, 442, 443, 415]; const i = seq.indexOf(S.ref); S.ref = seq[(i + 1) % seq.length]; updateTunerSetup(); saveSettings(); });
 holdRepeat($('#refDown'), () => { S.ref = clamp(S.ref - 1, 400, 466); updateTunerSetup(); saveSettings(); });
 $('#sysSel').addEventListener('change', (e) => { S.system = e.target.value; saveSettings(); updateTunerSetup(); });
 $('#keySel').addEventListener('change', (e) => { S.key = +e.target.value; saveSettings(); updateTunerSetup(); });
@@ -12959,29 +12960,32 @@ function endRun() {
 // ---- the practice session's own tools, on its bar: the passage's tempo (the metronome at it), a
 // tempo played cleanly logged (and the next a little faster), a note for next time
 const runPass = (it) => (it && it.pid ? passageOf(it.sid, it.pid) : null);
-function runTimeTo(it) { if (!RUN.done || !it) return; const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 }; r.ms += Date.now() - (RUN.atT || Date.now()); RUN.done.set(k, r); RUN.atT = Date.now(); }
+// (leaving a passage: the time spent on it, and the fastest tempo the metronome ran at for it — kept in
+// its tempo history by itself, nothing to press)
+function runTimeTo(it) {
+  if (!RUN.done || !it) return; runNoteUsed(); const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 };
+  r.ms += Date.now() - (RUN.atT || Date.now());
+  if (RUN.usedBpm) { r.best = Math.max(r.best, RUN.usedBpm); if (it.pid) logTempo(it.sid, it.pid, RUN.usedBpm); }
+  RUN.done.set(k, r); RUN.atT = Date.now(); RUN.usedBpm = 0;
+}
+function runNoteUsed() { if (RUN.on && RUN.kind === 'study' && metro.running) RUN.usedBpm = Math.max(RUN.usedBpm || 0, metro.bpm); }
 function runToolsShow(it) {
   const box = $('#runTools'), nt = $('#runNote');
   const p = RUN.kind === 'study' ? runPass(it) : null;
   box.hidden = !p; nt.hidden = !(p && p.note);
   if (!p) return;
   const last = p.log.length ? p.log[p.log.length - 1].bpm : p.start || 60;
-  RUN.bpm = metro.running ? metro.bpm : last;
+  // (each passage at its own tempo: the metronome, if on, goes to it)
+  RUN.bpm = last; if (metro.running) setBpm(last);
   $('#runBpm').textContent = String(RUN.bpm);
   $('#runGoal').textContent = p.target ? '→ ' + p.target : '';
   $('#runTempo').classList.toggle('on', !!metro.running);
   if (p.note) nt.textContent = tr('Your note') + ': ' + p.note;
 }
-function runSetBpm(v) { RUN.bpm = clamp(Math.round(v), 20, 300); $('#runBpm').textContent = String(RUN.bpm); if (metro.running) setBpm(RUN.bpm); }
-$('#runTempo').addEventListener('click', () => { if (metro.running) stopMetro(); else { setBpm(RUN.bpm || 60); startMetro(); } setTimeout(() => $('#runTempo').classList.toggle('on', !!metro.running), 60); });
-$('#runSlower').addEventListener('click', () => runSetBpm((RUN.bpm || 60) - 4));
-$('#runFaster').addEventListener('click', () => runSetBpm((RUN.bpm || 60) + 4));
-$('#runClean').addEventListener('click', () => {
-  const it = runItem(); const p = logTempo(it && it.sid, it && it.pid, RUN.bpm || 60); if (!p) return;
-  const k = it.sid + ':' + it.pid, r = RUN.done.get(k) || { name: it.name, ms: 0, best: 0 }; r.best = Math.max(r.best, RUN.bpm); RUN.done.set(k, r);
-  if (p.target && RUN.bpm >= p.target) toast(tr('Target tempo reached. Well done!'), 2600);
-  else { toast(`${RUN.bpm} bpm ` + tr('kept. Next: a little faster.'), 2200); runSetBpm(Math.min(p.target || 300, RUN.bpm + 4)); }
-});
+function runSetBpm(v) { RUN.bpm = clamp(Math.round(v), 20, 300); $('#runBpm').textContent = String(RUN.bpm); if (metro.running) { setBpm(RUN.bpm); runNoteUsed(); } }
+$('#runTempo').addEventListener('click', () => { if (metro.running) stopMetro(); else { setBpm(RUN.bpm || 60); startMetro(); } setTimeout(() => { $('#runTempo').classList.toggle('on', !!metro.running); runNoteUsed(); }, 60); });
+$('#runSlower').addEventListener('click', () => runSetBpm((RUN.bpm || 60) - 5));
+$('#runFaster').addEventListener('click', () => runSetBpm((RUN.bpm || 60) + 5));
 $('#runNoteBtn').addEventListener('click', async () => {
   const it = runItem(), p = runPass(it); if (!p) return;
   const v = await askText(tr('A note for this passage, shown next time'), p.note || '');
