@@ -13495,6 +13495,7 @@ function showWelcome() {
     step = clamp(n, 0, pages.length - 1); w.dataset.step = step;
     pages.forEach((p, i) => { p.classList.toggle('on', i === step); p.classList.toggle('gone', i < step); });
     $('#welNext').hidden = step === pages.length - 1; $('#welGo').hidden = step !== pages.length - 1;
+    $('#welNext').textContent = tr(step === 0 ? 'Get started' : 'Continue');
     setTimeout(() => { const f = step === pages.length - 1 ? sel : $('#welNext'); if (document.activeElement && document.activeElement !== document.body && w.contains(document.activeElement)) f.focus({ preventScroll: true }); }, 60);
   };
   go(0);
@@ -13517,6 +13518,11 @@ function showWelcome() {
     else if (!S.toured) setTimeout(() => startTour({ skipFirst: true, onDone: () => { S.toured = true; saveSettings(); } }), 250);
   };
   $('#welRestore').onclick = () => { done(); showPanel('backup'); $('#bkFiles').hidden = true; renderBackup(); };
+  // the first score, straight from here (the tour waits for another time: it would cover the picker)
+  $('#welFiles').onclick = () => { done(); };
+  $('#welScan').onclick = () => { done(); $('#scanBtn').click(); };
+  $('#welFind').onclick = () => { done(); document.querySelector('[data-goto="find"]')?.click(); };
+  $('#welBring').onclick = () => { done(); $('#bringBtn').click(); };
 }
 
 // =====================================================================
