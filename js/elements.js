@@ -19,6 +19,36 @@ const circle = (p, x, y, r) => { p.moveTo(x + r, y); p.arc(x, y, r, 0, Math.PI *
 // a little pseudo-random, the same every time (so a paint stroke does not change on redraw)
 const rnd = (seed) => () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 
+// The body of a bowed string instrument (a cello or a violin): two bouts and a waist, centred on x = 22,
+// from y0 to y0 + 56 (drawn in a 44-wide box)
+const fiddleBody = (p, y0) => {
+  const Y = (v) => y0 + v;
+  p.moveTo(22, Y(0));
+  p.bezierCurveTo(30, Y(0), 36, Y(3), 36, Y(11)); p.bezierCurveTo(36, Y(17), 31, Y(19), 31, Y(24));
+  p.bezierCurveTo(31, Y(29), 39, Y(32), 39, Y(42)); p.bezierCurveTo(39, Y(52), 31, Y(56), 22, Y(56));
+  p.bezierCurveTo(13, Y(56), 5, Y(52), 5, Y(42)); p.bezierCurveTo(5, Y(32), 13, Y(29), 13, Y(24));
+  p.bezierCurveTo(13, Y(19), 8, Y(17), 8, Y(11)); p.bezierCurveTo(8, Y(3), 14, Y(0), 22, Y(0)); p.closePath();
+};
+// its head: the scroll, the peg box and four pegs, with the neck down to the body
+const fiddleHead = (p, top, neckEnd) => {
+  circle(p, 22, top + 3.4, 3.4); p.rect(20, top + 4, 4, 6); p.rect(19.6, top + 6, 4.8, neckEnd - top - 6);
+  for (const [x, y] of [[16.4, top + 6.6], [24, top + 6.6], [16.4, top + 9.6], [24, top + 9.6]]) p.rect(x, y, 3.6, 1.6);
+};
+// its details, drawn in light lines over it: the strings, the f-holes, the bridge and the tailpiece
+const fiddleLines = (p, top, y0) => {
+  for (const x of [20.4, 21.5, 22.5, 23.6]) { p.moveTo(x, top + 8); p.lineTo(x, y0 + 41); }
+  p.moveTo(14, y0 + 26); p.bezierCurveTo(17, y0 + 29, 12, y0 + 35, 15, y0 + 39); p.moveTo(30, y0 + 26); p.bezierCurveTo(27, y0 + 29, 32, y0 + 35, 29, y0 + 39);
+  p.moveTo(16.5, y0 + 33); p.lineTo(27.5, y0 + 33);
+  p.moveTo(19.6, y0 + 41); p.lineTo(24.4, y0 + 41); p.lineTo(23.6, y0 + 51); p.lineTo(20.4, y0 + 51); p.closePath();
+};
+// a face drawn in lines, to sit on a coloured circle (how practice felt)
+const faceEyes = (p, kind) => {
+  if (kind === 'line') { p.moveTo(30, 44); p.lineTo(42, 44); p.moveTo(58, 44); p.lineTo(70, 44); }
+  else if (kind === 'closed') { p.moveTo(28, 42); p.quadraticCurveTo(36, 49, 44, 42); p.moveTo(56, 42); p.quadraticCurveTo(64, 49, 72, 42); }
+  else if (kind === 'up') { p.moveTo(28, 46); p.lineTo(36, 38); p.lineTo(44, 46); p.moveTo(56, 46); p.lineTo(64, 38); p.lineTo(72, 46); }
+  else { p.moveTo(36, 38); p.lineTo(36, 47); p.moveTo(64, 38); p.lineTo(64, 47); }
+};
+
 export const ELEMENT_CATS = [['nature', 'Leaves & flowers'], ['doodle', 'Line doodles'], ['sparkle', 'Sparkles'], ['frame', 'Frames'], ['label', 'Labels & bubbles'], ['arrow', 'Arrows'], ['divider', 'Dividers'], ['boho', 'Boho'], ['paint', 'Paint & shapes'], ['music', 'Music']];
 
 export const ELEMENTS = [
@@ -102,6 +132,29 @@ export const ELEMENTS = [
   } },
   { k: 'staff', cat: 'music', label: 'Staff', vb: [100, 30], line(p) { for (let i = 0; i < 5; i++) { p.moveTo(2, 5 + i * 5); p.lineTo(98, 5 + i * 5); } } },
   { k: 'notewave', cat: 'music', label: 'Melody', vb: [100, 40], line(p) { p.moveTo(2, 30); p.bezierCurveTo(20, 4, 36, 4, 50, 22); p.bezierCurveTo(64, 40, 80, 36, 98, 12); }, fill(p) { for (const [x, y] of [[14, 14], [44, 14], [70, 32]]) { p.moveTo(x + 6, y); p.ellipse(x, y, 6, 4.2, -0.4, 0, Math.PI * 2); } } },
+  // ---- instruments and rewards (drawn as simple flat pictures; the light lines are the details) ----
+  { k: 'cello', cat: 'music', label: 'Cello', vb: [44, 100], cw: 0.22, fill(p) { fiddleHead(p, 1, 40); fiddleBody(p, 37); }, cut(p) { fiddleLines(p, 1, 37); }, line(p) { p.moveTo(22, 93.5); p.lineTo(22, 99); } },
+  { k: 'violin', cat: 'music', label: 'Violin', vb: [44, 100], cw: 0.22, fill(p) { fiddleHead(p, 3, 44); fiddleBody(p, 41); p.moveTo(18, 94); p.ellipse(13, 94, 5, 2.6, 0, 0, Math.PI * 2); }, cut(p) { fiddleLines(p, 3, 41); } },
+  { k: 'metronome', cat: 'music', label: 'Metronome', vb: [60, 100], fill(p) { p.moveTo(21, 3); p.lineTo(39, 3); p.lineTo(56, 97); p.lineTo(4, 97); p.closePath(); }, cut(p) {
+    p.moveTo(30, 84); p.lineTo(44, 18); p.moveTo(43.4, 30); p.arc(40.4, 30, 3, 0, Math.PI * 2); p.moveTo(9, 86); p.lineTo(51, 86); for (let y = 30; y <= 70; y += 10) { p.moveTo(27.5, y); p.lineTo(32.5, y); }
+  } },
+  { k: 'laurel', cat: 'nature', label: 'Laurel', vb: [100, 80], line(p) { p.moveTo(50, 74); p.arc(50, 34, 40, Math.PI / 2, (200 * Math.PI) / 180); p.moveTo(50, 74); p.arc(50, 34, 40, Math.PI / 2, (-20 * Math.PI) / 180, true); }, fill(p) {
+    for (const side of [1, -1]) for (let i = 0; i < 7; i++) {
+      const a = Math.PI / 2 + side * (0.22 + i * 0.27), x = 50 + 40 * Math.cos(a), y = 34 + 40 * Math.sin(a), tang = a + side * Math.PI / 2;
+      leaf(p, x, y, 13 - i * 0.6, tang - side * 0.75, 0.38); leaf(p, x, y, 12 - i * 0.6, tang + side * 0.55, 0.38);
+    }
+  } },
+  { k: 'rosette', cat: 'label', label: 'Rosette', vb: [70, 100], fill(p) {
+    p.moveTo(26, 48); p.lineTo(38, 54); p.lineTo(26, 97); p.lineTo(19, 89); p.lineTo(11, 95); p.closePath();
+    p.moveTo(44, 48); p.lineTo(32, 54); p.lineTo(44, 97); p.lineTo(51, 89); p.lineTo(59, 95); p.closePath();
+    const n = 22; for (let i = 0; i <= n * 2; i++) { const a = (i * Math.PI) / n, r = i % 2 ? 29 : 33; p[i ? 'lineTo' : 'moveTo'](35 + Math.cos(a) * r, 36 + Math.sin(a) * r); } p.closePath();
+  }, cut(p) { circle(p, 35, 36, 22); } },
+  { k: 'f-happy', cat: 'doodle', label: 'Happy', line(p) { faceEyes(p, 'dot'); p.moveTo(30, 60); p.quadraticCurveTo(50, 80, 70, 60); } },
+  { k: 'f-proud', cat: 'doodle', label: 'Proud', line(p) { faceEyes(p, 'up'); p.moveTo(32, 58); p.lineTo(68, 58); p.quadraticCurveTo(50, 86, 32, 58); p.closePath(); } },
+  { k: 'f-calm', cat: 'doodle', label: 'Calm', line(p) { faceEyes(p, 'closed'); p.moveTo(40, 64); p.quadraticCurveTo(50, 71, 60, 64); } },
+  { k: 'f-unsure', cat: 'doodle', label: 'Unsure', line(p) { faceEyes(p, 'dot'); p.moveTo(56, 30); p.lineTo(70, 27); p.moveTo(33, 66); p.bezierCurveTo(41, 58, 49, 74, 57, 64); p.quadraticCurveTo(62, 60, 67, 63); } },
+  { k: 'f-tired', cat: 'doodle', label: 'Tired', line(p) { faceEyes(p, 'line'); p.moveTo(56, 66); p.arc(50, 66, 6, 0, Math.PI * 2); } },
+  { k: 'f-cross', cat: 'doodle', label: 'Frustrated', line(p) { faceEyes(p, 'dot'); p.moveTo(28, 30); p.lineTo(42, 35); p.moveTo(72, 30); p.lineTo(58, 35); p.moveTo(32, 70); p.quadraticCurveTo(50, 56, 68, 70); } },
 ];
 export const ELEMENT_BY_KEY = Object.fromEntries(ELEMENTS.map((e) => [e.k, e]));
 
@@ -132,7 +185,7 @@ export function drawElement(ctx, k, w, h, paint, lineW, outline, shadow) {
       // the leaf's veins and the daisy's middle, drawn over the fill
       ctx.save(); ctx.shadowColor = 'transparent';
       if (k === 'daisy') { ctx.fillStyle = '#e8b33c'; ctx.fill(scaled(c.cut, w, h, vb)); }
-      else { ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = lw * 0.45; ctx.stroke(scaled(c.cut, w, h, vb)); }
+      else { ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = lw * (e.cw || 0.45); ctx.stroke(scaled(c.cut, w, h, vb)); }
       ctx.restore();
     }
     if (outline) { ctx.save(); ctx.shadowColor = 'transparent'; ctx.strokeStyle = outline; ctx.lineWidth = lw * 0.7; ctx.stroke(f); ctx.restore(); }

@@ -2326,6 +2326,7 @@ body.phone .lg-ht small { display: none; }
 body.phone .lg-body { flex-direction: column; }
 body.phone .lg-cats { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; gap: 6px; scrollbar-width: none; }
 body.phone .lg-cats button { flex: none; height: 34px; border-radius: 17px; background: var(--surface-solid); font-size: 13px; }
+body.phone .lg-cats button.on { background: var(--accent); color: var(--accent-ink); }
 body.phone .lg-main { padding: 12px 14px 40px; }
 body.phone .lg-theme { margin: -12px -14px 14px; padding: 10px 14px; }
 body.phone .lg-lab { width: 52px; }

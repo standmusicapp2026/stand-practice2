@@ -455,6 +455,44 @@ function lookCanvas(s, p) {
 }
 export function picSize(id) { const p = pics.get(id); return p && p.ready ? [p.img.naturalWidth, p.img.naturalHeight] : null; }
 
+// An empty photo place (from a layout, waiting for its photo): a soft picture of out-of-focus light
+// in the place's own colour (s.f, which follows the layout's colours), with a small "Add photo" sign
+// in the middle. s.pv: a small preview (the layouts gallery), drawn without the sign.
+// (the path of the place is the current path; the caller saved the context)
+function drawPhotoPlace(ctx, s, w, h, m) {
+  const base = /^#[0-9a-f]{6}$/i.test(s.f || '') ? s.f : '#cfc2b3';
+  ctx.clip();
+  const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+  g.addColorStop(0, lighten(base, 0.38)); g.addColorStop(0.55, base); g.addColorStop(1, darken(base, 0.22));
+  ctx.fillStyle = g; ctx.fillRect(-w / 2, -h / 2, w, h);
+  // soft round lights, always in the same places for the same photo place
+  let seed = (Math.round(((s.x || 0) * 9173 + (s.y || 0) * 7919 + (s.w || 0) * 3571) * 1000) % 2147483646) + 1; if (seed <= 0) seed += 2147483646;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const big = Math.max(w, h);
+  for (let i = 0; i < 9; i++) {
+    const x = (rnd() - 0.5) * w, y = (rnd() - 0.5) * h, r = big * (0.08 + rnd() * 0.22), a = 0.1 + rnd() * 0.22;
+    const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, `rgba(255,255,255,${a.toFixed(3)})`); rg.addColorStop(0.7, `rgba(255,255,255,${(a * 0.35).toFixed(3)})`); rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  // light falling from the top
+  const v = ctx.createLinearGradient(0, -h / 2, 0, h / 2); v.addColorStop(0, 'rgba(255,255,255,.18)'); v.addColorStop(1, 'rgba(0,0,0,.10)');
+  ctx.fillStyle = v; ctx.fillRect(-w / 2, -h / 2, w, h);
+  if (s.pv || m < 60) return;
+  // the sign: a little picture icon and the words, on a pill of frosted white
+  const fs = Math.max(9, Math.min(26, m * 0.06)), word = globalThis.__tr ? globalThis.__tr('Add photo') : 'Add photo';
+  ctx.font = `600 ${fs}px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif`;
+  const ic = fs * 1.1, tw = ctx.measureText(word).width, pw = Math.min(w * 0.9, tw + ic + fs * 2.1), ph = fs * 2;
+  const showWord = m >= 150 && tw + ic + fs * 2.1 <= w * 0.9;
+  const PW = showWord ? pw : ph;
+  ctx.fillStyle = 'rgba(255,255,255,.82)'; ctx.beginPath(); ctx.roundRect(-PW / 2, -ph / 2, PW, ph, ph / 2); ctx.fill();
+  const ix = showWord ? -PW / 2 + fs * 0.8 : -ic / 2, iy = -ic * 0.4, col = darken(base, 0.55);
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = Math.max(1, fs * 0.1); ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.roundRect(ix, iy, ic, ic * 0.8, ic * 0.14); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ix + ic * 0.12, iy + ic * 0.68); ctx.lineTo(ix + ic * 0.4, iy + ic * 0.38); ctx.lineTo(ix + ic * 0.6, iy + ic * 0.56); ctx.lineTo(ix + ic * 0.72, iy + ic * 0.46); ctx.lineTo(ix + ic * 0.9, iy + ic * 0.68); ctx.stroke();
+  ctx.beginPath(); ctx.arc(ix + ic * 0.7, iy + ic * 0.24, ic * 0.08, 0, Math.PI * 2); ctx.fill();
+  if (showWord) { ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(word, ix + ic + fs * 0.5, fs * 0.04); }
+}
 export const FRAMES = [['', 'None'], ['shadow', 'Shadow'], ['white', 'White border'], ['polaroid', 'Instant photo'], ['tape', 'Tape']];
 export function drawPicture(ctx, s, W, H) {
   const p = picture(s.id);
@@ -489,12 +527,19 @@ export function drawPicture(ctx, s, W, H) {
     ctx.clip();
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(lookCanvas(s, p), -w / 2, -h / 2, w, h);
+  } else if (!s.id) {
+    if (fr === 'shadow') { ctx.fillStyle = '#fff'; ctx.fill(); ctx.shadowColor = 'transparent'; }
+    drawPhotoPlace(ctx, s, w, h, m);
   } else {
     ctx.fillStyle = 'rgba(140,150,170,.16)'; ctx.fill();
-    if (!s.id) { ctx.setLineDash([m * 0.04, m * 0.03]); ctx.strokeStyle = 'rgba(90,100,130,.55)'; ctx.lineWidth = Math.max(1, m * 0.008); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle = 'rgba(70,80,110,.7)'; ctx.font = `600 ${Math.max(10, m * 0.07)}px -apple-system, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Photo', 0, 0); }
   }
   ctx.restore();
+  // a ring round the photo, in its shape (a photo that "pops" off a coloured page)
+  if (s.ol) {
+    ctx.save(); if (s.fx || s.fy) ctx.scale(s.fx ? -1 : 1, s.fy ? -1 : 1);
+    if (s.mask) shapePath(ctx, s.mask, w, h); else { ctx.beginPath(); if (rr > 0.5) ctx.roundRect(-w / 2, -h / 2, w, h, rr); else ctx.rect(-w / 2, -h / 2, w, h); }
+    ctx.strokeStyle = s.ol; ctx.lineWidth = Math.max(1, (s.olw || 0.008) * W); ctx.lineJoin = 'round'; ctx.stroke(); ctx.restore();
+  }
   if (fr === 'tape') {
     const tw = m * 0.34, th = m * 0.09;
     for (const [x, y, a] of [[-w / 2, -h / 2, -0.75], [w / 2, -h / 2, 0.75]]) {
@@ -813,7 +858,7 @@ export const SHAPES = [
   ['rect', 'Square'], ['round', 'Rounded'], ['circle', 'Circle'], ['triangle', 'Triangle'], ['star', 'Star'],
   ['heart', 'Heart'], ['hexagon', 'Hexagon'], ['diamond', 'Diamond'], ['arrow', 'Arrow'], ['line', 'Line'],
   ['bubble', 'Speech'], ['cloud', 'Thought'], ['arch', 'Arch'], ['blob', 'Blob'], ['banner', 'Ribbon'],
-  ['glass', 'Glass'], ['bars', 'Stripes'],
+  ['glass', 'Glass'], ['bars', 'Stripes'], ['burst', 'Burst'], ['torn', 'Torn paper'],
 ];
 export function shapePath(ctx, k, w, h) {
   const x = -w / 2, y = -h / 2;
@@ -844,12 +889,19 @@ export function shapePath(ctx, k, w, h) {
       for (let i = nx - 1; i >= 0; i--) { const cx = x + (i + 0.5) * w / nx; ctx.lineTo(cx + rx, h / 2); ctx.arc(cx, h / 2, rx, 0, Math.PI, true); } ctx.lineTo(x, h / 2);
       for (let i = ny - 1; i >= 0; i--) { const cy = y + (i + 0.5) * h / ny; ctx.lineTo(x, cy + ry); ctx.arc(x, cy, ry, Math.PI / 2, -Math.PI / 2, true); } ctx.closePath(); break; }
     case 'bars': { const n = 5, gap = w * 0.03, bw = (w - gap * (n - 1)) / n; for (let i = 0; i < n; i++) ctx.roundRect(x + i * (bw + gap), y, bw, h, bw * 0.28); break; }
+    // a starburst, for a sticker ("Free entry!", "New!")
+    case 'burst': { const n = 18; for (let i = 0; i < n * 2; i++) { const a = -Math.PI / 2 + (i * Math.PI) / n, r = i % 2 ? 0.84 : 1; ctx[i ? 'lineTo' : 'moveTo']((Math.cos(a) * r * w) / 2, (Math.sin(a) * r * h) / 2); } ctx.closePath(); break; }
+    // a strip of paper torn off at the top and bottom (the tear is the same every time)
+    case 'torn': { let sd = 7; const r = () => (sd = (sd * 16807) % 2147483647) / 2147483647, n = Math.max(8, Math.round(w / Math.max(4, Math.min(w, h) * 0.06))), d = Math.min(h * 0.12, Math.min(w, h) * 0.07);
+      ctx.moveTo(x, y + r() * d); for (let i = 1; i <= n; i++) ctx.lineTo(x + (i * w) / n, y + r() * d);
+      ctx.lineTo(w / 2, h / 2 - r() * d); for (let i = n - 1; i >= 0; i--) ctx.lineTo(x + (i * w) / n, h / 2 - r() * d); ctx.closePath(); break; }
     default: ctx.rect(x, y, w, h);
   }
 }
 function fillStyleOf(ctx, s, w, h) {
   if (s.metal) return metalGradient(ctx, s.metal, -w / 2, -h / 2, w / 2, h / 2);
-  if (s.g && s.g2) { const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2); g.addColorStop(0, s.f || '#ffffff'); g.addColorStop(1, s.g2); return g; }
+  // (a gradient across, or with gv straight down: a shade over a photo)
+  if (s.g && s.g2) { const g = s.gv ? ctx.createLinearGradient(0, -h / 2, 0, h / 2) : ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2); g.addColorStop(0, s.f || '#ffffff'); g.addColorStop(1, s.g2); return g; }
   return s.f;
 }
 let musWait = null;
