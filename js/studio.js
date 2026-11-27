@@ -1517,6 +1517,24 @@ async function finishTimes(best, notesBest, frames, L, A, B, chromaOf, stop) {
 // pitch. So the recording is heard as how strongly each semitone sounds (its partials added up), and
 // the page is followed through it: at each moment, how strongly the notes the page has there sound.
 const SAL_LO = 28, SAL_HI = 104;
+// How much new sound begins at each moment from a to b, every 10 ms (the spectrum's rise, up to about
+// 8.6 kHz, less its own local level): where whoever plays strikes their notes.
+function fluxEnv(pcm, sr, a, b) {
+  const N = 2048, hop = Math.max(1, Math.round(sr * 0.01)), nb = Math.min(N / 2, Math.round((8600 * N) / sr));
+  const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+  const i0 = Math.max(0, Math.floor(a * sr)), i1 = Math.min(pcm.length - N, Math.floor(b * sr));
+  const re = new Float64Array(N), im = new Float64Array(N), fl = []; let prev = null;
+  for (let i = i0; i <= i1; i += hop) {
+    for (let j = 0; j < N; j++) { re[j] = (pcm[i + j] || 0) * win[j]; im[j] = 0; }
+    const mag = fftMag(re, im), cur = new Float32Array(nb);
+    for (let q = 0; q < nb; q++) cur[q] = Math.log1p(100 * N * mag[q]);
+    if (prev) { let v = 0; for (let q = 0; q < nb; q++) v += Math.max(0, cur[q] - prev[q]); fl.push(v); }
+    prev = cur;
+  }
+  const out = new Float32Array(fl.length);
+  for (let j = 0; j < fl.length; j++) { let s = 0, c = 0; for (let q = Math.max(0, j - 15); q < Math.min(fl.length, j + 15); q++) { s += fl[q]; c++; } out[j] = Math.max(0, fl[j] - s / Math.max(1, c)); }
+  return out;
+}
 async function salienceFrames(pcm, sr, a, b, onProgress) {
   // (a copy at about 22 kHz: enough for the partials that matter, and quicker)
   const dec = Math.max(1, Math.round(sr / 22050)), r = sr / dec;
@@ -2186,6 +2204,31 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       if (b - a < 3) continue;
       for (let j = a + 1; j < b; j++) if (!fixedK.has(j)) T[j] = T[a] + ((T[b] - T[a]) * (j - a)) / (b - a);
       for (let j = a; j < b; j++) d[j] = T[j + 1] - T[j];
+    }
+  }
+  // (the bars of rest shared out quicker than the bars played after them: either the others hurry
+  // there, or the recording began partway in. The others' own playing tells: how strongly the sound
+  // there repeats itself a bar apart — at the length of the bars shared out, or at the length of the
+  // bars played after. When at the latter, those bars go back from the entry at that length, found
+  // where the repeating is strongest, and the first of them fall before the recording)
+  if ((globalThis.__introAcf ?? 1) && k0 >= 2 && k0 < nb && k0 + 4 <= nb && !(anch && anch.some((a) => a.k <= k0))) {
+    const ls = L.bars.map((b) => b.len).filter((v) => v > 0).sort((p, q) => p - q), full = ls.length ? ls[ls.length >> 1] : null;
+    const w = []; for (let k = 0; k < k0; k++) { const v = L.bars[k].len; w.push((globalThis.__introW ?? 1) && full && k === 0 && v > 0 && v < full * 0.8 ? v / full : 1); }
+    const tot = w.reduce((a2, v) => a2 + v, 0);
+    const dd = []; for (let q = k0; q < nb; q++) dd.push(T[q + 1] - T[q]); dd.sort((p, q) => p - q);
+    const p = dd[dd.length >> 1], ta = T[0], tb = T[k0], gi = (tb - ta) / Math.max(1e-6, tot);
+    if (p > 0.2 && tb - ta > p && gi < p * (globalThis.__introAcfR ?? 0.95)) {
+      const env = fluxEnv(ST.pcm, ST.sr, ta, tb), H = 0.01, RG = globalThis.__introAcfG ?? 0.06;
+      const ac = (lag) => {
+        const L = Math.round(lag / H); if (L >= env.length - 10) return -1;
+        let m = 0; for (const v of env) m += v; m /= env.length;
+        let ab = 0, aa = 0, bb = 0; for (let j = 0; j + L < env.length; j++) { const x = env[j] - m, y = env[j + L] - m; ab += x * y; aa += x * x; bb += y * y; }
+        return ab / Math.sqrt(aa * bb + 1e-9);
+      };
+      const peak = (lag) => { let b = [-2, lag]; const n = Math.round(RG * 200); for (let i = 0; i <= n; i++) { const f = 1 - RG + (2 * RG * i) / n, c = ac(lag * f); if (c > b[0]) b = [c, lag * f]; } return b; };
+      const [cg] = peak(gi), [cp, lp] = peak(p);
+      if (globalThis.__salDbg) globalThis.__salDbg.push(['introAcf', +gi.toFixed(3), +p.toFixed(3), +cg.toFixed(3), +cp.toFixed(3), +lp.toFixed(3)]);
+      if (cp > cg + (globalThis.__introAcfM ?? 0)) { let c = tot; for (let k = 0; k < k0; k++) { T[k] = Math.max(ta + 0.02 * k, tb - c * lp); c -= w[k]; } }
     }
   }
   // the notes as heard: each note's first step, the moment it was matched
