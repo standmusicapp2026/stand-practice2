@@ -2536,3 +2536,10 @@ body.media-on #pageScrub { display: none; }
    the rest scrolls (it was far down the drone, out of sight) */
 body.phone #tab-tune > .row-even, body.phone #tab-drone > #droneToggle { position: sticky; bottom: 0; z-index: 3; margin-top: 0; padding: 10px 0 calc(6px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(to top, var(--bg) 78%, transparent); }
 body.phone #tab-drone > #droneToggle { padding: 0; background: var(--accent); box-shadow: 0 0 0 10px var(--bg), 0 30px 0 22px var(--bg), 0 -14px 18px 4px var(--bg); bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+/* the small tuner at the top of the tuner panel, when the big one has scrolled away */
+.tune-dock { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin: -4px 0 4px; border-radius: 14px; background: var(--surface-solid); box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+.tune-dock[hidden] { display: none; }
+.tune-dock .mt-note { font-size: 26px; font-weight: 700; min-width: 48px; }
+.tune-dock .mt-scale { flex: 1; position: relative; height: 18px; }
+.tune-dock .mt-c { min-width: 34px; text-align: right; color: var(--muted); font-weight: 600; }
+.tune-dock.intune .mt-c, .tune-dock.intune .mt-note { color: var(--ok, #1a8a4a); }

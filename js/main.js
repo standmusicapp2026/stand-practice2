@@ -9470,7 +9470,7 @@ tuner.onReading = (r) => {
     else goIdle();
     return;
   }
-  clearTimeout(TU.idleT); TU.shownAt = performance.now();
+  clearTimeout(TU.idleT); TU.shownAt = performance.now(); dockReading(r);
   face.classList.remove('idle');
   face.classList.toggle('held', !!r.held);
   const c = r.cents;
@@ -9578,6 +9578,19 @@ async function startTuner() {
 function stopTuner() { tuner.stop(); tuner.onReading(null); H.follow = false; H.ownsMic = false; TU.userStopped = true; updateTunerButtons(); }
 // ---------- the tuner is on whenever it is open (Stop turns it off), and can stay on screen small ----------
 const TU = { userStopped: false, mini: false };
+// The tuner scrolled out of sight (looking at your intonation, the settings): a small tuner stays at
+// the top of the panel, like the one over a score — the note and the needle always in view
+function dockReading(r) {
+  if ($('#tuneDock').hidden || !r) return;
+  $('#tdNote').textContent = r.name; $('#tdOct').textContent = r.octave;
+  if (r.held) return;
+  $('#tdNeedle').style.left = (50 + clamp(r.cents, -50, 50)) + '%';
+  $('#tdCents').textContent = Math.abs(r.cents) < 3 ? '✓' : (r.cents > 0 ? '+' : '−') + Math.abs(r.cents).toFixed(0);
+  $('#tuneDock').classList.toggle('intune', Math.abs(r.cents) < 3);
+}
+try {
+  new IntersectionObserver((es) => { for (const e of es) { const d = $('#tuneDock'); d.hidden = e.isIntersecting || !tuner.running; } }, { root: $('#tab-tune'), threshold: 0.15 }).observe($('#tunerFace'));
+} catch {}
 function miniReading(r) {
   if (!TU.mini) return;
   const box = $('#miniTuner');
