@@ -284,7 +284,9 @@ async function save() {
       $('#revSub').textContent = `Preparing page ${i + 1} of ${R.pages.length}…`;
       await new Promise((r) => setTimeout(r, 0));
       const p = R.pages[i];
-      const c = await renderPage(p, 2600);
+      // (about 270 dpi on an A4 page, as a good office scanner keeps it: at 2600 the notes showed
+      // their steps when zoomed in)
+      const c = await renderPage(p, globalThis.__scanSide ?? 3000);
       // black and white pages are small as PNG and stay sharp; colour as JPEG
       blobs.push(await new Promise((res) => c.toBlob(res, p.look === 'bw' ? 'image/png' : 'image/jpeg', 0.9)));
     }

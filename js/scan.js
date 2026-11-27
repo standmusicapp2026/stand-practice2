@@ -401,7 +401,8 @@ export function crispInk(c, strength = 55) {
   // a light sharpening first, so thin staff lines stay whole
   const B = boxBlur(L, w, h, 1);
   const f = 0.5 + (strength / 100) * 0.38;              // where between ink and paper the line falls
-  const mid = ink + (paper - ink) * f, soft = Math.max(6, (paper - ink) * 0.12);
+  // (the edge of the ink a little soft, a pixel's worth, as a scanner's: hard steps read as pixelated)
+  const mid = ink + (paper - ink) * f, soft = Math.max(6, (paper - ink) * (globalThis.__crispSoft ?? 0.15));
   for (let j = 0, i = 0; j < w * h; j++, i += 4) {
     const v = L[j] + 0.8 * (L[j] - B[j]);
     let o = (v - (mid - soft)) / (2 * soft); o = o < 0 ? 0 : o > 1 ? 1 : o;
