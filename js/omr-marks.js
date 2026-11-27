@@ -324,7 +324,7 @@ export function readMarks(read, ctx) {
       if (xb - xa < sp * 0.5) continue;
       // (the arc's place in each column, under or over the notes; along a staff line the line itself is
       // taken as the arc where it is thicker, unless told to look past it)
-      const scan = (below, past, maxK) => {
+      const scan = (below, past, maxK, skipY = null) => {
         const ys = []; let nOn = 0;
         for (let x = xa; x <= xb; x++) {
           let found = null;
@@ -342,6 +342,8 @@ export function readMarks(read, ctx) {
             if (C[y * w + x]) {
               // a thin stroke here (not a stem or a head running through)
               let e = y; while (e >= 0 && e < h && C[e * w + x] && Math.abs(e - y) < sp) e += below ? 1 : -1;
+              // (the line itself, left in with the notes: looked past, as a line is)
+              if (skipY !== null && Math.abs(e - y) <= sp * 0.42 && Math.abs((y + e) / 2 - skipY) <= Math.max(2, sp * 0.12)) { k += Math.abs(e - y); continue; }
               if (Math.abs(e - y) <= sp * 0.42) found = (y + e) / 2;
               break;
             }
@@ -359,17 +361,25 @@ export function readMarks(read, ctx) {
         // (a staff line drawn a little thick, flat all along under the two notes, is no tie: a tie bends
         // and only runs along a line for a short way)
         // (notes inside the staff only: off it, on ledger lines, the old reading stands)
-        if ((globalThis.__tieLine ?? 1) && A.p >= 0 && A.p <= 8 && xb - xa >= sp * 1.4 && nOn >= ys.length * 0.6) {
-          const inner = ys.slice(Math.ceil(ys.length * 0.1), Math.floor(ys.length * 0.9)).map(([, y]) => y);
-          if (inner.length && Math.max(...inner) - Math.min(...inner) <= Math.max(2, sp * 0.1)) {
+        // (in a photo the line between two notes close together can be left in with the notes, not
+        // taken away: there it is found as a thin stroke, not as the line, but at the line's own place)
+        const lineOff = (A.p % 2 === 0 ? sp : sp / 2) * (below ? 1 : -1), pL = A.p + (A.p % 2 === 0 ? 2 : 1) * (below ? -1 : 1);
+        const atLine = (globalThis.__tieFlat ?? 1) && pL >= 0 && pL <= 8 && ys.length >= 8 && (() => { const v = ys.slice(Math.ceil(ys.length * 0.2), Math.floor(ys.length * 0.8)).map(([, y]) => y).sort((a, b) => a - b); return v.length && Math.abs(v[v.length >> 1] - (A.cy + lineOff)) <= sp * 0.25; })();
+        if ((globalThis.__tieLine ?? 1) && A.p >= 0 && A.p <= 8 && xb - xa >= sp * 1.4 && (nOn >= ys.length * 0.6 || atLine)) {
+          const eF = (globalThis.__tieFlat ?? 1) ? 0.2 : 0.1, inner = ys.slice(Math.ceil(ys.length * eF), Math.floor(ys.length * (1 - eF))).map(([, y]) => y);
+          // (with the two notes close together, the edge of a head can still be in the stretch looked
+          // at: flat is then flat nearly all along, at the height most of it is at)
+          const tol = Math.max(2, sp * 0.1), med = inner.length ? inner.slice().sort((a, b) => a - b)[inner.length >> 1] : 0;
+          const flat = inner.length && ((globalThis.__tieFlat ?? 1) ? inner.filter((y) => Math.abs(y - med) <= tol).length >= inner.length * 0.75 : Math.max(...inner) - Math.min(...inner) <= tol);
+          if (flat) {
             // (the line's own thickness a few spaces away, either side: as thick there, it is the line)
-            const yl = Math.round(inner[inner.length >> 1]);
+            const yl = Math.round((globalThis.__tieFlat ?? 1) ? med : inner[inner.length >> 1]);
             const thick = (x) => { if (x < 0 || x >= w || !ctx.B[yl * w + x]) return -1; let a2 = yl, z2 = yl; while (a2 > 0 && ctx.B[(a2 - 1) * w + x]) a2--; while (z2 < h - 1 && ctx.B[(z2 + 1) * w + x]) z2++; return z2 - a2 + 1; };
             const midT = thick(Math.round((xa + xb) / 2));
             const out = [-6, -4, -3, 3, 4, 6].map((k) => thick(Math.round((k < 0 ? xa : xb) + k * sp))).filter((t) => t > 0 && t <= ctx.T + sp * 0.45);
-            if (out.length >= 2 && out.filter((t) => t >= midT - 1).length >= out.length * 0.5) {
+            if ((out.length >= 2 && out.filter((t) => t >= midT - 1).length >= out.length * 0.5) || (atLine && nOn < ys.length * 0.6)) {
               // (a tie bowing deeper, past that line: looked for there; a curve, not the line again)
-              const r2 = scan(below, true, sp * 2.8);
+              const r2 = scan(below, true, sp * 2.8, atLine && nOn < ys.length * 0.6 ? med : null);
               const bow2 = r2.ys.length >= (xb - xa + 1) * 0.45 ? bowOf(r2.ys, below) : null;
               if (globalThis.__tieDbg) globalThis.__tieDbg.push({ TL: [Math.round(A.cx), Math.round(A.cy)], p: A.p, below, Bc: Math.round(B.cx), up: [A.stem ? A.stem.up : null, B.stem ? B.stem.up : null], bg: [A.bg ?? null, B.bg ?? null], ys: ys.map((q) => Math.round(q[1] - A.cy)).join(','), span: xb - xa, midT, out, n2: r2.ys.length, bow2: bow2 && +(bow2 / sp).toFixed(2) });
               if (!(bow2 !== null && bow2 >= sp * 0.3)) continue;
