@@ -264,7 +264,7 @@ function showPanel(name, tab) {
     syncLink(); if (host.state === 'linked') showRemotePreview();
     // the camera is opened ahead when the last recording was a video, so Record starts at once
     clearTimeout(VW.t);
-    if (S.lastRecKind === 'video' && S.cam !== 'iphone' && !PHONE && !recState && window.innerWidth > window.innerHeight && window.MediaRecorder) vrec.open(S.cam).catch(() => {});
+    recPreview();
   }
 }
 function hidePanel() {
@@ -275,6 +275,7 @@ function hidePanel() {
   // (a field still being typed in gives its change first: a title typed, then the panel closed or
   // the score left at once, is kept — hiding a field does not always tell it it was left)
   try { const ae = document.activeElement; if (ae && ae.closest && ae.closest('#panel-' + openPanel) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) ae.blur(); } catch {}
+  if (openPanel === 'record') recPreview(false);
   $('#panel-' + openPanel).hidden = true;
   $$('[data-panel].on').forEach((b) => b.classList.remove('on'));
   if (openPanel === 'settings') saveScoreMeta();
@@ -10112,7 +10113,27 @@ let recState = null;
 const recClock = (ctx) => { const st = recState; if (st.wall0 == null) st.wall0 = performance.now() + (st.startAt - ctx.currentTime) * 1000; return (performance.now() - st.wall0) / 1000; };
 $('#countIn').addEventListener('change', (e) => { S.countIn = e.target.checked; saveSettings(); });
 $('#clickWhileRec').addEventListener('change', (e) => { S.clickWhileRec = e.target.checked; saveSettings(); });
-$$('#camSeg button').forEach((b) => b.addEventListener('click', () => { S.cam = b.dataset.cam; saveSettings(); $$('#camSeg button').forEach((x) => x.classList.toggle('on', x === b)); syncLink(); }));
+$$('#camSeg button').forEach((b) => b.addEventListener('click', () => { S.cam = b.dataset.cam; saveSettings(); $$('#camSeg button').forEach((x) => x.classList.toggle('on', x === b)); syncLink(); recPreview(); }));
+// Record › Front or Back camera: the camera's picture right there, before anything is recorded, and
+// its shape — upright or wide, whichever way the iPad is held (wide by default when it lies on its side)
+const vidShape = () => S.vidShape || devShape();
+let REC_OPENING = false;
+async function recPreview(on = true) {
+  const box = $('#recPreview'), v = $('#recPreviewVideo');
+  const want = on && openPanel === 'record' && S.cam !== 'iphone' && !recState && !!(navigator.mediaDevices && window.MediaRecorder);
+  box.hidden = !want;
+  // (closed a moment later, unless a recording took it up: Record keeps the open camera, so it starts at once)
+  if (!want) { v.srcObject = null; clearTimeout(recPreview.t); recPreview.t = setTimeout(() => { if (!recState && !REC_OPENING && openPanel !== 'record' && vrec.stream && !vrec.recording) vrec.close(); }, 1500); return; }
+  $$('#vidShape button').forEach((x) => x.classList.toggle('on', x.dataset.s === vidShape()));
+  box.classList.toggle('wide', vidShape() === 'landscape');
+  try {
+    const sh = vidShape();
+    await vrec.open(S.cam, sh, { canvas: PHONE || sh !== devShape() });
+    if (openPanel !== 'record' || box.hidden) return;
+    v.srcObject = vrec.stream; v.classList.toggle('mirror', S.cam === 'user'); v.play().catch(() => {});
+  } catch { box.hidden = true; }
+}
+$$('#vidShape button').forEach((b) => b.addEventListener('click', () => { S.vidShape = b.dataset.s; saveSettings(); recPreview(); }));
 
 // ---------- the iPhone as the camera ----------
 const host = new CameraHost();
@@ -10396,13 +10417,14 @@ async function startRecording(kind) {
   if (tuner.running) stopTuner();
   S.lastRecKind = kind; saveSettings();
   if (kind === 'video' && S.cam === 'iphone' && !PHONE) return startIphoneVideo();
-  const landscape = devShape() === 'landscape';
-  if (kind === 'video' && canNativeVideo() && !PHONE && !(landscape && window.MediaRecorder && navigator.mediaDevices)) { recState = { kind: 'video', native: true, opening: true }; sendFace(); recState = null; return startNativeVideo(); }
+  const landscape = devShape() === 'landscape', otherShape = !!S.vidShape && S.vidShape !== devShape() && !!window.MediaRecorder;
+  if (kind === 'video' && canNativeVideo() && !PHONE && !otherShape && !(landscape && window.MediaRecorder && navigator.mediaDevices)) { if (vrec.stream && !vrec.recording) vrec.close(); recState = { kind: 'video', native: true, opening: true }; sendFace(); recState = null; return startNativeVideo(); }
   if (kind === 'video') { recState = { kind: 'video', opening: true }; sendFace(); recState = null; }
   const ctx = getCtx();
   let meterSrc = null;
   if (kind === 'video') {
-    try { await vrec.open(S.cam, undefined, { canvas: PHONE }); } catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Camera access is off. Turn it on in Settings › Stand › Camera (or Settings › Safari › Camera).' : 'The camera could not start (' + ((e && (e.name || e.message)) || 'unknown') + '). Close other apps using the camera and try again.', 6000); return; }
+    REC_OPENING = true; setTimeout(() => { REC_OPENING = false; }, 4000);
+    try { await vrec.open(S.cam, vidShape(), { canvas: PHONE || vidShape() !== devShape() }); } catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Camera access is off. Turn it on in Settings › Stand › Camera (or Settings › Safari › Camera).' : 'The camera could not start (' + ((e && (e.name || e.message)) || 'unknown') + '). Close other apps using the camera and try again.', 6000); return; }
     const cam = $('#cam'); cam.hidden = false; cam.classList.toggle('mirror', S.cam === 'user'); cam.classList.toggle('portrait', vrec.shape === 'portrait');
     $('#camVideo').srcObject = vrec.stream; $('#camVideo').play().catch(() => {});
     meterSrc = ctx.createMediaStreamSource(vrec.stream);
@@ -10418,7 +10440,7 @@ async function startRecording(kind) {
       if (!recState) return;
       try { vrec.start(); } catch (e) { console.error(e); toast('Video could not start: ' + (e.message || e.name), 6000); stopRecording(); return; }
       // from now on the device keeps the way it is held, so the video keeps its shape
-      try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: vrec.shape === 'landscape' ? 'landscape' : 'portrait' }); } catch {}
+      try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: devShape() === 'landscape' ? 'landscape' : 'portrait' }); } catch {}
     }, wait);
   } else {
     // (what is recorded goes into the database as it comes: see recorder.start)
