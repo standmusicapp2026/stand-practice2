@@ -33,7 +33,7 @@ jobs:
             build | tail -n 30
       - name: Run on one iPad simulator
         run: |
-          sed -e 's/BID=com.paulo.stand$/BID=com.paulo.stand.ai/' -e '/^  "iPad mini\|^  "iPad Pro\|^  "iPhone/d' ios/simtest/run.sh > ios/simtest/run-ai.sh
+          sed -e '/^  "iPad mini\|^  "iPad Pro\|^  "iPhone/d' ios/simtest/run.sh > ios/simtest/run-ai.sh
           grep -n "BID=\|WANT" ios/simtest/run-ai.sh | head
           bash ios/simtest/run-ai.sh ios/build/Debug-iphonesimulator/Stand.app simtest-out
           cat simtest-out/summary.txt
