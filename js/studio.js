@@ -1801,11 +1801,11 @@ const shPen = (sh) => (sh === 0 ? 0 : 0.01 + shExtra + (sh % 12 && !shExtra ? (g
 // how much of what sounds is what the page has at that moment, with the bars at times T (from each
 // small frame of the recording: the page's notes there, how strongly they sound; a moment of the
 // recording loud with music outside the bars counts as nothing heard)
-function agreeOf(T, sn, nb, fr) {
+function agreeOf(T, sn, nb, fr, freeEnd) {
   const NP = SAL_HI - SAL_LO + 1, loud = Math.max(...fr.map((f) => f.rms), 1e-6);
   let ok = 0, all = 0, k = 0;
   for (const f of fr) {
-    if (f.t < T[0] || f.t >= T[nb]) { if (f.rms > loud * 0.12) all++; continue; }
+    if (f.t < T[0] || f.t >= T[nb]) { if (f.rms > loud * 0.12 && !(freeEnd > 0 && f.t >= T[nb] && f.t < T[nb] + freeEnd)) all++; continue; }
     while (k < nb - 1 && f.t >= T[k + 1]) k++;
     const u = (f.t - T[k]) / Math.max(1e-3, T[k + 1] - T[k]), q = sn[k * PSTEPS + Math.min(PSTEPS - 1, Math.max(0, Math.floor(u * PSTEPS)))];
     if (!q) continue;
@@ -1830,6 +1830,15 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   if (fr.length < 8) return null;
   const nb = L.bars.length;
   const clef = L.clef && CLEFS[L.clef] ? L.clef : 'treble';
+  // (the recording stops while the music still plays — a passage cut from a longer piece: the last
+  // sound is where the recording was cut, not where the page ends; music past the page's end then
+  // does not count against a way of following that ends before it)
+  let cutEnd = false;
+  { const ECR = globalThis.__endCut ?? 0.1;
+    if (ai && ECR > 0) { const lv = fr.map((f2) => f2.rms || 0), ref = lv.slice().sort((a, b) => a - b)[Math.floor(lv.length * 0.9)] || 0, tE = fr[fr.length - 1].t; let s = 0, c = 0; for (let j = fr.length - 1; j >= 0 && fr[j].t > tE - 0.5; j--) { s += lv[j]; c++; } cutEnd = ref > 0 && c > 0 && s / c > ref * ECR; } }
+  // (as long as a few bars: music for longer past the end is the following lost, not the page ended)
+  const feOf = (T) => { const d = []; for (let k = 0; k + 1 < T.length; k++) d.push(T[k + 1] - T[k]); d.sort((a, b) => a - b); return (globalThis.__cutGap ?? 4) * (d[d.length >> 1] || 1); };
+  const fe = cutEnd && (globalThis.__cutAgree ?? 1);
   let best = null;
   // (the key the music sounds in: every key from a little over an octave below to a little over an
   // octave above the page — an instrument that sounds as written, a B-flat or E-flat instrument, a
@@ -1900,11 +1909,12 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       // how much is what the page has there — and loud music outside the bars counts against)
       if (r && (globalThis.__judgeTime ?? 1)) r.agree = agreeOf(r.T, sn, nb, fr) - shPen(shift) * 1.5;
       if (globalThis.__salDbg && r) globalThis.__salDbg.push(['agree', shift, pace, +(r.agree ?? 0).toFixed(4)]);
+      if (globalThis.__salDbgT && r) globalThis.__salDbg.push(['T', shift, pace, Array.from(r.T, (v) => +v.toFixed(2))]);
       // (a pace the playing did not keep: the bars found are much longer or shorter than it — the page
       // stretched or squeezed to fit — counts against)
       if (r && (globalThis.__paceOk ?? 0)) { const d = []; for (let k = 0; k < nb; k++) d.push(r.T[k + 1] - r.T[k]); d.sort((a, b) => a - b); const md = d[d.length >> 1], q = md / pace; if (q > 1.5 || q < 0.67) r.cost += 0.05 * Math.abs(Math.log(q)) / Math.log(1.5); }
       if (r && (globalThis.__hybrid ?? 0)) { (all ||= []).push({ ...r, shift, pace, sn }); continue; }
-      if (r) cands.push({ T: r.T, agree: r.agree });
+      if (r) cands.push({ T: r.T, agree: r.agree, shift, pace, at: r.at, sc: r.sc });
       if (r && (!best || ((globalThis.__judgeTime ?? 1) ? r.agree > best.agree : r.cost + shPen(shift) < best.cost + shPen(best.shift)))) best = { ...r, shift, pace, sn };
       if (r && shift === 0 && (globalThis.__judgeTime ?? 1) && (!best0 || r.agree > best0.agree)) best0 = { ...r, shift, pace, sn };
       if (r && (globalThis.__judgeTime ?? 1) && (!byShift.has(shift) || r.agree > byShift.get(shift).agree)) byShift.set(shift, { ...r, shift, pace, sn });
@@ -1927,8 +1937,11 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
   const KM = globalThis.__keyMargin ?? 0.12;
   if (KM > 0 && best && Math.abs(best.shift) >= (globalThis.__keyMarginMin ?? 5)) {
     const oct = (globalThis.__keyOct ?? 1) ? [best.shift - 12, best.shift + 12].find((q) => q !== 0 && Math.abs(q) < (globalThis.__keyMarginMin ?? 5) && byShift.has(q)) : undefined;
+    // (two octaves away: no instrument reads its line so — another instrument's line was followed; a
+    // larger margin wanted)
+    const KM2 = Math.abs(best.shift) >= 24 ? (globalThis.__keyMargin24 ?? 0.2) : KM;
     if (oct !== undefined && best.agree - byShift.get(oct).agree < KM) best = byShift.get(oct);
-    else if (best0 && best.agree - best0.agree < KM) best = best0;
+    else if (best0 && best.agree - best0.agree < KM2) best = best0;
   }
   // (the key by the page's notes heard step by step; then, in that key, the pace by how well every
   // moment of the playing fits)
@@ -1956,6 +1969,35 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       if (!b2 || ag > b2.agree) b2 = { ...r, T: T2, at: Float64Array.from(r.at, (v) => (v >= 0 ? back(v - OFF) : -1)), agree: ag };
     }
     if (b2 && (!(globalThis.__judgeTime ?? 1) || b2.agree > (best.agree ?? -1e9) + (globalThis.__normM ?? 0.05))) best = { ...best, T: b2.T, at: b2.at, sc: b2.sc, heard: b2.heard, agree: b2.agree };
+  }
+  // (the pace changes on the way — a slow opening, then quick: no one pace follows all of it, but the
+  // ways followed at other paces meet the best one at some bars. Between two such meetings (or before
+  // the first, after the last) another way's bars taken where the whole then fits the playing better)
+  if ((globalThis.__splice ?? 1) && !(anch && anch.length) && best.sn && nb >= 6) {
+    const SM = globalThis.__spliceM ?? 0.004, sn = best.sn;
+    let cT = best.T.slice(), cAt = best.at ? Float64Array.from(best.at) : null, cSc = best.sc ? Float32Array.from(best.sc) : null, cA = agreeOf(cT, sn, nb, fr, fe ? feOf(cT) : 0);
+    for (const c of cands) {
+      if (c.shift !== best.shift || c.T === best.T || !(c.agree > cA - (globalThis.__spliceA ?? 1))) continue;
+      const tol = (k) => Math.max(0.08, (globalThis.__spliceTol ?? 0.1) * Math.max(0.05, (cT[Math.min(nb, k + 1)] - cT[Math.max(0, k - (k >= nb ? 1 : 0))]) || 0));
+      const J = []; for (let k = 0; k <= nb; k++) if (Math.abs(c.T[k] - cT[k]) <= tol(k)) J.push(k);
+      if (!J.length) continue;
+      const segs = [[0, J[0]]]; for (let i = 0; i + 1 < J.length; i++) if (J[i + 1] - J[i] > 1) segs.push([J[i] + 1, J[i + 1]]); segs.push([J[J.length - 1] + 1, nb + 1]);
+      for (const [a, b] of segs) {
+        if (b - a < 1) continue;
+        const T2 = cT.slice(); for (let k = a; k < b; k++) T2[k] = c.T[k];
+        let ok = true; for (let k = 0; k < nb; k++) if (!(T2[k + 1] > T2[k])) { ok = false; break; }
+        if (!ok) continue;
+        const a2 = agreeOf(T2, sn, nb, fr, fe ? feOf(T2) : 0);
+        if (globalThis.__salDbg) globalThis.__salDbg.push(['splice', c.pace, a, b, +a2.toFixed(4), +cA.toFixed(4)]);
+        if (a2 > cA + SM) {
+          cT = T2; cA = a2;
+          const qa = Math.max(0, a - 1) * PSTEPS, qb = Math.min(nb, b) * PSTEPS;
+          if (cAt && c.at) for (let q = qa; q < qb; q++) cAt[q] = c.at[q];
+          if (cSc && c.sc) for (let q = qa; q < qb; q++) cSc[q] = c.sc[q];
+        }
+      }
+    }
+    if (cT !== best.T) best = { ...best, T: cT, at: cAt || best.at, sc: cSc || best.sc, agree: cA };
   }
   const T = best.T.slice();
   // (a pickup: the first bar begins where its notes were heard)
@@ -2007,6 +2049,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
       const pre = on > 8 ? lv.slice(0, on).sort((a, b) => a - b) : srt, tl = lv.slice(-20).sort((a, b) => a - b), flo2 = Math.min(flo, pre[pre.length >> 1], tl[tl.length >> 1]);
       let off = lv.length - 1; while (off > 0 && lv[off] <= Math.max(flo2 * 2, ref * 0.015)) off--;
       const tOn = on >= 0 ? fr[on].t : null, tOff = fr[off].t; soundEnd = tOff; soundOn = tOn;
+      if (globalThis.__salDbg) globalThis.__salDbg.push(['ends', tOn, tOff, +T[0].toFixed(2), +T[nb].toFixed(2), cutEnd]);
       const opens = sn0.slice(0, Math.max(1, PSTEPS >> 3)).some(Boolean);
       if (tOn != null && opens && T[0] - tOn > 0.6 && T[0] - tOn < 20) { const k2 = Math.min(nb, 4); redo(0, k2, tOn, T[k2]); T[0] = tOn; }
       // (the more music past where the following ended, the more bars before the end followed again)
@@ -2230,10 +2273,16 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
         let ab = 0, aa = 0, bb = 0; for (let j = 0; j + L < env.length; j++) { const x = env[j] - m, y = env[j + L] - m; ab += x * y; aa += x * x; bb += y * y; }
         return ab / Math.sqrt(aa * bb + 1e-9);
       };
-      const peak = (lag) => { let b = [-2, lag]; const n = Math.round(RG * 200); for (let i = 0; i <= n; i++) { const f = 1 - RG + (2 * RG * i) / n, c = ac(lag * f); if (c > b[0]) b = [c, lag * f]; } return b; };
+      // (a bar apart and half a bar apart together: the beats inside the bar repeat too, and the two
+      // together stand out of the noise better than either)
+      const AH = globalThis.__introAcfH ?? 1, sc = (lag) => ac(lag) + (AH ? AH * ac(lag / 2) : 0);
+      const peak = (lag) => { let b = [-9, lag]; const n = Math.round(RG * 200); for (let i = 0; i <= n; i++) { const f = 1 - RG + (2 * RG * i) / n, c = sc(lag * f); if (c > b[0]) b = [c, lag * f]; } return b; };
       const [cg] = peak(gi), [cp, lp] = peak(p);
-      if (globalThis.__salDbg) globalThis.__salDbg.push(['introAcf', +gi.toFixed(3), +p.toFixed(3), +cg.toFixed(3), +cp.toFixed(3), +lp.toFixed(3)]);
-      if (cp > cg + (globalThis.__introAcfM ?? 0)) { let c = tot; for (let k = 0; k < k0; k++) { T[k] = Math.max(ta + 0.02 * k, tb - c * lp); c -= w[k]; } }
+      if (globalThis.__salDbg) globalThis.__salDbg.push(['introAcf', +gi.toFixed(3), +p.toFixed(3), +cg.toFixed(3), +cp.toFixed(3), +lp.toFixed(3), +ta.toFixed(3), +tb.toFixed(3), k0, w]);
+      // (over six bars or more of the others' playing, the bars after are the better guess at their
+      // length even when the repeating says nothing clear: that much music shared out quicker means
+      // the recording began partway in)
+      if (((globalThis.__introAcfAll ?? 1) && tb - ta >= (globalThis.__introAcfAllN ?? 6) * p) || cp > cg + (globalThis.__introAcfM ?? 0)) { let c = tot; for (let k = 0; k < k0; k++) { T[k] = Math.max(ta + 0.02 * k, tb - c * lp); c -= w[k]; } }
     }
   }
   // the notes as heard: each note's first step, the moment it was matched
