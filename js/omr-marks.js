@@ -391,6 +391,12 @@ export function readMarks(read, ctx) {
             }
           }
         }
+        // (two notes close together, and what was found over them nearly all along a staff line a space
+        // and more away: the next line on, not a tie — a tie keeps close to its notes)
+        if ((globalThis.__tieFarLine ?? 1) && xb - xa < sp * 1.4 && ys.length >= 5 && nOn >= ys.length * 0.7) {
+          const v = ys.map(([, y]) => y).sort((a, b) => a - b), med = v[v.length >> 1];
+          if (Math.abs(med - A.cy) >= sp * (globalThis.__tieFarK ?? 0.95) && ys.filter(([, y]) => Math.abs(y - med) <= Math.max(2, sp * 0.1)).length >= ys.length * 0.7) continue;
+        }
         if (bow >= sp * 0.1 || (xb - xa < sp * 1.6 && bow >= 0)) { if (globalThis.__tieDbg) globalThis.__tieDbg.push({ A: [Math.round(A.cx), Math.round(A.cy)], B: [Math.round(B.cx), Math.round(B.cy)], below, bow: +(bow / sp).toFixed(2), n: ys.length, span: xb - xa + 1, sp: +sp.toFixed(1), ys: ys.map((q) => Math.round(q[1] - A.cy)) }); A.tieTo = B.id; break; }
       }
     }
