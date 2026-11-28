@@ -1268,7 +1268,9 @@ function readStaff(s, ctx, header) {
   if (TR && typeof heads !== 'undefined') trk(626, heads);
   if (TR) for (const hd of heads) if (Math.abs(hd.cx - TR.x) < sp * 0.8) TR.log.push(['wide?', heads.filter((q) => q !== hd && Math.abs(q.cx - hd.cx) < sp * 3).map((q) => ({ cx: Math.round(q.cx), p: q.p, l: q.left, r: q.right, hl: hd.left, hr: hd.right, st: !!stemOf(C, w, h, hd, rx, sp), sq: !!stemOf(C, w, h, q, rx, sp) }))]);
   // has a stem of its own or they sit side by side as a second)
-  heads = heads.filter((hd) => hd.wRow <= sp * (hd.hollow ? 2.15 : 1.7) || heads.some((q) => q !== hd && Math.abs(q.p - hd.p) === 1 && Math.abs(q.cx - hd.cx) > sp * 0.75 && (Math.abs(q.cx - hd.cx) < sp * 1.5 || (Math.abs(q.cx - hd.cx) < sp * 2.6 && hd.wRow <= sp * 3.4 && q.left >= hd.left - sp * 0.4 && q.right <= hd.right + sp * 0.4 && stemOf(C, w, h, hd, rx, sp) && stemOf(C, w, h, q, rx, sp)))));
+  // (in a soft photo a filled head spreads a little wider: kept, if it turns out to have a stem with
+  // a beam or flag: the upright of a sharp before a note has neither)
+  heads = heads.filter((hd) => hd.wRow <= sp * (hd.hollow ? 2.15 : 1.7) || heads.some((q) => q !== hd && Math.abs(q.p - hd.p) === 1 && Math.abs(q.cx - hd.cx) > sp * 0.75 && (Math.abs(q.cx - hd.cx) < sp * 1.5 || (Math.abs(q.cx - hd.cx) < sp * 2.6 && hd.wRow <= sp * 3.4 && q.left >= hd.left - sp * 0.4 && q.right <= hd.right + sp * 0.4 && stemOf(C, w, h, hd, rx, sp) && stemOf(C, w, h, q, rx, sp)))) || ((globalThis.__softWide ?? 1) && ctx.soft > 1.9 && !hd.hollow && hd.wRow <= sp * 1.9 && (hd.softWide = true)));
   if (TR && typeof heads !== 'undefined') trk(628, heads);
   // breves (old music's double whole note): a whole note's white hole with a short upright stroke at
   // each side of its ring. As wide as two heads, they were taken for none; each is one head, a breve.
@@ -1336,18 +1338,36 @@ function readStaff(s, ctx, header) {
         if (st) { hd.cx = h2.cx; hd.left = a; hd.right = z; hd.wRow = z - a + 1; hd.stem = st; hd.hollow = false; hd.ringHead = false; break; }
       }
     }
+    // no stem: perhaps a filled head found off its middle (in a soft photo its ink spreads, and
+    // more to one side): its stem looked for again beside the ink of the row through its middle
+    let hc = null;
+    if (!hd.stem && !hd.hollow && (globalThis.__offcF ?? 1)) {
+      const y = Math.round(hd.cy), x = Math.round(hd.cx);
+      if (y >= 0 && y < h && C[y * w + x]) {
+        let a = x, z = x; while (a > 0 && C[y * w + a - 1]) a--; while (z < w - 1 && C[y * w + z + 1]) z++;
+        const m = (a + z) / 2;
+        if (z - a + 1 >= sp * 0.9 && z - a + 1 <= sp * 1.9 && Math.abs(m - hd.cx) >= Math.max(2, sp * 0.15)) { hc = { ...hd, cx: m }; hd.stem = stemOf(C, w, h, hc, rx, sp); }
+      }
+    }
     // no stem: perhaps a faint one (a faded or tinted part of the page), seen with a lighter
     // threshold; its ink there is taken into the picture, with what is at its end (beam, flag)
     if (!hd.stem && !hd.hollow && ctx.lite && (globalThis.__liteStem ?? 1)) {
-      const L = ctx.lite(), st = stemOf(L, w, h, hd, rx, sp);
+      const L = ctx.lite(); let st = stemOf(L, w, h, hd, rx, sp);
+      if (!st && hc) st = stemOf(L, w, h, hc, rx, sp);
       if (st && st.len >= sp * 2.5 && st.back < sp * 0.8) {
         const xa = Math.max(0, Math.round(st.x - sp * 1.4)), xb = Math.min(w - 1, Math.round(st.x + sp * 1.4));
         for (let y = Math.max(0, Math.round(st.top - sp * 0.3)); y <= Math.min(h - 1, Math.round(st.bot + sp * 0.3)); y++) {
           const nearEnd = Math.abs(y - st.end) < sp * 1.6;
           for (let x = nearEnd ? xa : Math.round(st.x) - 2; x <= (nearEnd ? xb : Math.round(st.x) + 2); x++) if (L[y * w + x]) C[y * w + x] = 1;
         }
-        hd.stem = stemOf(C, w, h, hd, rx, sp);
+        hd.stem = stemOf(C, w, h, hd, rx, sp) || (hc && stemOf(C, w, h, hc, rx, sp));
       }
+    }
+    // no stem: in a soft photo a flag spreads and runs into its stem along most of it, and the
+    // stem no longer looks thin: thin on the side away from the flag (flags go right) is enough
+    if (!hd.stem && !hd.hollow && (globalThis.__flagStem ?? 1) && ctx.soft > 1.9) {
+      const st = stemOf(C, w, h, hd, rx, sp, 0.24, true) || (hc && stemOf(C, w, h, hc, rx, sp, 0.24, true));
+      if (st && st.len >= sp * 2.5 && st.back < sp * 0.8) hd.stem = st;
     }
     // a stem that runs up into the staff above (its notes' stems, beams) is not this note's: the
     // other one, when there is one
@@ -1584,7 +1604,7 @@ function readStaff(s, ctx, header) {
   });
   if (TR && typeof heads !== 'undefined') trk(713, heads);
   // without a stem only a whole note (wide) is a note
-  heads = heads.filter((hd) => hd.stem || hd.wRow >= sp * (hd.ringHead ? 1.45 : hd.hollow ? 1.3 : 1.45));
+  heads = heads.filter((hd) => (hd.stem || hd.wRow >= sp * (hd.ringHead ? 1.45 : hd.hollow ? 1.3 : 1.45)) && !(hd.softWide && !(hd.stem && hd.beams)));
   if (TR) trk(839, heads);
   // ---- barlines: tall thin strokes from the top line to the bottom line that are not stems
   const bars = [], pendingBars = [];
@@ -2588,7 +2608,7 @@ function readStaff(s, ctx, header) {
   }
   return { nums, pdfMusic: !!(ctx.vecOf && ctx.vecOf.get(s) && ctx.glyphsOf && ctx.glyphsOf.get(s) && ctx.glyphsOf.get(s).length), signTrace: (() => { const t = ctx.signTrace; ctx.signTrace = []; return t; })(), L: s.L, x0: s.x0, x1: s.x1, sp, top: s.top, bottom: s.bottom, lines: s.lines, thick: T, heads: notes, rests, bars: merged, signs, explicitClef: head.explicitClef, clef: head.clef, key: head.key, time: head.time, timeAlt: head.timeAlt, startX, head, barTrace: (() => { const t = ctx.barTrace; ctx.barTrace = []; return t; })(), accTrace: ctx.accTrace, restTrace: ctx.restTrace, allHeads: ctx.allHeads };
 }
-function stemOf(C, w, h, hd, rx, sp, gapK = 0.24) {
+function stemOf(C, w, h, hd, rx, sp, gapK = 0.24, oneSide = false) {
   const run = (x, y0, dir) => {
     let y = Math.round(y0), gap = 0, last = y;
     const lim = sp * 8.5;   // beams pulled far from the heads make long stems
@@ -2609,7 +2629,7 @@ function stemOf(C, w, h, hd, rx, sp, gapK = 0.24) {
     let wd = Infinity;
     for (const f of [0.35, 0.5, 0.65]) {
       const ym = Math.round(hd.cy + (end - hd.cy) * f + dir * sp * 0.3); if (ym < 0 || ym >= h) continue;
-      let n = 0; for (let dx = -Math.round(sp * 0.6); dx <= Math.round(sp * 0.6); dx++) n += C[ym * w + x + dx] || 0;
+      let n = 0; for (let dx = -Math.round(sp * 0.6); dx <= (oneSide ? 1 : Math.round(sp * 0.6)); dx++) n += C[ym * w + x + dx] || 0;
       wd = Math.min(wd, n);
     }
     if (wd > sp * 0.5) return;

@@ -336,14 +336,18 @@ export function readMarks(read, ctx) {
             if (!C[y * w + x] && ctx.B[y * w + x]) {
               let a2 = y, z2 = y; while (a2 > 0 && ctx.B[(a2 - 1) * w + x]) a2--; while (z2 < h - 1 && ctx.B[(z2 + 1) * w + x]) z2++;
               const len = z2 - a2 + 1; if (!past && len > ctx.T + Math.max(1, sp * 0.06) && len <= ctx.T + sp * 0.45) { onLine = true; }
+              // (the line through the two heads themselves, drawn thick in a photo, is no arc beside
+              // them: nothing to be seen past it in that column, then)
+              if (onLine && (globalThis.__tieOwn ?? 1) && ((A.p % 2) + 2) % 2 === 0 && Math.abs((a2 + z2) / 2 - A.cy) < sp * 0.3) break;
               if (onLine) { found = (a2 + z2) / 2; nOn++; break; }
               k += len; continue;
             }
             if (C[y * w + x]) {
               // a thin stroke here (not a stem or a head running through)
               let e = y; while (e >= 0 && e < h && C[e * w + x] && Math.abs(e - y) < sp) e += below ? 1 : -1;
-              // (the line itself, left in with the notes: looked past, as a line is)
-              if (skipY !== null && Math.abs(e - y) <= sp * 0.42 && Math.abs((y + e) / 2 - skipY) <= Math.max(2, sp * 0.12)) { k += Math.abs(e - y); continue; }
+              // (the line itself, left in with the notes: looked past, as a line is; and so is the next
+              // line on, left in the same way)
+              if (skipY !== null && Math.abs(e - y) <= sp * 0.42 && [0, ...((globalThis.__tieNext ?? 1) ? [below ? sp : -sp] : [])].some((d) => Math.abs((y + e) / 2 - skipY - d) <= Math.max(2, sp * 0.12))) { k += Math.abs(e - y); continue; }
               if (Math.abs(e - y) <= sp * 0.42) found = (y + e) / 2;
               break;
             }
