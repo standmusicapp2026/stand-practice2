@@ -1709,8 +1709,14 @@ function readStaff(s, ctx, header) {
     // which head: sharps and naturals are centred on their note, a flat's bowl is
     const want = k.cls === 'flat' || k.cls === 'dflat' ? c.y1 - sp * 0.55 : (c.y0 + c.y1) / 2;
     near.sort((p, q) => Math.abs(p.cy - want) - Math.abs(q.cy - want));
-    if (Math.abs(near[0].cy - want) < sp * 0.6 && near[0].acc === undefined) { near[0].acc = a; isAcc.add(c.id); accCls.set(c.id, k.cls); if (k.with) isAcc.add(k.with.id); }
+    if (Math.abs(near[0].cy - want) < sp * 0.6 && near[0].acc === undefined) { near[0].acc = a; near[0].accC = c; isAcc.add(c.id); accCls.set(c.id, k.cls); if (k.with) isAcc.add(k.with.id); }
+    // (a double flat printed as two flats side by side, each read on its own: the note takes both)
+    else if ((globalThis.__dflatPair ?? 1) && k.cls === 'flat' && Math.abs(near[0].cy - want) < sp * 0.6 && near[0].acc === -1 && near[0].accC && accCls.get(near[0].accC.id) === 'flat') {
+      const o2 = near[0].accC;
+      if (Math.abs(c.y1 - o2.y1) < sp * 0.3 && Math.abs(c.h - o2.h) < sp * 0.35 && Math.max(c.x0, o2.x0) - Math.min(c.x1, o2.x1) < sp * 0.5 && Math.min(c.x1, o2.x1) - Math.max(c.x0, o2.x0) < sp * 0.3) { near[0].acc = -2; isAcc.add(c.id); accCls.set(c.id, 'flat'); }
+    }
   }
+  for (const hd of heads) delete hd.accC;
   // accidentals that touch their note (close engraving, small print, blur): look in a window just
   // before each head instead of at whole shapes
   const slurAcc = globalThis.__slurAcc ?? 1;
@@ -1720,9 +1726,11 @@ function readStaff(s, ctx, header) {
       if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp * 3 && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * (globalThis.__accWinY ?? 3)) globalThis.__accWin.push(['HEAD', Math.round(hd.cx), Math.round(hd.cy), Math.round(hd.left), hd.acc, hd.stem ? [Math.round(hd.stem.x), Math.round(hd.stem.top), Math.round(hd.stem.bot), hd.stem.up] : null, Math.round(hd.right ?? -1)]);
       if (hd.acc !== undefined || hd.left < startX) continue;
       let bestK = null;
+      // (a chord whose other note already has its sign: this note's may stand a column further left)
+      const reach = (globalThis.__chordCol ?? 1) && heads.some((q) => q !== hd && q.acc != null && Math.abs(q.cx - hd.cx) < sp * 1.0 && Math.abs(q.cy - hd.cy) > sp * 1.2 && Math.abs(q.cy - hd.cy) < sp * 4) ? 1.2 : 0;
       for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ...(globalThis.__wideSharp ?? 1 ? [['sharp', 1.25, 1.9, 1.9]] : []), ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8], ...(globalThis.__tallFlat ?? 1 ? [['flat', 1.0, 2.7, 0.8]] : [])]) {
         const ya = Math.round(hd.cy - up * sp), yb = Math.round(hd.cy + dn * sp);
-        for (let x = Math.round(hd.left - sp * 2.2); x <= Math.round(hd.left - sp * (W + 0.03)); x++) {
+        for (let x = Math.round(hd.left - sp * (2.2 + reach)); x <= Math.round(hd.left - sp * (W + 0.03)); x++) {
           const xb = Math.min(Math.round(x + W * sp), Math.round(hd.left - sp * 0.04));
           const boxIn = (I) => {
             let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
@@ -1732,6 +1740,14 @@ function readStaff(s, ctx, header) {
           let [x0, x1, y0, y1] = boxIn(C);
           // (a slur or tie run into the sign: its box without the thin curves)
           if (x1 >= 0 && (y0 <= ya || y1 >= yb) && slurAcc) { const b = boxIn(ctx.D); if (b[1] >= 0 && b[2] > ya && b[3] < yb) [x0, x1, y0, y1] = b; }
+          // (a flat with another sign reaching in over it — two flats of a chord, one up and to the right
+          // of the other: the pieces of ink that lie wholly in the window, and only those)
+          let ids = null;
+          if (x1 >= 0 && cls === 'flat' && y0 <= ya && y1 < yb && labC && ctx.rawC && (globalThis.__flatOver ?? 1)) {
+            const keep = new Set(); let a0 = Infinity, a1 = -1, c0 = Infinity, c1 = -1;
+            for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) for (let xx = Math.max(0, x); xx <= xb; xx++) { const i = y * w + xx; if (!C[i]) continue; const r = ctx.rawC[labC[i]]; if (!r || r.y0 <= ya) continue; keep.add(labC[i]); if (xx < a0) a0 = xx; if (xx > a1) a1 = xx; if (y < c0) c0 = y; if (y > c1) c1 = y; }
+            if (a1 >= 0 && c1 - c0 >= sp * 1.8) { [x0, x1, y0, y1] = [a0, a1, c0, c1]; ids = [...keep]; }
+          }
           if (x1 < 0 || x0 > x + sp * 0.2 || (y1 - y0) < sp * (cls === 'flat' ? 1.8 : 2.0) || x1 - x0 < sp * 0.35) continue;
           // (the key signature's last sign, just before the line's first note, is no accidental of it)
           if ((globalThis.__accKeyEnd ?? 1) && x0 < startX - sp * 0.2) continue;
@@ -1744,10 +1760,13 @@ function readStaff(s, ctx, header) {
           if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -Math.max(1, sp * (globalThis.__stemEdgeSp ?? 0.15)) : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
           // (nor starting inside the head of the note before: its edge, and a slur or stem by it, can look like a sign)
           if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * (globalThis.__winHeadIn ?? -0.2) && q.cy < y1 - sp * (globalThis.__winHeadIn ?? -0.2))) continue;
+          // (nor starting at the middle of a note with a stem: its right half, with a slur's end above it,
+          // makes a flat)
+          if ((globalThis.__winHeadMid ?? 1) && cls === 'flat' && heads.some((q) => q !== hd && q.stem && q.cx >= x0 - sp * 0.1 && q.cx <= x0 + sp * 0.15 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.3 && q.cy > y0 && q.cy < y1)) continue;
           // (nor the flag of the note just before, hanging off its stem)
           // (a beamed note has no flag: there, only a box reaching up or down to its beam)
           if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
-          let k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+          let k = classify(ids ? shapeOf(C, w, x0, y0, x1, y1, sp, labC, ids) : shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
           if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2), x0, x1, y0, y1]);
           // (a slur crossing the top of a flat's stem, or the top of a sharp — its box then cut at the
           // window's top: the sign is the box without the slur's band on top)
@@ -1759,11 +1778,21 @@ function readStaff(s, ctx, header) {
               for (let y = y0 + t; y <= y1; y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (C[y * w + xx]) { if (xx < a0) a0 = xx; if (xx > a1) a1 = xx; }
               if (a1 - a0 < sp * 0.35) continue;
               // (no other note's head or stem in what is left: a note and its stem make a 'flat' too)
-              if (heads.some((q) => q !== hd && ((q.cx > a0 - sp * 0.3 && q.cx < a1 + sp * 0.3 && q.cy > y0 + t - sp * 0.3 && q.cy < y1 + sp * 0.3) || (q.stem && q.stem.x >= a0 - 2 && q.stem.x <= a1 + 2 && q.stem.top < y1 && q.stem.bot > y0 + t)))) continue;
+              // (a sharp's middle, blurred, read as a head of its own — well inside the sign — is no other note)
+              if (heads.some((q) => q !== hd && !(cls === 'sharp' && (globalThis.__trimAtSign ?? 1) && q.cx > a0 + sp * 0.15 && q.cx < a1 - sp * 0.15 && q.cy > y0 + t && q.cy < y1) && ((q.cx > a0 - sp * 0.3 && q.cx < a1 + sp * 0.3 && q.cy > y0 + t - sp * 0.3 && q.cy < y1 + sp * 0.3) || (q.stem && q.stem.x >= a0 - 2 && q.stem.x <= a1 + 2 && q.stem.top < y1 && q.stem.bot > y0 + t)))) continue;
               const k2 = classify(shapeOf(C, w, a0, y0 + t, a1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+              if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push(['TRIM', cls, x, t, k2.cls, +k2.d.toFixed(3), a0, a1]);
               if (k2.cls === cls && k2.d < (cls === 'flat' ? (globalThis.__accTrimD ?? 0.25) : 0.3) && (k.cls !== cls || k2.d < k.d || cutK)) k = { ...k2, box: [a0, a1, y0 + t, y1] };
             }
-            if (k.box) { [x0, x1, y0, y1] = k.box; cutK = false; }
+            if (k.box) { k.yTop = y0; [x0, x1, y0, y1] = k.box; cutK = false; }
+          }
+          // (a flat stands on an upright stem at its left: a slur's end coming down onto a ledger line or a
+          // head beside it makes the same outline, but its stroke leans)
+          if (cls === 'flat' && k.cls === 'flat' && (globalThis.__flatStem ?? 1)) {
+            let tall = 0;
+            for (let xx = x0; xx <= Math.min(x1, Math.round(x0 + sp * 0.4)); xx++) { let run = 0; for (let y = y0; y <= y1; y++) { if (C[y * w + xx] || C[y * w + xx - 1] || C[y * w + xx + 1]) { run++; if (run > tall) tall = run; } else run = 0; } }
+            if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push(['FSTEM', x, tall, y1 - y0 + 1]);
+            if (tall < (y1 - y0 + 1) * (globalThis.__flatStemK ?? 0.75)) continue;
           }
           if (!loose && k.cls === cls && k.d < (cutK ? (globalThis.__cutD ?? 0.22) : cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
           // (blurred: the strokes swelled, the sign read by its outline instead, tolerant of their thickness —
@@ -1779,17 +1808,93 @@ function readStaff(s, ctx, header) {
           }
         }
       }
+      if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push(['BEST', bestK && bestK.cls, bestK && bestK.d]);
       if (!bestK) continue;
       // centred on this note (a flat's bowl on it)
       const want = bestK.cls === 'flat' ? bestK.y1 - sp * 0.55 : (bestK.y0 + bestK.y1) / 2;
       if (Math.abs(want - hd.cy) > sp * 0.45) continue;
       hd.acc = { sharp: 1, natural: 0, flat: -1 }[bestK.cls];
+      // (a double flat: a second flat just before this one, as tall and standing as low — the window,
+      // as wide as one flat, took only its right half)
+      if (bestK.cls === 'flat' && (globalThis.__dflatWin ?? 1)) {
+        const rx0 = Math.max(0, Math.round(bestK.x0 - sp * 1.5)), rx1 = bestK.x0 - 1, ry0 = Math.max(0, Math.round(bestK.y0 - sp * 0.8)), ry1 = Math.min(h - 1, Math.round(bestK.y1 + sp * 0.3));
+        // (only ink in pieces wholly here: not a beam above, nor the stem of the note before)
+        const inside = (i) => { if (!ctx.rawC) return true; const r = ctx.rawC[labC[i]]; return !!r && r.x0 > rx0 && r.y0 > ry0 && r.y1 < ry1 && r.x1 <= bestK.x1 + 1; };
+        let a0 = Infinity, a1 = -1, b0 = Infinity, b1 = -1; const ids2 = new Set();
+        for (let y = ry0; y <= ry1; y++) for (let x = rx0; x <= rx1; x++) { const i = y * w + x; if (C[i] && inside(i)) { ids2.add(labC[i]); if (x < a0) a0 = x; if (x > a1) a1 = x; if (y < b0) b0 = y; if (y > b1) b1 = y; } }
+        if (a1 >= 0 && a0 > rx0 && a0 >= startX && b0 > ry0 && b1 < ry1 && a1 >= bestK.x0 - sp * 0.4 && a1 - a0 >= sp * 0.35 && a1 - a0 <= sp * 0.95
+          && Math.abs((b1 - b0) - (bestK.y1 - bestK.y0)) < sp * 0.35 && Math.abs(b1 - bestK.y1) < sp * 0.25
+          && !heads.some((q) => q !== hd && q.stem && q.cx > a0 - sp * 0.3 && q.cx < a1 + sp * 0.3 && q.cy > b0 && q.cy < b1)
+          && !heads.some((q) => q !== hd && q.stem && q.stem.x >= a0 - 1 && q.stem.x <= a1 + 1 && q.stem.top < b1 - sp * 0.5 && q.stem.bot > b0 + sp * 0.5)) {
+          const k2 = classify(ids2.size ? shapeOf(C, w, a0, b0, a1, b1, sp, labC, [...ids2]) : shapeOf(C, w, a0, b0, a1, b1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
+          if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push(['DFLAT', k2.cls, +k2.d.toFixed(3), a0, a1, b0, b1]);
+          if (k2.cls === 'flat' && k2.d < (globalThis.__dflatD ?? 0.34)) { hd.acc = -2; bestK = { ...bestK, cls: 'dflat', x0: a0 }; }
+        }
+      }
       accBoxesW.push(bestK);
     }
   };
   winPass(false);
+  // (once more for the notes of a chord whose other note found its sign meanwhile)
+  if ((globalThis.__chordCol ?? 1) && heads.some((hd) => hd.acc === undefined && hd.left >= startX && heads.some((q) => q !== hd && q.acc != null && Math.abs(q.cx - hd.cx) < sp * 1.0 && Math.abs(q.cy - hd.cy) > sp * 1.2 && Math.abs(q.cy - hd.cy) < sp * 4))) winPass(false);
   // (a soft photo: a note still without a sign, its window looked at again by the outline of what is there)
   if ((globalThis.__looseAcc ?? 1) && ctx.soft > (globalThis.__looseSoft ?? 1.9)) winPass(true);
+  // (a blurred sharp, a slur through it: its upright strokes, thin, swell with the grey between them
+  // into one blob, but its two cross-bars are the darkest of it — in only the darkest ink, two short
+  // bars one above the other, rising to the right, either side of the note's line or space)
+  if ((globalThis.__barPair ?? 1) && B.gray && heads.some((hd) => hd.acc === undefined && hd.left >= startX)) {
+    const G = B.gray, th = B.th, BPD = globalThis.__bpDbg;
+    for (const hd of heads) {
+      if (hd.acc !== undefined || hd.left < startX) continue;
+      const wx0 = Math.max(0, Math.round(hd.left - sp * 2.0)), wx1 = Math.round(hd.left - sp * 0.05), wy0 = Math.max(0, Math.round(hd.cy - sp * 1.7)), wy1 = Math.min(h - 1, Math.round(hd.cy + sp * 1.7));
+      if (wx1 - wx0 < sp) continue;
+      // (something there at all: ink tall enough for a sharp, in the usual reading)
+      let iy0 = Infinity, iy1 = -1;
+      for (let y = wy0; y <= wy1; y++) for (let x = wx0; x <= wx1; x++) if (C[y * w + x]) { if (y < iy0) iy0 = y; if (y > iy1) iy1 = y; }
+      if (iy1 - iy0 < sp * 2.0) continue;
+      let found = null;
+      for (const dt of globalThis.__bpTs ?? [45, 65, 85]) {
+        const t = th - dt; if (t < 50) continue;
+        const W = wx1 - wx0 + 1, H = wy1 - wy0 + 1, lab = new Int32Array(W * H), blobs = [];
+        for (let y0 = 0; y0 < H; y0++) for (let x0 = 0; x0 < W; x0++) {
+          const i0 = y0 * W + x0; if (lab[i0]) continue;
+          const gi = (y0 + wy0) * w + x0 + wx0; if (!C[gi] || G[gi] >= t) continue;
+          const id = blobs.length + 1, st = [i0]; lab[i0] = id;
+          let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, bx0 = x0, bx1 = x0, by0 = y0, by1 = y0, edge = false;
+          while (st.length) {
+            const i = st.pop(), x = i % W, y = (i / W) | 0; n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
+            if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+            if (x === 0 || y === 0 || x === W - 1 || y === H - 1) edge = true;
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+              const j = yy * W + xx; if (lab[j]) continue; const g = (yy + wy0) * w + xx + wx0;
+              if (C[g] && G[g] < t) { lab[j] = id; st.push(j); }
+            }
+          }
+          const mx = sx / n, my = sy / n, vx = sxx / n - mx * mx, slope = vx > 0 ? (sxy / n - mx * my) / vx : 0;
+          blobs.push({ n, cx: mx + wx0, cy: my + wy0, x0: bx0 + wx0, x1: bx1 + wx0, y0: by0 + wy0, y1: by1 + wy0, edge, slope });
+        }
+        const bar = (q) => !q.edge && q.n >= sp * sp * 0.12 && q.x1 - q.x0 >= sp * 0.45 && q.x1 - q.x0 <= sp * 1.3 && q.y1 - q.y0 >= sp * 0.25 && q.y1 - q.y0 <= sp * 0.95 && q.slope < -0.12 && q.slope > -0.9
+          && !heads.some((o) => Math.abs(o.cx - q.cx) < sp * 0.5 && Math.abs(o.cy - q.cy) < sp * 0.45);
+        const bars = blobs.filter(bar);
+        if (BPD && Math.abs(hd.cx - BPD[0]) < sp * 2 && Math.abs(hd.cy - BPD[1]) < sp * 2) BPD.push(['BP', Math.round(hd.cx), Math.round(hd.cy), dt, blobs.filter((q) => q.n > 8).map((q) => [Math.round(q.cx), Math.round(q.cy), q.n, q.x1 - q.x0, q.y1 - q.y0, +q.slope.toFixed(2), q.edge ? 1 : 0, bar(q) ? 1 : 0])]);
+        for (const a of bars) for (const b2 of bars) {
+          if (b2 === a || b2.cy <= a.cy) continue;
+          const dy = b2.cy - a.cy, mid = (a.cy + b2.cy) / 2;
+          if (dy < sp * 0.7 || dy > sp * 1.35 || Math.abs(a.cx - b2.cx) > sp * 0.35 || Math.abs(mid - hd.cy) > sp * 0.4) continue;
+          // (alike: two bars of one sign)
+          if (Math.abs((a.x1 - a.x0) - (b2.x1 - b2.x0)) > sp * 0.4 || Math.max(a.n, b2.n) > Math.min(a.n, b2.n) * 2.2) continue;
+          // (nothing else as dark between and beside them: a sign stands alone)
+          if (blobs.some((q) => q !== a && q !== b2 && q.n >= sp * sp * 0.12 && q.cx > Math.min(a.x0, b2.x0) - sp * 0.2 && q.cx < Math.max(a.x1, b2.x1) + sp * 0.2 && q.cy > a.y0 - sp * 0.3 && q.cy < b2.y1 + sp * 0.3)) continue;
+          found = { cls: 'sharp', d: 0.3, x0: Math.min(a.x0, b2.x0), x1: Math.max(a.x1, b2.x1), y0: Math.round(mid - sp * 1.4), y1: Math.round(mid + sp * 1.4) };
+        }
+        if (found) break;
+      }
+      if (!found) continue;
+      hd.acc = 1; accBoxesW.push(found);
+      if (BPD) BPD.push(['SHARP', Math.round(hd.cx), Math.round(hd.cy)]);
+    }
+  }
   // double sharps: a small x just before the head
   for (const hd of heads) {
     if (hd.acc !== undefined || hd.left < startX) continue;
@@ -2549,7 +2654,7 @@ function readStaff(s, ctx, header) {
       // clearly smaller than the notes of this staff
       if (headW && c.w > headW * 0.8) continue;
       // not a piece of an accidental (the thick bar of a sharp, crossed by its two strokes)
-      if ([...accBoxes.filter((q) => ['sharp', 'natural'].includes(accCls.get(q.id))), ...accBoxesW.filter((q) => ['sharp', 'natural'].includes(q.cls))].some((q) => cx > q.x0 - 2 && cx < q.x1 + 2 && cyH > q.y0 - 2 && cyH < q.y1 + 2)) continue;
+      if ([...accBoxes.filter((q) => ['sharp', 'natural'].includes(accCls.get(q.id))), ...accBoxesW.filter((q) => ['sharp', 'natural'].includes(q.cls))].some((q) => cx > q.x0 - 2 && cx < q.x1 + 2 && cyH > ((globalThis.__trimAtSign ?? 1) && q.yTop != null ? q.yTop : q.y0) - 2 && cyH < q.y1 + 2)) continue;
       {
         const vrun = (x, y0, dir) => { let n = 0; for (let k = 1; k < sp; k++) { const y = Math.round(y0 + dir * k); if (y < 0 || y >= h) break; if (C[y * w + x] || C[y * w + x - 1] || C[y * w + x + 1]) n++; else break; } return n; };
         const crossed = (x) => vrun(x, c.y0, -1) > sp * 0.45 && vrun(x, c.y1, 1) > sp * 0.45;
@@ -2574,6 +2679,9 @@ function readStaff(s, ctx, header) {
     }
   }
   for (const g of graces) {
+    // (a 'grace note' standing over the very sign found for the note after it — the top of a blurred
+    // sharp, a slur ending on it — is part of that sign)
+    if ((globalThis.__graceOnSign ?? 1) && g.next.acc === 1 && accBoxesW.some((q) => q.cls === 'sharp' && g.cx > q.x0 - sp * 0.3 && g.cx < q.x1 + sp * 0.3 && g.cy > (q.yTop ?? q.y0) - sp * 0.8 && g.cy < q.y1)) continue;
     g.next.grace = { p: g.p };
     // the grace note's stem and flag are not an accidental of the note after it
     if (g.next.acc !== undefined && [...accBoxes, ...accBoxesW].some((c) => c.x0 <= g.cx + sp * 0.6 && c.x1 >= g.cx - sp * 0.6 && c.y0 <= g.cy + sp && c.y1 >= g.cy - sp)) delete g.next.acc;
