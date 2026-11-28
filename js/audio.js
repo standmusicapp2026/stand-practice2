@@ -22,7 +22,10 @@ function setSession(type) {
   } catch { /* not supported */ }
 }
 // said again (the speaker choice changed): the kind of sound for what is going on now
-export function applySession() { setSession(micStream ? 'play-and-record' : 'playback'); }
+export function applySession() { setSession(micStream || camMic ? 'play-and-record' : 'playback'); }
+// Before the camera's (or the iPhone link's) microphone is asked for: inside the app iOS refuses
+// any capture while the sound is set to play only ("AudioSession category is not compatible").
+export function forCapture() { setSession('play-and-record'); }
 
 // When the sound goes somewhere else (Bluetooth headphones connected or gone), or the microphone
 // was used and let go, iOS can leave the sound system running with its clock ticking and nothing

@@ -14,6 +14,19 @@ async function step(name, fn, ms = 120000) {
 }
 (async () => {
   await sleep(4000);
+  // The Record panel's camera inside the real app (WKWebView): it must open with its microphone
+  // even while the sound is set to play only (it was refused: "AudioSession category is not compatible")
+  await step('Record: the camera opens in the app', async () => {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+    const V = await import('./video.js');
+    const r = new V.VideoRecorder(); const out = [];
+    for (const [f, sh] of [['user', 'portrait'], ['user', 'landscape'], ['environment', 'portrait']]) {
+      try { const st = await r.open(f, sh, { canvas: sh !== V.devShape() }); if (!st.getVideoTracks().length) throw new Error('no picture'); out.push(`${f}/${sh} ok a=${st.getAudioTracks().length}`); }
+      catch (e) { r.close(); throw new Error(`${f}/${sh}: ${e && e.name}: ${e && e.message}`); }
+      r.close();
+    }
+    return out.join(', ');
+  }, 40000);
   const P = await import('./ai/pitchnet.js');
   await step('AI: the network in its thread', async () => { const r = await P.netWindow(new Float32Array(P.NET_SR * 2 - 256)); return r && r.T > 100 ? `T ${r.T}` : false; });
   await step('AI: hears the notes of a recording', async () => {

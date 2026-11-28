@@ -11320,6 +11320,7 @@ async function recPreview(on = true) {
   }
   const want = on && openPanel === 'record' && S.cam !== 'iphone' && !recState && !!(navigator.mediaDevices && window.MediaRecorder);
   box.hidden = !want;
+  const err = $('#recCamErr'); if (err) err.hidden = true;
   // (closed a moment later, unless a recording took it up: Record keeps the open camera, so it starts at once)
   if (!want) { v.srcObject = null; clearTimeout(recPreview.t); recPreview.t = setTimeout(() => { if (!recState && !REC_OPENING && openPanel !== 'record' && vrec.stream && !vrec.recording) vrec.close(); }, 1500); return; }
   $$('#vidShape button').forEach((x) => x.classList.toggle('on', x.dataset.s === vidShape()));
@@ -11329,7 +11330,12 @@ async function recPreview(on = true) {
     await vrec.open(S.cam, sh, { canvas: PHONE || sh !== devShape() });
     if (openPanel !== 'record' || box.hidden) return;
     v.srcObject = vrec.stream; v.classList.toggle('mirror', S.cam === 'user'); v.play().catch(() => {});
-  } catch { box.hidden = true; }
+  } catch (e) {
+    box.hidden = true;
+    // said, never just hidden: what stopped the camera, and that Video still records
+    if (err && openPanel === 'record') { err.textContent = e && e.name === 'NotAllowedError' ? 'The camera is off for Stand. Turn it on in Settings › Stand › Camera.' : 'The camera could not be shown here. Video still records: tap Video.'; err.hidden = false; }
+    try { NATIVE && NATIVE.standDiag && NATIVE.standDiag.postMessage({ op: 'log', text: 'record preview: ' + ((e && (e.name + ' ' + e.message)) || e) }); } catch {}
+  }
 }
 $$('#vidShape button').forEach((b) => b.addEventListener('click', () => {
   if (S.cam === 'iphone') { S.iphShape = b.dataset.s; saveSettings(); host.set({ shape: b.dataset.s }); recPreview(); return; }

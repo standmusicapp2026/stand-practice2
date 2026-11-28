@@ -300,7 +300,7 @@ export class CameraHost {
       if (this.pc) { try { this.pc.close(); } catch {} }
       // WebKit only shares this iPad's real Wi-Fi address once the page is using the microphone;
       // without it the two often cannot reach each other on the same network
-      if (!this.permStream && navigator.mediaDevices) { try { this.permStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { this.permStream = null; } }
+      if (!this.permStream && navigator.mediaDevices) { try { (await import('./audio.js')).forCapture(); this.permStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { this.permStream = null; } }
       this.reply = via || this.sig;
       this.peer = m.src;
       const pc = this.pc = new RTCPeerConnection({ iceServers: ICE });
@@ -456,7 +456,7 @@ export class CameraPhone {
     const [w, h] = this.s.quality === 'hd' ? [1280, 720] : [1920, 1080];
     this.cam = await navigator.mediaDevices.getUserMedia({ video: { facingMode: this.s.facing, width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: this.s.fps } }, audio: false });
     if (!this.mic) {
-      try { this.mic = await (await import('./audio.js')).preferBuiltIn(await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })); } catch { this.mic = null; }
+      try { (await import('./audio.js')).forCapture(); this.mic = await (await import('./audio.js')).preferBuiltIn(await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })); } catch { this.mic = null; }
     }
     const track = this.cam.getVideoTracks()[0];
     // iOS can take the camera away (a call, another app): it is asked for again

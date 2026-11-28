@@ -23,10 +23,14 @@ export class VideoRecorder {
     if (this.cam && this.facing === facing && this.shape === shape && (!forceCanvas || !this.direct) && this.cam.getVideoTracks().every((t) => t.readyState === 'live')) return this.stream;
     this.close();
     const land = shape === 'landscape';
-    this.cam = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: land ? 1280 : 720 }, height: { ideal: land ? 720 : 1280 }, frameRate: { ideal: 30, max: 30 } },
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-    });
+    // (the sound set to play-and-record first: in the app iOS refuses the camera's microphone otherwise)
+    cameraMic(true);
+    try {
+      this.cam = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: land ? 1280 : 720 }, height: { ideal: land ? 720 : 1280 }, frameRate: { ideal: 30, max: 30 } },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      });
+    } catch (e) { this.cam = null; cameraMic(false); throw e; }
     // (the sound from the iPad's own microphone, never the headphones' — with headphones on to play
     // along, the video still hears the instrument from the room)
     try {
