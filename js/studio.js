@@ -1679,7 +1679,7 @@ function midiSteps(L, clef, shift) {
 // The page through the recording (dynamic time warping with the pace held, as pacedAlign): at each
 // moment, how strongly the page's notes sound. Returns { T: bar starts (nb + 1), at: the moment of each
 // step, cost } or null.
-function pacedSalience(sn, nb, fr0, pace, onw, anch) {
+function pacedSalience(sn, nb, fr0, pace, onw, anch, fast3) {
   if (!(pace > 0.2) || fr0.length < 4) return null;
   const dt = pace / PSTEPS, NP = SAL_HI - SAL_LO + 1;
   // (what sounds in moments a page step long at this pace: the strongest of the frames in each)
@@ -1735,19 +1735,24 @@ function pacedSalience(sn, nb, fr0, pace, onw, anch) {
   let D3 = new Float32Array(W).fill(1e9), D2 = new Float32Array(W).fill(1e9), D1 = new Float32Array(W), D0 = new Float32Array(W);
   const P = new Uint8Array((n + 1) * W);
   const shB = sn.short || null;
+  // (the playing may also pass three steps at a moment anywhere, at a price: a pace that jumps — a
+  // slow opening, then quick — more than the steps held to the pace allow. Only when every pace is
+  // tried: at the one pace the key is first looked for, a slow piece would rush through its page)
+  const F3 = fast3 && (globalThis.__fast3 ?? 1), F3P = globalThis.__fast3P ?? 0.1;
   for (let j = 0; j <= m; j++) D1[j] = j * SKIP * 0.5;   // (the music may begin later)
   const pk = sn.pick || 0;   // (a pickup: the playing may begin at its notes, the bar's start unplayed)
   for (let i = 1; i <= n; i++) {
     const ri = rows[i - 1], rp = i >= 2 ? rows[i - 2] : null, pi = pen[i - 1], pp = i >= 2 ? pen[i - 2] : null;
     // (three steps at once, in a bar written short)
-    const r3 = shB && i >= 3 && shB[Math.floor((i - 1) / PSTEPS)] && shB[Math.floor((i - 3) / PSTEPS)] && !pi && !pp && !pen[i - 3] ? rows[i - 3] : null;
+    const r3s = shB && i >= 3 && shB[Math.floor((i - 1) / PSTEPS)] && shB[Math.floor((i - 3) / PSTEPS)];
+    const r3 = (r3s || (F3 && i >= 3)) && !pi && !pp && !pen[i - 3] ? rows[i - 3] : null, p3 = r3s ? 0 : F3P;
     D0.fill(1e9, 0, 1);
     for (let j = 1; j <= m; j++) {
       const c = ri[j - 1] + (pi ? pi[j - 1] : 0);
       let v = D1[j - 1] + c, how = 1;
       if (pk && i === pk + 1) { const v6 = (j - 1) * SKIP * 0.5 + c; if (v6 < v) { v = v6; how = 6; } }
       if (rp) { const v2 = D2[j - 1] + rp[j - 1] + (pp ? pp[j - 1] : 0) + c; if (v2 < v) { v = v2; how = 2; } }
-      if (r3) { const v7 = D3[j - 1] + r3[j - 1] + rp[j - 1] + c; if (v7 < v) { v = v7; how = 7; } }
+      if (r3) { const v7 = D3[j - 1] + r3[j - 1] + rp[j - 1] + c + p3; if (v7 < v) { v = v7; how = 7; } }
       if (j >= 2) { const v3 = D1[j - 2] + ri[j - 2] + c; if (v3 < v) { v = v3; how = 3; } }
       // (a note held three times as long: a pause, the end of a phrase)
       if (j >= 3) { const v4 = D1[j - 3] + ri[j - 3] + ri[j - 2] + c + 0.35; if (v4 < v) { v = v4; how = 4; } }
@@ -1889,7 +1894,7 @@ async function followSalience(L, A, B, onProgress, stop, opts = {}) {
     const sn = midiSteps(L, clef, shift);
     // (seconds a bar: from a quick two-in-a-bar to a very slow song, seven seconds a bar)
     for (const pace of (globalThis.__paces || [0.8, 1.2, 1.8, 2.6, 3.6, 5.0, 7.0])) {
-      const r = pacedSalience(sn, nb, fr, pace, onw, anch);
+      const r = pacedSalience(sn, nb, fr, pace, onw, anch, true);
       if (globalThis.__salDbg && r) globalThis.__salDbg.push([shift, pace, +r.cost.toFixed(4), +r.heard.toFixed(3)]);
       // (judged in time, the same for every pace: of all that sounds from the first bar to the last,
       // how much is what the page has there — and loud music outside the bars counts against)
