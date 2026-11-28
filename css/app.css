@@ -2588,6 +2588,10 @@ body:not(.phone) .dock .pill * { white-space: nowrap; }
 /* (the small bars keep their size; the Listen bar, with its long track, gives way) */
 body:not(.phone) .dock > *:not(.media-pill) { flex-shrink: 0; }
 body:not(.phone) .dock .media-pill { min-width: 280px; }
+/* (and when they cannot all fit on one line — recording with the metronome and the drone on a small
+   iPad standing up — the ones that do not fit go on a second line just above, never off the screen) */
+body:not(.phone) .dock { left: 0; right: 0; transform: none; width: fit-content; margin: 0 auto; flex-wrap: wrap-reverse; row-gap: 6px; max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); }
+body:not(.phone) .dock .media-pill { flex: 1 1 280px; max-width: 660px; }
 
 /* ===== Welcome (2026-11): Stand's own dark, its five coloured lines, real music on the stand ===== */
 .welcome { --w-o: #F2A65A; --w-y: #F3CF68; --w-g: #8FD08A; --w-b: #7FB2F0; --w-p: #B697EE; --w-ink: #f4f5f8; --w-mut: #b9bfcc; --w-card: #24262e;
@@ -2771,3 +2775,75 @@ body:not(.phone) .dock .media-pill { min-width: 280px; }
 /* "the photo" as a choice among colours (inside the frame of a pop out) */
 .tp-col.photo { background: linear-gradient(135deg, #e8907a, #6a8fb5); }
 #picPopPaint { width: 100%; min-height: 44px; }
+
+/* ===== Welcome on every screen (2026-11-28): nothing cut off or hidden, Back always tappable ===== */
+/* (Back sits above the pages, which used to cover it; the pages start below it) */
+.welcome .wel-back { z-index: 5; }
+/* (the pages centre their content only while it fits; taller than the screen, it starts at the top
+   and scrolls, never pushed up out of reach) */
+.welcome .wel-what, .welcome .wel-first { justify-content: flex-start !important; padding-top: max(66px, calc(env(safe-area-inset-top) + 52px)); padding-bottom: 12px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.welcome .wel-what > :first-child, .welcome .wel-first > :first-child { margin-top: auto; }
+.welcome .wel-what > :last-child, .welcome .wel-first > :last-child { margin-bottom: auto; }
+/* (the home screen tools, chosen here as before: a row like the instrument, the choices under it) */
+.welcome .wf-play { flex-wrap: wrap; }
+.welcome .wel-tools-row { width: auto; min-height: 48px; padding: 0 16px; gap: 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: var(--w-card); color: var(--w-ink); font-size: 15px; }
+.welcome .wel-tools-row .wel-tools-sum { color: var(--w-mut); }
+.welcome .wel-chips button { background: var(--w-card); color: var(--w-mut); border-color: rgba(255,255,255,.08); }
+.welcome .wel-chips button.on { background: #fff; color: #17181d; }
+/* iPhone upright: what you play right under the title, then the four ways in */
+.welcome.phone .wel-first .ww-h { order: 0; } .welcome.phone .wf-sub { order: 1; margin-top: -8px; }
+.welcome.phone .wf-play { order: 2; } .welcome.phone .wf-cards { order: 3; } .welcome.phone .wel-chips { order: 4; }
+.welcome.phone .welcome .wel-pick, .welcome.phone .wel-pick { flex: 1 1 auto; }
+.welcome.phone .wel-pick select { min-width: 0; flex: 1; }
+/* (a backup brought back on a new iPhone: under Get started, on the first page) */
+.welcome.phone[data-step="0"] .wel-link { display: inline-flex; order: 3; flex: 1 0 100%; justify-content: center; min-height: 40px; }
+/* small iPhones (SE): the music smaller, the cards without their second line */
+@media (max-height: 740px) {
+  .welcome.phone .wh-back { display: none; }
+  .welcome.phone .wh-front { left: 50%; width: min(56%, 34vh); transform: translateX(-50%) rotate(-2deg); }
+  .welcome.phone .wh-title { font-size: 30px; } .welcome.phone .wh-icon { width: 52px; height: 52px; border-radius: 12px; }
+  .welcome.phone .wf-card span { display: none; } .welcome.phone .wf-card { padding: 14px; gap: 4px; }
+  .welcome.phone .wf-card svg { width: 24px; height: 24px; margin-bottom: 2px; }
+  .welcome.phone .wel-what, .welcome.phone .wel-first { gap: 12px; }
+}
+/* iPhone (and any screen) on its side: little height, so words only, side by side, the bar slimmer */
+@media (max-height: 560px) and (orientation: landscape) {
+  .welcome { padding-top: max(10px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .welcome .wh-art { display: none; }
+  .welcome .wel-hello { flex-direction: row !important; justify-content: center; padding-top: 12px; }
+  .welcome .wh-text { flex: 0 1 560px; gap: 12px; }
+  .welcome .wh-icon { width: 48px; height: 48px; border-radius: 11px; }
+  .welcome .wh-title { font-size: 30px !important; }
+  .welcome .wh-lede { font-size: 15px; }
+  .welcome .wel-what, .welcome .wel-first { padding-top: 14px; padding-left: max(70px, env(safe-area-inset-left)); padding-right: max(28px, env(safe-area-inset-right)); gap: 10px; }
+  .welcome .ww-h { font-size: 24px; }
+  .welcome .ww-cards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; }
+  .welcome .ww-pic { display: none; }
+  .welcome .ww-card p { margin: 10px 14px 2px; font-size: 15px; } .welcome .ww-card > span { margin: 0 14px 10px; font-size: 13px; }
+  .welcome .wf-sub { display: none; }
+  .welcome .wf-cards { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px; order: 0; }
+  .welcome .wf-card { min-height: 0; padding: 12px; gap: 4px; } .welcome .wf-card span { display: none; } .welcome .wf-card b { font-size: 14px; }
+  .welcome .wf-card svg { width: 22px; height: 22px; margin-bottom: 2px; }
+  .welcome .wf-play { order: 1; } .welcome .wel-pick { height: 42px; } .welcome .wel-pick select { height: 40px; }
+  .welcome .wel-bottom { flex-wrap: nowrap !important; padding-top: 6px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .welcome .wel-next { min-height: 44px; flex: 0 0 auto !important; padding: 0 34px; }
+  .welcome.phone[data-step="0"] .wel-link { flex: none; order: 0; }
+  .welcome .wel-back { top: max(8px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); }
+}
+/* (on the iPhone the tools row is as wide as the instrument row, its summary cut short with "…") */
+.welcome.phone .wel-tools-row { flex: 1 1 100%; min-width: 0; }
+.welcome .wel-tools-row > span:first-child { flex: none; white-space: nowrap; }
+.welcome .wel-tools-row .wel-tools-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-height: 560px) and (orientation: landscape) {
+  .welcome.phone .wf-cards { order: 0; } .welcome.phone .wf-play { order: 1; flex-wrap: nowrap; } .welcome.phone .wel-chips { order: 2; }
+  .welcome.phone .wel-tools-row { flex: 1 1 0; }
+  .welcome .ww-card > span { font-size: 12.5px; line-height: 1.35; } .welcome .ww-h { margin-bottom: 2px; }
+}
+@media (orientation: portrait) { .welcome.phone .wf-play > .wel-tools-row, .welcome.phone .wf-play > .wel-pick { width: 100%; box-sizing: border-box; } }
+@media (max-height: 700px) and (orientation: portrait) { .welcome.phone .wf-sub { display: none; } .welcome.phone .wf-card b { font-size: 15px; } }
+/* (iPhone: the recording bar always fits the screen — the level meter gives way, the bpm loses its
+   word on a small iPhone — so Stop is never cut off) */
+body.phone .rec-pill { max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); box-sizing: border-box; min-width: 0; }
+body.phone .rec-pill canvas { flex: 1 1 120px; width: auto; min-width: 24px; }
+body.phone .rec-pill > :not(canvas) { flex-shrink: 0; }
+@media (max-width: 400px) { body.phone .rec-pill .rm-unit { display: none; } body.phone .rec-pill { gap: 8px; } }

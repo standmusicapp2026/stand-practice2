@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump VERSION to ship an update.
-const VERSION = 'stand-v19';
+const VERSION = 'stand-v20';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/main.js', 'js/db.js', 'js/audio.js', 'js/metronome.js', 'js/tuner.js', 'js/recorder.js', 'js/score.js', 'js/stretch-worker.js', 'js/pngworker.js',
